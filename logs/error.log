@@ -1,0 +1,19 @@
+2025-11-19 20:30:29 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:51:42 +01:00: Error: Cannot find module 'ejs'
+2025-11-19 20:51:42 +01:00: Require stack:
+2025-11-19 20:51:42 +01:00: - /run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/lib/view.js
+2025-11-19 20:51:42 +01:00: - /run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/lib/application.js
+2025-11-19 20:51:42 +01:00: - /run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/lib/express.js
+2025-11-19 20:51:42 +01:00: - /run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/index.js
+2025-11-19 20:51:42 +01:00: - /run/media/zebratic/HDD_DATA/Work/localping/src/app.js
+2025-11-19 20:51:42 +01:00:     at Function._resolveFilename (node:internal/modules/cjs/loader:1405:15)
+2025-11-19 20:51:42 +01:00:     at Hook._require.Module.require (/usr/lib/node_modules/pm2/node_modules/require-in-the-middle/index.js:81:25)
+2025-11-19 20:51:42 +01:00:     at require (node:internal/modules/helpers:135:16)
+2025-11-19 20:51:42 +01:00:     at new View (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/lib/view.js:81:14)
+2025-11-19 20:51:42 +01:00:     at Function.render (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/lib/application.js:552:12)
+2025-11-19 20:51:42 +01:00:     at ServerResponse.render (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express/lib/response.js:909:7)
+2025-11-19 20:51:42 +01:00:     at /run/media/zebratic/HDD_DATA/Work/localping/src/routes/public.js:9:7
+2025-11-19 20:51:42 +01:00:     at Layer.handleRequest (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/router/lib/layer.js:152:17)
+2025-11-19 20:51:42 +01:00:     at next (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/router/lib/route.js:157:13)
+2025-11-19 20:51:42 +01:00:     at Route.dispatch (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/router/lib/route.js:117:3)
+2025-11-19 20:59:34 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway

@@ -1,0 +1,47 @@
+2025-11-19 20:30:29 +01:00: [dotenv@17.2.3] injecting env (13) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+2025-11-19 20:30:29 +01:00: [dotenv@17.2.3] injecting env (0) from .env -- tip: ⚙️  override existing env vars with { override: true }
+2025-11-19 20:30:29 +01:00: [32m✓ MongoDB connected successfully[39m
+2025-11-19 20:30:29 +01:00: [32m✓ Database collections initialized[39m
+2025-11-19 20:30:29 +01:00: [32m✓ Connected to database[39m
+2025-11-19 20:30:29 +01:00: [32m✓ Detected IPv4 gateway:[39m 10.0.0.1 (undefined)
+2025-11-19 20:30:29 +01:00: [36m✓ API routes loaded[39m
+2025-11-19 20:30:29 +01:00: [36m✓ Admin routes loaded[39m
+2025-11-19 20:30:29 +01:00: [36m✓ Public routes loaded[39m
+2025-11-19 20:30:29 +01:00: [32m✓ Starting monitor for 0 targets[39m
+2025-11-19 20:30:29 +01:00: [32m✓ Server running on http://localhost:8000[39m
+2025-11-19 20:30:29 +01:00: [36m   Mode: all[39m
+2025-11-19 20:52:14 +01:00: [34m↪ Monitoring Gateway every 10s[39m
+2025-11-19 20:52:14 +01:00: [32m✓ Notification sent via DBus[39m Gateway is UP
+2025-11-19 20:52:14 +01:00: [32m✓ Gateway is UP[39m
+2025-11-19 20:52:25 +01:00: [34m↪ Monitoring Cloudflare every 10s[39m
+2025-11-19 20:52:25 +01:00: [32m✓ Notification sent via DBus[39m Cloudflare is UP
+2025-11-19 20:52:25 +01:00: [32m✓ Cloudflare is UP[39m
+2025-11-19 20:58:37 +01:00: [34m↪ Monitoring Google DNS every 30s[39m
+2025-11-19 20:58:37 +01:00: [32m✓ Notification sent via DBus[39m Google DNS is UP
+2025-11-19 20:58:37 +01:00: [32m✓ Google DNS is UP[39m
+2025-11-19 20:59:34 +01:00: [33m
+2025-11-19 20:59:34 +01:00: ✓ Received SIGINT, shutting down gracefully...[39m
+2025-11-19 20:59:34 +01:00: [33m⊘ Stopped all monitoring[39m
+2025-11-19 20:59:34 +01:00: [33m✓ MongoDB connection closed[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Server shut down successfully[39m
+2025-11-19 20:59:34 +01:00: [dotenv@17.2.3] injecting env (13) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+2025-11-19 20:59:34 +01:00: [dotenv@17.2.3] injecting env (0) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+2025-11-19 20:59:34 +01:00: [32m✓ MongoDB connected successfully[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Database collections initialized[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Connected to database[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Detected IPv4 gateway:[39m 10.0.0.1 (undefined)
+2025-11-19 20:59:34 +01:00: [36m✓ API routes loaded[39m
+2025-11-19 20:59:34 +01:00: [36m✓ Admin routes loaded[39m
+2025-11-19 20:59:34 +01:00: [36m✓ Public routes loaded[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Starting monitor for 3 targets[39m
+2025-11-19 20:59:34 +01:00: [34m↪ Monitoring Gateway every 10s[39m
+2025-11-19 20:59:34 +01:00: [34m↪ Monitoring Cloudflare every 10s[39m
+2025-11-19 20:59:34 +01:00: [34m↪ Monitoring Google DNS every 30s[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Server running on http://localhost:8000[39m
+2025-11-19 20:59:34 +01:00: [36m   Mode: all[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Notification sent via DBus[39m Gateway is UP
+2025-11-19 20:59:34 +01:00: [32m✓ Gateway is UP[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Notification sent via DBus[39m Cloudflare is UP
+2025-11-19 20:59:34 +01:00: [32m✓ Cloudflare is UP[39m
+2025-11-19 20:59:34 +01:00: [32m✓ Notification sent via DBus[39m Google DNS is UP
+2025-11-19 20:59:34 +01:00: [32m✓ Google DNS is UP[39m

@@ -52,6 +52,23 @@ router.get('/api/actions', async (req, res) => {
   }
 });
 
+// Get single action
+router.get('/api/actions/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const actionId = new ObjectId(req.params.id);
+    const action = await db.collection('actions').findOne({ _id: actionId });
+
+    if (!action) {
+      return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+
+    res.json({ success: true, action });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Create action
 router.post('/api/actions', async (req, res) => {
   try {
@@ -120,6 +137,26 @@ router.delete('/api/actions/:id', async (req, res) => {
     }
 
     res.json({ success: true, message: 'Action deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Aliases for API routes (support both paths for backward compatibility)
+router.post('/api/actions/:id/execute', async (req, res) => {
+  try {
+    const db = getDB();
+    const actionId = new ObjectId(req.params.id);
+    const action = await db.collection('actions').findOne({ _id: actionId });
+
+    if (!action) {
+      return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+
+    const actionService = require('../services/actionService');
+    const result = await actionService.executeAction(action);
+
+    res.json({ success: true, result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

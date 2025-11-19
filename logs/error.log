@@ -17,3 +17,11 @@
 2025-11-19 20:51:42 +01:00:     at next (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/router/lib/route.js:157:13)
 2025-11-19 20:51:42 +01:00:     at Route.dispatch (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/router/lib/route.js:117:3)
 2025-11-19 20:59:34 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 21:11:53 +01:00: Warning: connect.session() MemoryStore is not
+2025-11-19 21:11:53 +01:00: designed for a production environment, as it will leak
+2025-11-19 21:11:53 +01:00: memory, and will not scale past a single process.
+2025-11-19 21:11:53 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 21:17:45 +01:00: Warning: connect.session() MemoryStore is not
+2025-11-19 21:17:45 +01:00: designed for a production environment, as it will leak
+2025-11-19 21:17:45 +01:00: memory, and will not scale past a single process.
+2025-11-19 21:17:45 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway

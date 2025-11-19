@@ -1,5 +1,20 @@
 let currentTab = 'targets';
 
+// Get API key from environment or query parameter
+function getApiKey() {
+  const url = new URL(window.location);
+  return url.searchParams.get('apiKey') || localStorage.getItem('apiKey') || '';
+}
+
+// Configure axios to include API key by default
+axios.interceptors.request.use((config) => {
+  const apiKey = getApiKey();
+  if (apiKey) {
+    config.headers['X-API-Key'] = apiKey;
+  }
+  return config;
+});
+
 // Switch between tabs
 function switchTab(tab) {
   currentTab = tab;
@@ -202,6 +217,59 @@ async function testTarget(targetId) {
   }
 }
 
+// Edit target
+async function editTarget(targetId) {
+  try {
+    const res = await axios.get(`/api/targets/${targetId}`, {
+      headers: { 'X-API-Key': document.querySelector('[data-api-key]')?.getAttribute('data-api-key') || '' }
+    });
+    const target = res.data.target;
+
+    // Pre-fill the form
+    document.getElementById('target-name').value = target.name;
+    document.getElementById('target-host').value = target.host;
+    document.getElementById('target-protocol').value = target.protocol;
+    document.getElementById('target-port').value = target.port || '';
+    document.getElementById('target-interval').value = target.interval || 60;
+
+    // Change button text and form action
+    const modal = document.getElementById('add-target-modal');
+    const form = modal.querySelector('form');
+    const title = modal.querySelector('h2');
+
+    title.textContent = 'Edit Target';
+    form.dataset.targetId = targetId;
+    form.onsubmit = async (e) => await updateTarget(e, targetId);
+
+    modal.classList.remove('hidden');
+  } catch (error) {
+    alert('Error loading target: ' + error.message);
+  }
+}
+
+// Update target
+async function updateTarget(event, targetId) {
+  event.preventDefault();
+
+  const target = {
+    name: document.getElementById('target-name').value,
+    host: document.getElementById('target-host').value,
+    protocol: document.getElementById('target-protocol').value,
+    port: document.getElementById('target-port').value ? parseInt(document.getElementById('target-port').value) : null,
+    interval: document.getElementById('target-interval').value ? parseInt(document.getElementById('target-interval').value) : 60,
+  };
+
+  try {
+    await axios.put(`/api/targets/${targetId}`, target);
+    document.getElementById('add-target-modal').classList.add('hidden');
+    document.querySelector('#add-target-modal form').reset();
+    document.querySelector('#add-target-modal h2').textContent = 'Add Target';
+    loadTargets();
+  } catch (error) {
+    alert('Error updating target: ' + error.message);
+  }
+}
+
 // Delete target
 async function deleteTarget(targetId) {
   if (!confirm('Are you sure you want to delete this target?')) return;
@@ -308,6 +376,88 @@ async function addAction(event) {
     loadActions();
   } catch (error) {
     alert('Error adding action: ' + error.message);
+  }
+}
+
+// Edit action
+async function editAction(actionId) {
+  try {
+    const res = await axios.get(`/admin/api/actions/${actionId}`, {
+      headers: { 'X-API-Key': document.querySelector('[data-api-key]')?.getAttribute('data-api-key') || '' }
+    });
+    const action = res.data.action;
+
+    // Pre-fill the form
+    document.getElementById('action-name').value = action.name;
+    document.getElementById('action-type').value = action.type;
+    updateActionForm();
+
+    // Pre-fill type-specific fields
+    if (action.type === 'command') {
+      document.getElementById('action-command').value = action.command;
+    } else if (action.type === 'ssh') {
+      document.getElementById('action-ssh-host').value = action.host;
+      document.getElementById('action-ssh-user').value = action.user || '';
+      document.getElementById('action-ssh-port').value = action.port || 22;
+      document.getElementById('action-ssh-command').value = action.command;
+    } else if (action.type === 'http') {
+      document.getElementById('action-http-url').value = action.url;
+      document.getElementById('action-http-method').value = action.method || 'GET';
+    } else if (action.type === 'script') {
+      document.getElementById('action-script-path').value = action.scriptPath;
+    }
+
+    // Change button text and form action
+    const modal = document.getElementById('add-action-modal');
+    const form = modal.querySelector('form');
+    const title = modal.querySelector('h2');
+
+    title.textContent = 'Edit Action';
+    form.dataset.actionId = actionId;
+    form.onsubmit = async (e) => await updateAction(e, actionId);
+
+    modal.classList.remove('hidden');
+  } catch (error) {
+    alert('Error loading action: ' + error.message);
+  }
+}
+
+// Update action
+async function updateAction(event, actionId) {
+  event.preventDefault();
+
+  const type = document.getElementById('action-type').value;
+  const name = document.getElementById('action-name').value;
+
+  const action = {
+    name,
+    type,
+    description: '',
+  };
+
+  // Add type-specific fields
+  if (type === 'command') {
+    action.command = document.getElementById('action-command').value;
+  } else if (type === 'ssh') {
+    action.host = document.getElementById('action-ssh-host').value;
+    action.user = document.getElementById('action-ssh-user').value;
+    action.port = document.getElementById('action-ssh-port').value;
+    action.command = document.getElementById('action-ssh-command').value;
+  } else if (type === 'http') {
+    action.url = document.getElementById('action-http-url').value;
+    action.method = document.getElementById('action-http-method').value;
+  } else if (type === 'script') {
+    action.scriptPath = document.getElementById('action-script-path').value;
+  }
+
+  try {
+    await axios.put(`/admin/api/actions/${actionId}`, action);
+    document.getElementById('add-action-modal').classList.add('hidden');
+    document.querySelector('#add-action-modal form').reset();
+    document.querySelector('#add-action-modal h2').textContent = 'Add Action';
+    loadActions();
+  } catch (error) {
+    alert('Error updating action: ' + error.message);
   }
 }
 

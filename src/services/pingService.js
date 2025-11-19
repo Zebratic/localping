@@ -112,19 +112,24 @@ class PingService {
     return new Promise((resolve) => {
       const client = dgram.createSocket('udp4');
       const message = Buffer.from('ping');
+      let resolved = false; // Track if we've already resolved
 
       const timeoutHandle = setTimeout(() => {
-        client.close();
-        resolve({
-          success: false,
-          responseTime: Date.now() - start,
-          error: 'UDP ping timeout',
-          protocol: 'UDP',
-        });
+        if (!resolved) {
+          resolved = true;
+          client.close();
+          resolve({
+            success: false,
+            responseTime: Date.now() - start,
+            error: 'UDP ping timeout',
+            protocol: 'UDP',
+          });
+        }
       }, this.timeout);
 
       client.send(message, 0, message.length, port, host, (err) => {
-        if (err) {
+        if (err && !resolved) {
+          resolved = true;
           clearTimeout(timeoutHandle);
           client.close();
           resolve({
@@ -137,24 +142,30 @@ class PingService {
       });
 
       client.on('message', () => {
-        clearTimeout(timeoutHandle);
-        client.close();
-        resolve({
-          success: true,
-          responseTime: Date.now() - start,
-          protocol: 'UDP',
-        });
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeoutHandle);
+          client.close(); // Close immediately before resolve
+          resolve({
+            success: true,
+            responseTime: Date.now() - start,
+            protocol: 'UDP',
+          });
+        }
       });
 
       client.on('error', (err) => {
-        clearTimeout(timeoutHandle);
-        client.close();
-        resolve({
-          success: false,
-          responseTime: Date.now() - start,
-          error: 'UDP error: ' + err.message,
-          protocol: 'UDP',
-        });
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeoutHandle);
+          client.close();
+          resolve({
+            success: false,
+            responseTime: Date.now() - start,
+            error: 'UDP error: ' + err.message,
+            protocol: 'UDP',
+          });
+        }
       });
     });
   }
@@ -170,7 +181,7 @@ class PingService {
       });
 
       const responseTime = Date.now() - start;
-      const success = response.status >= 200 && response.status < 500;
+      const success = response.status >= 200 && response.status < 300;
 
       return {
         success,

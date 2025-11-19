@@ -8,6 +8,7 @@ const pingService = require('../services/pingService');
 const actionService = require('../services/actionService');
 const gatewayService = require('../services/gatewayService');
 const chalk = require('../utils/colors');
+const { validateTargetInput } = require('../middleware/auth');
 
 // Get all targets
 router.get('/targets', async (req, res) => {
@@ -51,7 +52,7 @@ router.get('/targets/:id', async (req, res) => {
 });
 
 // Create target
-router.post('/targets', async (req, res) => {
+router.post('/targets', validateTargetInput, async (req, res) => {
   try {
     const { name, host, port, protocol, interval, enabled, path } = req.body;
 
@@ -92,7 +93,7 @@ router.post('/targets', async (req, res) => {
 });
 
 // Update target
-router.put('/targets/:id', async (req, res) => {
+router.put('/targets/:id', validateTargetInput, async (req, res) => {
   try {
     const db = getDB();
     const targetId = new ObjectId(req.params.id);

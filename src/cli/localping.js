@@ -70,7 +70,7 @@ async function showStatus() {
   console.log(chalk.cyan('\n📊 LocalPing Status\n'));
   console.log(`Total Targets: ${chalk.bold(targets.length)}`);
   console.log(`Enabled Targets: ${chalk.bold(upTargets)}`);
-  console.log(`');
+  console.log();
 
   if (targets.length === 0) {
     console.log(chalk.yellow('No targets configured. Use "localping config" to add targets.'));

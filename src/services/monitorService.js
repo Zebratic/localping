@@ -33,10 +33,15 @@ class MonitorService {
    * Start monitoring a single target
    */
   startTargetMonitor(target) {
+    const targetIdStr = target._id.toString();
+
     // Clear existing interval if any
-    if (this.intervals.has(target._id.toString())) {
-      clearInterval(this.intervals.get(target._id.toString()));
+    if (this.intervals.has(targetIdStr)) {
+      clearInterval(this.intervals.get(targetIdStr));
     }
+
+    // Initialize status to 'unknown' - will be updated by first ping
+    this.targetStatus.set(targetIdStr, 'unknown');
 
     // Initial ping
     this.pingTarget(target);
@@ -46,7 +51,7 @@ class MonitorService {
       this.pingTarget(target);
     }, (target.interval || 60) * 1000);
 
-    this.intervals.set(target._id.toString(), interval);
+    this.intervals.set(targetIdStr, interval);
     console.log(chalk.blue(`↪ Monitoring ${target.name} every ${target.interval || 60}s`));
   }
 
@@ -58,6 +63,7 @@ class MonitorService {
       const result = await pingService.ping(target);
       const db = getDB();
       const timestamp = new Date();
+      const targetIdStr = target._id.toString();
 
       // Store ping result
       await db.collection('pingResults').insertOne({
@@ -66,18 +72,21 @@ class MonitorService {
         timestamp,
       });
 
-      // Get current status from database
-      const currentStatus = this.targetStatus.get(target._id.toString());
-      const isDown = !result.success;
+      // Get current in-memory status
+      const currentStatus = this.targetStatus.get(targetIdStr);
+      const newStatus = result.success ? 'up' : 'down';
 
-      // Check if status changed
-      if (isDown && currentStatus !== 'down') {
-        await this.handleTargetDown(target);
-        this.targetStatus.set(target._id.toString(), 'down');
-      } else if (!isDown && currentStatus !== 'up') {
-        await this.handleTargetUp(target);
-        this.targetStatus.set(target._id.toString(), 'up');
+      // Only trigger alerts if status actually changed (not just unknown -> known)
+      if (newStatus !== currentStatus && currentStatus !== 'unknown') {
+        if (newStatus === 'down') {
+          await this.handleTargetDown(target);
+        } else {
+          await this.handleTargetUp(target);
+        }
       }
+
+      // Always update status
+      this.targetStatus.set(targetIdStr, newStatus);
 
       // Update statistics
       await this.updateStatistics(target, result);

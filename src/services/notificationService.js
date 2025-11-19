@@ -1,8 +1,8 @@
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const { promisify } = require('util');
 const chalk = require('../utils/colors');
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 class NotificationService {
   constructor() {
@@ -41,34 +41,37 @@ class NotificationService {
    */
   async notifyLinux(title, message, urgency, expireTime, options) {
     try {
-      let cmd = `notify-send`;
+      // Build arguments array - this prevents shell injection
+      const args = [];
 
       // Set urgency
-      const urgencyMap = { low: 0, normal: 1, critical: 2 };
-      cmd += ` -u ${Object.keys(urgencyMap).find((k) => urgencyMap[k] === urgencyMap[urgency] || urgency)}`;
+      const urgencyMap = { low: 'low', normal: 'normal', critical: 'critical' };
+      const urgencyLevel = urgencyMap[urgency] || 'normal';
+      args.push('-u', urgencyLevel);
 
       // Set expire time
-      cmd += ` -t ${expireTime}`;
+      args.push('-t', String(expireTime));
 
       // Add icon if provided
       if (options.icon) {
-        cmd += ` -i ${options.icon}`;
+        args.push('-i', options.icon);
       }
 
       // Add category if provided
       if (options.category) {
-        cmd += ` -c ${options.category}`;
+        args.push('-c', options.category);
       }
 
-      // Add title and message
-      cmd += ` "${title}" "${message}"`;
+      // Add title and message - no quotes needed, execFile handles quoting
+      args.push(title, message);
 
-      const { stdout } = await execAsync(cmd);
+      // Use execFile instead of exec - no shell interpretation
+      const { stdout } = await execFileAsync('notify-send', args);
       console.log(chalk.green('✓ Notification sent via DBus'), title);
       return stdout.trim();
     } catch (error) {
       // Fallback if notify-send is not available
-      if (error.message.includes('not found')) {
+      if (error.message.includes('not found') || error.code === 'ENOENT') {
         console.warn(chalk.yellow('⚠ notify-send not available, using fallback'));
         return this.notifyFallback(title, message);
       }
@@ -81,11 +84,9 @@ class NotificationService {
    */
   async notifyMac(title, message) {
     try {
-      const script = `
-        display notification "${message}" with title "${title}"
-      `;
-      const cmd = `osascript -e '${script}'`;
-      await execAsync(cmd);
+      const script = `display notification "${message.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`;
+      // Use execFile with args instead of shell command
+      await execFileAsync('osascript', ['-e', script]);
       console.log(chalk.green('✓ Notification sent via macOS'), title);
     } catch (error) {
       console.error(chalk.red('macOS notification failed:'), error.message);

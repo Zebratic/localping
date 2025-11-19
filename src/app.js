@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const expressWs = require('express-ws');
+const session = require('express-session');
 const cors = require('cors');
 const path = require('path');
 const yargs = require('yargs/yargs');
@@ -10,6 +11,7 @@ const chalk = require('./utils/colors');
 const { connectDB, closeDB } = require('./config/db');
 const monitorService = require('./services/monitorService');
 const gatewayService = require('./services/gatewayService');
+const { apiKeyAuth, createRateLimiter, validateTargetInput } = require('./middleware/auth');
 
 // Parse command line arguments
 const argv = yargs(hideBin(process.argv))
@@ -27,6 +29,23 @@ expressWs(app);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
+
+// Session middleware for admin authentication
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'localping-dev-secret',
+  resave: false,
+  saveUninitialized: true,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    httpOnly: true,
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Rate limiting middleware
+const apiRateLimiter = createRateLimiter(15 * 60 * 1000, 100); // 100 requests per 15 minutes
+app.use('/api/', apiRateLimiter);
 
 // Set view engine
 app.set('view engine', 'ejs');
@@ -50,8 +69,9 @@ const startServer = async () => {
     // Import routes based on mode
     if (argv.mode === 'api' || argv.mode === 'all') {
       const apiRoutes = require('./routes/api');
-      app.use('/api', apiRoutes);
-      console.log(chalk.cyan('✓ API routes loaded'));
+      // Apply API key authentication to API routes
+      app.use('/api', apiKeyAuth, apiRoutes);
+      console.log(chalk.cyan('✓ API routes loaded with authentication'));
     }
 
     if (argv.mode === 'admin' || argv.mode === 'all') {

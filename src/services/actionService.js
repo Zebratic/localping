@@ -2,6 +2,7 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const axios = require('axios');
 const chalk = require('../utils/colors');
+const sh = require('shell-escape');
 
 const execAsync = promisify(exec);
 
@@ -76,23 +77,23 @@ class ActionService {
     const start = Date.now();
 
     try {
-      // Build SSH command
-      let cmd = 'ssh';
+      // Build SSH command with proper argument escaping
+      const sshArgs = [];
 
       // Add port if specified
       if (action.port) {
-        cmd += ` -p ${action.port}`;
+        sshArgs.push('-p', String(action.port));
       }
 
       // Add user@host
-      if (action.user) {
-        cmd += ` ${action.user}@${action.host}`;
-      } else {
-        cmd += ` ${action.host}`;
-      }
+      const host = action.user ? `${action.user}@${action.host}` : action.host;
+      sshArgs.push(host);
 
-      // Add the remote command
-      cmd += ` "${action.command}"`;
+      // Add the remote command - properly escaped
+      sshArgs.push(action.command);
+
+      // Use shell-escape to properly quote the entire command
+      const cmd = sh(['ssh', ...sshArgs]);
 
       const { stdout, stderr } = await execAsync(cmd, {
         timeout: action.timeout || 30000,
@@ -167,12 +168,16 @@ class ActionService {
     const start = Date.now();
 
     try {
-      let cmd = action.scriptPath;
+      // Build script command with proper argument escaping
+      const scriptArgs = [action.scriptPath];
 
-      // Add arguments if provided
+      // Add arguments if provided - each argument is separately escaped
       if (action.args && Array.isArray(action.args)) {
-        cmd += ' ' + action.args.join(' ');
+        scriptArgs.push(...action.args);
       }
+
+      // Use shell-escape to properly quote the command and arguments
+      const cmd = sh(scriptArgs);
 
       const { stdout, stderr } = await execAsync(cmd, {
         timeout: action.timeout || 60000,

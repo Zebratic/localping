@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LocalPing - System Status</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {}
+      }
+    }
+  </script>
+
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+  </style>
+</head>
+<body class="dark bg-slate-900 text-slate-100">
+  <div id="app">
+    <!-- Header -->
+    <div class="bg-gradient-to-r from-slate-800 to-slate-900 border-b border-slate-700 sticky top-0 z-40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between items-center h-20">
+          <div>
+            <h1 class="text-3xl font-bold text-cyan-400">LocalPing</h1>
+            <p class="text-slate-400 text-sm">System Status Monitor</p>
+          </div>
+          <div id="overall-status" class="text-right">
+            <p id="status-text" class="text-lg font-semibold">Loading...</p>
+            <p id="status-time" class="text-slate-400 text-sm">Last updated: -</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Overall Status Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Total Services</h3>
+          <p id="total-count" class="text-3xl font-bold text-cyan-400 mt-2">-</p>
+        </div>
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Operational</h3>
+          <p id="up-count" class="text-3xl font-bold text-green-400 mt-2">-</p>
+        </div>
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Degraded</h3>
+          <p id="down-count" class="text-3xl font-bold text-red-400 mt-2">-</p>
+        </div>
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Uptime (30d)</h3>
+          <p id="avg-uptime" class="text-3xl font-bold text-blue-400 mt-2">-</p>
+        </div>
+      </div>
+
+      <!-- Services Status -->
+      <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700">
+          <h2 class="text-xl font-bold">Services Status</h2>
+        </div>
+        <div id="services-list" class="divide-y divide-slate-700">
+          <p class="px-6 py-4 text-slate-400">Loading services...</p>
+        </div>
+      </div>
+
+      <!-- Service Details Section -->
+      <div id="service-details" class="mt-8 hidden">
+        <div class="bg-slate-800 rounded-lg border border-slate-700 p-6">
+          <h2 class="text-xl font-bold mb-6"><span id="detail-service-name"></span> - Uptime History</h2>
+          <div class="mb-6">
+            <canvas id="uptime-chart"></canvas>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div>
+              <p class="text-slate-400 text-sm">30-Day Uptime</p>
+              <p id="detail-uptime" class="text-2xl font-bold text-green-400">-</p>
+            </div>
+            <div>
+              <p class="text-slate-400 text-sm">Total Pings</p>
+              <p id="detail-pings" class="text-2xl font-bold">-</p>
+            </div>
+            <div>
+              <p class="text-slate-400 text-sm">Successful</p>
+              <p id="detail-successful" class="text-2xl font-bold text-green-400">-</p>
+            </div>
+            <div>
+              <p class="text-slate-400 text-sm">Failed</p>
+              <p id="detail-failed" class="text-2xl font-bold text-red-400">-</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="mt-12 text-center text-slate-500 text-sm">
+        <p>LocalPing System Monitor • Auto-updates every 30 seconds</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/public.js"></script>
+</body>
+</html>

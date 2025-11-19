@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LocalPing - Admin Panel</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {}
+      }
+    }
+  </script>
+
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    .fade-enter {
+      animation: fadeIn 0.3s ease-in;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+  </style>
+</head>
+<body class="dark bg-slate-900 text-slate-100">
+  <div id="app">
+    <!-- Navigation -->
+    <nav class="bg-slate-800 border-b border-slate-700 sticky top-0 z-40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between h-16">
+          <div class="flex items-center">
+            <h1 class="text-2xl font-bold text-cyan-400">LocalPing</h1>
+            <span class="ml-4 px-3 py-1 bg-cyan-900 text-cyan-200 rounded text-sm">Admin</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <button onclick="location.reload()" class="text-slate-400 hover:text-slate-100">
+              ↻ Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Header Stats -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Total Targets</h3>
+          <p id="total-targets" class="text-3xl font-bold text-cyan-400 mt-2">-</p>
+        </div>
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Targets Up</h3>
+          <p id="targets-up" class="text-3xl font-bold text-green-400 mt-2">-</p>
+        </div>
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Targets Down</h3>
+          <p id="targets-down" class="text-3xl font-bold text-red-400 mt-2">-</p>
+        </div>
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h3 class="text-slate-400 text-sm font-medium">Active Monitors</h3>
+          <p id="active-monitors" class="text-3xl font-bold text-blue-400 mt-2">-</p>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex gap-2 mb-6 border-b border-slate-700">
+        <button onclick="switchTab('targets')" id="tab-targets" class="px-4 py-2 border-b-2 border-cyan-400 text-cyan-400">
+          Targets
+        </button>
+        <button onclick="switchTab('alerts')" id="tab-alerts" class="px-4 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-100">
+          Alerts
+        </button>
+        <button onclick="switchTab('actions')" id="tab-actions" class="px-4 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-100">
+          Quick-Fix Actions
+        </button>
+      </div>
+
+      <!-- Targets Tab -->
+      <div id="tab-content-targets" class="tab-content">
+        <div class="mb-4 flex gap-2">
+          <button onclick="showAddTargetModal()" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">
+            + Add Target
+          </button>
+        </div>
+        <div id="targets-list" class="space-y-3">
+          <p class="text-slate-400">Loading targets...</p>
+        </div>
+      </div>
+
+      <!-- Alerts Tab -->
+      <div id="tab-content-alerts" class="tab-content hidden">
+        <div id="alerts-list" class="space-y-3">
+          <p class="text-slate-400">Loading alerts...</p>
+        </div>
+      </div>
+
+      <!-- Actions Tab -->
+      <div id="tab-content-actions" class="tab-content hidden">
+        <div class="mb-4 flex gap-2">
+          <button onclick="showAddActionModal()" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">
+            + Add Action
+          </button>
+        </div>
+        <div id="actions-list" class="space-y-3">
+          <p class="text-slate-400">Loading actions...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Target Modal -->
+  <div id="add-target-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4 border border-slate-700">
+      <h2 class="text-xl font-bold mb-4">Add Target</h2>
+      <form onsubmit="addTarget(event)">
+        <div class="space-y-4">
+          <input type="text" placeholder="Target Name" id="target-name" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+          <input type="text" placeholder="Host/IP" id="target-host" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+          <select id="target-protocol" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+            <option>ICMP</option>
+            <option>TCP</option>
+            <option>UDP</option>
+            <option>HTTP</option>
+            <option>HTTPS</option>
+          </select>
+          <input type="number" placeholder="Port (optional)" id="target-port" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+          <input type="number" placeholder="Interval (seconds)" id="target-interval" value="60" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+          <div class="flex gap-2">
+            <button type="submit" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">Add</button>
+            <button type="button" onclick="document.getElementById('add-target-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">Cancel</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Add Action Modal -->
+  <div id="add-action-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4 border border-slate-700">
+      <h2 class="text-xl font-bold mb-4">Add Quick-Fix Action</h2>
+      <form onsubmit="addAction(event)">
+        <div class="space-y-4">
+          <input type="text" placeholder="Action Name" id="action-name" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+          <select id="action-type" onchange="updateActionForm()" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+            <option value="">Select Type</option>
+            <option value="command">Command</option>
+            <option value="ssh">SSH</option>
+            <option value="http">HTTP Request</option>
+            <option value="script">Script</option>
+          </select>
+          <div id="action-fields"></div>
+          <div class="flex gap-2">
+            <button type="submit" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">Add</button>
+            <button type="button" onclick="document.getElementById('add-action-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">Cancel</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ const monitorService = require('../services/monitorService');
 const pingService = require('../services/pingService');
 const actionService = require('../services/actionService');
 const gatewayService = require('../services/gatewayService');
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 
 // Get all targets
 router.get('/targets', async (req, res) => {

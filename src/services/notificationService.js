@@ -1,6 +1,6 @@
 const { exec } = require('child_process');
 const { promisify } = require('util');
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 
 const execAsync = promisify(exec);
 

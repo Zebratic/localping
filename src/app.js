@@ -2,10 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const expressWs = require('express-ws');
 const cors = require('cors');
-const chalk = require('chalk');
 const path = require('path');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
+const chalk = require('./utils/colors');
 
 const { connectDB, closeDB } = require('./config/db');
 const monitorService = require('./services/monitorService');
@@ -60,12 +60,6 @@ const startServer = async () => {
       console.log(chalk.cyan('✓ Admin routes loaded'));
     }
 
-    if (argv.mode === 'public' || argv.mode === 'all') {
-      const publicRoutes = require('./routes/public');
-      app.use('/', publicRoutes);
-      console.log(chalk.cyan('✓ Public routes loaded'));
-    }
-
     // Health check endpoint
     app.get('/health', (req, res) => {
       res.json({
@@ -76,19 +70,12 @@ const startServer = async () => {
       });
     });
 
-    // Root endpoint
-    app.get('/', (req, res) => {
-      res.json({
-        name: 'LocalPing',
-        version: '0.1.0',
-        mode: argv.mode,
-        endpoints: {
-          api: '/api',
-          admin: '/admin',
-          health: '/health',
-        },
-      });
-    });
+    // Public routes - serves from root (must be last to not override specific routes)
+    if (argv.mode === 'public' || argv.mode === 'all') {
+      const publicRoutes = require('./routes/public');
+      app.use('/', publicRoutes);
+      console.log(chalk.cyan('✓ Public routes loaded'));
+    }
 
     // Start monitoring
     await monitorService.startMonitoring();

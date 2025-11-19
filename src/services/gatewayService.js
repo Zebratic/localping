@@ -1,5 +1,5 @@
 const { gateway4async, gateway6async } = require('default-gateway');
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 
 class GatewayService {
   constructor() {

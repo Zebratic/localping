@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 require('dotenv').config();
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
 const inquirer = require('inquirer');

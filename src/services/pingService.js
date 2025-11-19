@@ -4,7 +4,7 @@ const axios = require('axios');
 const tcpPing = require('tcp-ping');
 const { promisify: promisifyTcp } = require('util');
 const dgram = require('dgram');
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 
 const execAsync = promisify(exec);
 

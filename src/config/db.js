@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { MongoClient, Db } = require('mongodb');
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 
 let db = null;
 let client = null;

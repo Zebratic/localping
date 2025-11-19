@@ -1,7 +1,7 @@
 const { getDB } = require('../config/db');
 const pingService = require('./pingService');
 const notificationService = require('./notificationService');
-const chalk = require('chalk');
+const chalk = require('../utils/colors');
 const { v4: uuidv4 } = require('uuid');
 
 class MonitorService {

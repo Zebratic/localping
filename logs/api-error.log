@@ -1,0 +1,231 @@
+2025-11-19 20:18:35 +01:00: TypeError: chalk.red is not a function
+2025-11-19 20:18:35 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:103:25)
+2025-11-19 20:18:35 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+2025-11-19 20:27:40 +01:00: TypeError: chalk.yellow is not a function
+2025-11-19 20:27:40 +01:00:     at shutdown (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:110:21)
+2025-11-19 20:27:40 +01:00:     at process.<anonymous> (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:124:28)
+2025-11-19 20:27:40 +01:00:     at process.emit (node:events:507:28)
+2025-11-19 20:27:42 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:42 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:42 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:42 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:42 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:42 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:42 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:42 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:42 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:42 +01:00:   errno: -98,
+2025-11-19 20:27:42 +01:00:   syscall: 'listen',
+2025-11-19 20:27:42 +01:00:   address: '::',
+2025-11-19 20:27:42 +01:00:   port: 3000
+2025-11-19 20:27:42 +01:00: }
+2025-11-19 20:27:42 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:42 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:42 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:42 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:42 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:42 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:42 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:42 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:42 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:42 +01:00:   errno: -98,
+2025-11-19 20:27:42 +01:00:   syscall: 'listen',
+2025-11-19 20:27:42 +01:00:   address: '::',
+2025-11-19 20:27:42 +01:00:   port: 3000
+2025-11-19 20:27:42 +01:00: }
+2025-11-19 20:27:42 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:42 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:42 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:42 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:42 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:42 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:42 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:42 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:42 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:42 +01:00:   errno: -98,
+2025-11-19 20:27:42 +01:00:   syscall: 'listen',
+2025-11-19 20:27:42 +01:00:   address: '::',
+2025-11-19 20:27:42 +01:00:   port: 3000
+2025-11-19 20:27:42 +01:00: }
+2025-11-19 20:27:42 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:42 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:42 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:42 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:42 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:42 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:42 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:42 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:42 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:42 +01:00:   errno: -98,
+2025-11-19 20:27:42 +01:00:   syscall: 'listen',
+2025-11-19 20:27:42 +01:00:   address: '::',
+2025-11-19 20:27:42 +01:00:   port: 3000
+2025-11-19 20:27:42 +01:00: }
+2025-11-19 20:27:42 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:42 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:42 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:42 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:42 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:42 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:42 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:42 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:42 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:42 +01:00:   errno: -98,
+2025-11-19 20:27:42 +01:00:   syscall: 'listen',
+2025-11-19 20:27:42 +01:00:   address: '::',
+2025-11-19 20:27:42 +01:00:   port: 3000
+2025-11-19 20:27:42 +01:00: }
+2025-11-19 20:27:42 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:42 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:42 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:42 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:42 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:42 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:42 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:42 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:42 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:42 +01:00:   errno: -98,
+2025-11-19 20:27:42 +01:00:   syscall: 'listen',
+2025-11-19 20:27:42 +01:00:   address: '::',
+2025-11-19 20:27:42 +01:00:   port: 3000
+2025-11-19 20:27:42 +01:00: }
+2025-11-19 20:27:43 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:43 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:43 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:43 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:43 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:43 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:43 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:43 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:43 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:43 +01:00:   errno: -98,
+2025-11-19 20:27:43 +01:00:   syscall: 'listen',
+2025-11-19 20:27:43 +01:00:   address: '::',
+2025-11-19 20:27:43 +01:00:   port: 3000
+2025-11-19 20:27:43 +01:00: }
+2025-11-19 20:27:43 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:43 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:43 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:43 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:43 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:43 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:43 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:43 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:43 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:43 +01:00:   errno: -98,
+2025-11-19 20:27:43 +01:00:   syscall: 'listen',
+2025-11-19 20:27:43 +01:00:   address: '::',
+2025-11-19 20:27:43 +01:00:   port: 3000
+2025-11-19 20:27:43 +01:00: }
+2025-11-19 20:27:43 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:43 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:43 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:43 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:43 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:43 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:43 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:43 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:43 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:43 +01:00:   errno: -98,
+2025-11-19 20:27:43 +01:00:   syscall: 'listen',
+2025-11-19 20:27:43 +01:00:   address: '::',
+2025-11-19 20:27:43 +01:00:   port: 3000
+2025-11-19 20:27:43 +01:00: }
+2025-11-19 20:27:43 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:43 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:43 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:43 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:43 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:43 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:43 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:43 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:43 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:43 +01:00:   errno: -98,
+2025-11-19 20:27:43 +01:00:   syscall: 'listen',
+2025-11-19 20:27:43 +01:00:   address: '::',
+2025-11-19 20:27:43 +01:00:   port: 3000
+2025-11-19 20:27:43 +01:00: }
+2025-11-19 20:27:43 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:43 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:43 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:43 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:43 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:43 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:43 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:43 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:43 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:43 +01:00:   errno: -98,
+2025-11-19 20:27:43 +01:00:   syscall: 'listen',
+2025-11-19 20:27:43 +01:00:   address: '::',
+2025-11-19 20:27:43 +01:00:   port: 3000
+2025-11-19 20:27:43 +01:00: }
+2025-11-19 20:27:44 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:44 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:44 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:44 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:44 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:44 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:44 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:44 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:44 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:44 +01:00:   errno: -98,
+2025-11-19 20:27:44 +01:00:   syscall: 'listen',
+2025-11-19 20:27:44 +01:00:   address: '::',
+2025-11-19 20:27:44 +01:00:   port: 3000
+2025-11-19 20:27:44 +01:00: }
+2025-11-19 20:27:44 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:44 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:44 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:44 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:44 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:44 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:44 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:44 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:44 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:44 +01:00:   errno: -98,
+2025-11-19 20:27:44 +01:00:   syscall: 'listen',
+2025-11-19 20:27:44 +01:00:   address: '::',
+2025-11-19 20:27:44 +01:00:   port: 3000
+2025-11-19 20:27:44 +01:00: }
+2025-11-19 20:27:44 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:44 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:44 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:44 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:44 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:44 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:44 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:44 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:44 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:44 +01:00:   errno: -98,
+2025-11-19 20:27:44 +01:00:   syscall: 'listen',
+2025-11-19 20:27:44 +01:00:   address: '::',
+2025-11-19 20:27:44 +01:00:   port: 3000
+2025-11-19 20:27:44 +01:00: }
+2025-11-19 20:27:44 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:44 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:44 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:44 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:44 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:44 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:44 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:44 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:44 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:44 +01:00:   errno: -98,
+2025-11-19 20:27:44 +01:00:   syscall: 'listen',
+2025-11-19 20:27:44 +01:00:   address: '::',
+2025-11-19 20:27:44 +01:00:   port: 3000
+2025-11-19 20:27:44 +01:00: }
+2025-11-19 20:27:44 +01:00: [33m⚠ Could not detect IPv6 gateway:[39m Unable to determine default gateway
+2025-11-19 20:27:44 +01:00: Error: listen EADDRINUSE: address already in use :::3000
+2025-11-19 20:27:44 +01:00:     at Server.setupListenHandle [as _listen2] (node:net:1939:16)
+2025-11-19 20:27:44 +01:00:     at listenInCluster (node:net:1996:12)
+2025-11-19 20:27:44 +01:00:     at Server.listen (node:net:2101:7)
+2025-11-19 20:27:44 +01:00:     at Function.serverListen [as listen] (/run/media/zebratic/HDD_DATA/Work/localping/node_modules/express-ws/lib/index.js:42:40)
+2025-11-19 20:27:44 +01:00:     at startServer (/run/media/zebratic/HDD_DATA/Work/localping/src/app.js:98:9)
+2025-11-19 20:27:44 +01:00:     at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+2025-11-19 20:27:44 +01:00:   code: 'EADDRINUSE',
+2025-11-19 20:27:44 +01:00:   errno: -98,
+2025-11-19 20:27:44 +01:00:   syscall: 'listen',
+2025-11-19 20:27:44 +01:00:   address: '::',
+2025-11-19 20:27:44 +01:00:   port: 3000
+2025-11-19 20:27:44 +01:00: }

@@ -117,38 +117,67 @@ function createRateLimiter(windowMs = 15 * 60 * 1000, maxRequests = 100) {
 /**
  * Input Validation Middleware
  * Validates that required fields are present and valid
+ * For PUT requests, allows partial updates (only validates provided fields)
  */
 function validateTargetInput(req, res, next) {
   const { name, host, protocol, port, interval } = req.body;
+  const isUpdate = req.method === 'PUT';
 
   const errors = [];
 
-  // Validate name
-  if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    errors.push('Target name is required and must be a non-empty string');
+  // For PUT requests, only validate fields that are provided
+  // For POST requests, validate all required fields
+  if (!isUpdate) {
+    // Validate name (required for POST)
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      errors.push('Target name is required and must be a non-empty string');
+    }
+
+    // Validate host (required for POST)
+    if (!host || typeof host !== 'string' || host.trim().length === 0) {
+      errors.push('Host is required and must be a non-empty string');
+    }
+
+    // Validate protocol (required for POST)
+    const validProtocols = ['ICMP', 'TCP', 'UDP', 'HTTP', 'HTTPS'];
+    if (!protocol || !validProtocols.includes(protocol.toUpperCase())) {
+      errors.push(`Protocol must be one of: ${validProtocols.join(', ')}`);
+    }
+  } else {
+    // For PUT requests, only validate provided fields
+    // Validate name if provided
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length === 0) {
+        errors.push('Target name must be a non-empty string');
+      }
+    }
+
+    // Validate host if provided
+    if (host !== undefined) {
+      if (typeof host !== 'string' || host.trim().length === 0) {
+        errors.push('Host must be a non-empty string');
+      }
+    }
+
+    // Validate protocol if provided
+    if (protocol !== undefined) {
+      const validProtocols = ['ICMP', 'TCP', 'UDP', 'HTTP', 'HTTPS'];
+      if (!validProtocols.includes(protocol.toUpperCase())) {
+        errors.push(`Protocol must be one of: ${validProtocols.join(', ')}`);
+      }
+    }
   }
 
-  // Validate host
-  if (!host || typeof host !== 'string' || host.trim().length === 0) {
-    errors.push('Host is required and must be a non-empty string');
-  }
-
-  // Validate protocol
-  const validProtocols = ['ICMP', 'TCP', 'UDP', 'HTTP', 'HTTPS'];
-  if (!protocol || !validProtocols.includes(protocol.toUpperCase())) {
-    errors.push(`Protocol must be one of: ${validProtocols.join(', ')}`);
-  }
-
-  // Validate port if provided
-  if (port !== undefined) {
+  // Validate port if provided (null means no custom port, which is valid)
+  if (port !== undefined && port !== null) {
     const portNum = parseInt(port, 10);
     if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
       errors.push('Port must be a number between 1 and 65535');
     }
   }
 
-  // Validate interval if provided
-  if (interval !== undefined) {
+  // Validate interval if provided (null means use default, which is valid)
+  if (interval !== undefined && interval !== null) {
     const intervalNum = parseInt(interval, 10);
     if (isNaN(intervalNum) || intervalNum < 5 || intervalNum > 3600) {
       errors.push('Interval must be a number between 5 and 3600 seconds');

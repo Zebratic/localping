@@ -54,7 +54,31 @@ router.get('/targets/:id', async (req, res) => {
 // Create target
 router.post('/targets', validateTargetInput, async (req, res) => {
   try {
-    const { name, host, port, protocol, interval, enabled, path } = req.body;
+    const {
+      name,
+      host,
+      port,
+      protocol,
+      interval,
+      enabled,
+      path,
+      // Advanced settings
+      appUrl,
+      appIcon,
+      retries,
+      retryInterval,
+      timeout,
+      httpMethod,
+      statusCodes,
+      maxRedirects,
+      ignoreSsl,
+      upsideDown,
+      auth,
+      // Public UI settings
+      position,
+      group,
+      quickCommands,
+    } = req.body;
 
     if (!name || !host || !protocol) {
       return res.status(400).json({
@@ -72,6 +96,26 @@ router.post('/targets', validateTargetInput, async (req, res) => {
       interval: interval || 60,
       enabled: enabled !== false,
       path: path || null,
+      // Application settings
+      appUrl: appUrl || null,
+      appIcon: appIcon || null,
+      // Retry settings
+      retries: retries !== undefined ? retries : 0,
+      retryInterval: retryInterval !== undefined ? retryInterval : 5,
+      // HTTP settings
+      timeout: timeout !== undefined ? timeout : 30,
+      httpMethod: httpMethod || 'GET',
+      statusCodes: statusCodes || '200-299',
+      maxRedirects: maxRedirects !== undefined ? maxRedirects : 5,
+      // Advanced options
+      ignoreSsl: ignoreSsl === true,
+      upsideDown: upsideDown === true,
+      // Authentication
+      auth: auth || null,
+      // Public UI settings
+      position: position !== undefined ? position : 0,
+      group: group || null,
+      quickCommands: quickCommands || [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -97,15 +141,61 @@ router.put('/targets/:id', validateTargetInput, async (req, res) => {
   try {
     const db = getDB();
     const targetId = new ObjectId(req.params.id);
-    const { name, host, port, protocol, interval, enabled, path } = req.body;
+    const {
+      name,
+      host,
+      port,
+      protocol,
+      interval,
+      enabled,
+      path,
+      // Advanced settings
+      appUrl,
+      appIcon,
+      retries,
+      retryInterval,
+      timeout,
+      httpMethod,
+      statusCodes,
+      maxRedirects,
+      ignoreSsl,
+      upsideDown,
+      auth,
+      // Public UI settings
+      position,
+      group,
+      quickCommands,
+    } = req.body;
 
     const updateData = {};
+    // Basic fields
     if (name !== undefined) updateData.name = name;
     if (host !== undefined) updateData.host = host;
     if (port !== undefined) updateData.port = port;
     if (protocol !== undefined) updateData.protocol = protocol.toUpperCase();
     if (interval !== undefined) updateData.interval = interval;
     if (path !== undefined) updateData.path = path;
+    // Application settings
+    if (appUrl !== undefined) updateData.appUrl = appUrl;
+    if (appIcon !== undefined) updateData.appIcon = appIcon;
+    // Retry settings
+    if (retries !== undefined) updateData.retries = retries;
+    if (retryInterval !== undefined) updateData.retryInterval = retryInterval;
+    // HTTP settings
+    if (timeout !== undefined) updateData.timeout = timeout;
+    if (httpMethod !== undefined) updateData.httpMethod = httpMethod;
+    if (statusCodes !== undefined) updateData.statusCodes = statusCodes;
+    if (maxRedirects !== undefined) updateData.maxRedirects = maxRedirects;
+    // Advanced options
+    if (ignoreSsl !== undefined) updateData.ignoreSsl = ignoreSsl === true;
+    if (upsideDown !== undefined) updateData.upsideDown = upsideDown === true;
+    // Authentication
+    if (auth !== undefined) updateData.auth = auth;
+    // Public UI settings
+    if (position !== undefined) updateData.position = position;
+    if (group !== undefined) updateData.group = group;
+    if (quickCommands !== undefined) updateData.quickCommands = quickCommands;
+
     updateData.updatedAt = new Date();
 
     const result = await db.collection('targets').updateOne({ _id: targetId }, { $set: updateData });

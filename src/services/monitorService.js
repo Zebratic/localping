@@ -1,6 +1,7 @@
 const { getDB } = require('../config/db');
 const pingService = require('./pingService');
 const notificationService = require('./notificationService');
+const sqliteService = require('./sqliteService');
 const chalk = require('../utils/colors');
 const { v4: uuidv4 } = require('uuid');
 
@@ -9,6 +10,7 @@ class MonitorService {
     this.intervals = new Map();
     this.targetStatus = new Map(); // Track current status of targets
     this.lastAlertTime = new Map(); // Prevent alert spam
+    this.failureCount = new Map(); // Track consecutive failures for retry logic
   }
 
   /**
@@ -65,22 +67,57 @@ class MonitorService {
       const timestamp = new Date();
       const targetIdStr = target._id.toString();
 
-      // Store ping result
+      // Store ping result in MongoDB
       await db.collection('pingResults').insertOne({
         targetId: target._id,
         ...result,
         timestamp,
       });
 
+      // Also store in SQLite for local persistence
+      sqliteService.storePingResult(targetIdStr, {
+        success: result.success,
+        responseTime: result.responseTime,
+        statusCode: result.statusCode,
+        error: result.error,
+      });
+
       // Get current in-memory status
       const currentStatus = this.targetStatus.get(targetIdStr);
-      const newStatus = result.success ? 'up' : 'down';
+
+      // Determine status based on ping result and upside down mode
+      let pingSuccess = result.success;
+      if (target.upsideDown === true) {
+        pingSuccess = !pingSuccess; // Invert the status
+      }
+
+      // Handle retry logic
+      const maxRetries = target.retries || 0;
+      let newStatus = 'unknown';
+
+      if (pingSuccess) {
+        // Success - reset failure counter
+        this.failureCount.set(targetIdStr, 0);
+        newStatus = 'up';
+      } else {
+        // Failure - increment counter
+        const currentFailures = (this.failureCount.get(targetIdStr) || 0) + 1;
+        this.failureCount.set(targetIdStr, currentFailures);
+
+        // Only mark as down if we've exceeded retry threshold
+        if (currentFailures > maxRetries) {
+          newStatus = 'down';
+        } else {
+          // Still retrying, keep current status or mark as unknown
+          newStatus = currentStatus || 'unknown';
+        }
+      }
 
       // Only trigger alerts if status actually changed (not just unknown -> known)
       if (newStatus !== currentStatus && currentStatus !== 'unknown') {
         if (newStatus === 'down') {
           await this.handleTargetDown(target);
-        } else {
+        } else if (newStatus === 'up') {
           await this.handleTargetUp(target);
         }
       }
@@ -198,6 +235,7 @@ class MonitorService {
       this.intervals.delete(targetIdStr);
       this.targetStatus.delete(targetIdStr);
       this.lastAlertTime.delete(targetIdStr);
+      this.failureCount.delete(targetIdStr);
       console.log(chalk.yellow(`⊘ Stopped monitoring ${targetIdStr}`));
     }
   }

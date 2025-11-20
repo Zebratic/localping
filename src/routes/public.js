@@ -3,6 +3,7 @@ const router = express.Router();
 const { getDB } = require('../config/db');
 const { ObjectId } = require('mongodb');
 const monitorService = require('../services/monitorService');
+const faviconService = require('../services/faviconService');
 
 // Public status page
 router.get('/', (req, res) => {
@@ -116,13 +117,50 @@ router.get('/api/status', async (req, res) => {
 
     const targets = await db.collection('targets').find({ enabled: true }).toArray();
 
-    const targetsWithStatus = targets.map((target) => ({
-      _id: target._id,
-      name: target.name,
-      host: target.host,
-      protocol: target.protocol,
-      currentStatus: monitorService.getTargetStatus(target._id),
-      isUp: monitorService.getTargetStatus(target._id) === 'up',
+    // Fetch favicons for apps asynchronously
+    const targetsWithStatus = await Promise.all(targets.map(async (target) => {
+      let favicon = null;
+
+      // If this is an app (has appUrl), try to fetch favicon
+      if (target.appUrl) {
+        // Check if we have a cached favicon
+        let cachedFavicon = await db.collection('favicons').findOne({ appUrl: target.appUrl });
+
+        if (cachedFavicon) {
+          favicon = cachedFavicon.favicon;
+        } else {
+          // Fetch favicon and cache it
+          favicon = await faviconService.getFavicon(target.appUrl);
+          if (favicon) {
+            await db.collection('favicons').updateOne(
+              { appUrl: target.appUrl },
+              {
+                $set: {
+                  appUrl: target.appUrl,
+                  favicon: favicon,
+                  updatedAt: new Date(),
+                },
+              },
+              { upsert: true }
+            );
+          }
+        }
+      }
+
+      return {
+        _id: target._id,
+        name: target.name,
+        host: target.host,
+        protocol: target.protocol,
+        appUrl: target.appUrl,
+        appIcon: target.appIcon,
+        favicon: favicon,
+        currentStatus: monitorService.getTargetStatus(target._id),
+        isUp: monitorService.getTargetStatus(target._id) === 'up',
+        position: target.position || 0,
+        group: target.group || null,
+        quickCommands: target.quickCommands || [],
+      };
     }));
 
     const upCount = targetsWithStatus.filter((t) => t.isUp).length;
@@ -139,6 +177,23 @@ router.get('/api/status', async (req, res) => {
       targets: targetsWithStatus,
       timestamp: new Date(),
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Public API - Get incidents (read-only)
+router.get('/api/incidents', async (req, res) => {
+  try {
+    const db = getDB();
+
+    const incidents = await db
+      .collection('incidents')
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, incidents });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

@@ -11,6 +11,7 @@ const chalk = require('./utils/colors');
 const { connectDB, closeDB } = require('./config/db');
 const monitorService = require('./services/monitorService');
 const gatewayService = require('./services/gatewayService');
+const sqliteService = require('./services/sqliteService');
 const { apiKeyAuth, createRateLimiter, validateTargetInput } = require('./middleware/auth');
 
 // Parse command line arguments
@@ -43,8 +44,16 @@ app.use(session({
   }
 }));
 
-// Rate limiting middleware
-const apiRateLimiter = createRateLimiter(15 * 60 * 1000, 100); // 100 requests per 15 minutes
+// Rate limiting middleware (skip for localhost development)
+const apiRateLimiter = (req, res, next) => {
+  const isLocalhost = req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1';
+  if (isLocalhost && process.env.NODE_ENV !== 'production') {
+    // Skip rate limiting for localhost in development
+    return next();
+  }
+  // Apply rate limiter for production or remote IPs
+  createRateLimiter(15 * 60 * 1000, 100)(req, res, next);
+};
 app.use('/api/', apiRateLimiter);
 
 // Set view engine
@@ -59,26 +68,20 @@ let db = null;
 
 const startServer = async () => {
   try {
-    // Connect to database
+    // Initialize SQLite database
+    sqliteService.initializeDatabase();
+
+    // Connect to MongoDB database
     db = await connectDB();
     console.log(chalk.green('✓ Connected to database'));
 
     // Detect gateway
     await gatewayService.detectAllGateways();
 
-    // Import routes based on mode
-    if (argv.mode === 'api' || argv.mode === 'all') {
-      const apiRoutes = require('./routes/api');
-      // Apply API key authentication to API routes
-      app.use('/api', apiKeyAuth, apiRoutes);
-      console.log(chalk.cyan('✓ API routes loaded with authentication'));
-    }
-
-    if (argv.mode === 'admin' || argv.mode === 'all') {
-      const adminRoutes = require('./routes/admin');
-      app.use('/admin', adminRoutes);
-      console.log(chalk.cyan('✓ Admin routes loaded'));
-    }
+    // Set up periodic cleanup of old SQLite data
+    setInterval(() => {
+      sqliteService.cleanupOldData();
+    }, 24 * 60 * 60 * 1000); // Run daily
 
     // Health check endpoint
     app.get('/health', (req, res) => {
@@ -90,11 +93,26 @@ const startServer = async () => {
       });
     });
 
-    // Public routes - serves from root (must be last to not override specific routes)
+    // Public routes - load FIRST so they don't get caught by authenticated API routes
     if (argv.mode === 'public' || argv.mode === 'all') {
       const publicRoutes = require('./routes/public');
       app.use('/', publicRoutes);
       console.log(chalk.cyan('✓ Public routes loaded'));
+    }
+
+    // Admin routes - must be before authenticated API routes
+    if (argv.mode === 'admin' || argv.mode === 'all') {
+      const adminRoutes = require('./routes/admin');
+      app.use('/admin', adminRoutes);
+      console.log(chalk.cyan('✓ Admin routes loaded'));
+    }
+
+    // Authenticated API routes - load LAST so public routes are matched first
+    if (argv.mode === 'api' || argv.mode === 'all') {
+      const apiRoutes = require('./routes/api');
+      // Apply API key authentication to API routes
+      app.use('/api', apiKeyAuth, apiRoutes);
+      console.log(chalk.cyan('✓ API routes loaded with authentication'));
     }
 
     // Start monitoring
@@ -119,6 +137,7 @@ const shutdown = async (signal) => {
   try {
     monitorService.stopAllMonitoring();
     await closeDB();
+    sqliteService.closeDatabase();
     console.log(chalk.green('✓ Server shut down successfully'));
     process.exit(0);
   } catch (error) {

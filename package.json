@@ -16,7 +16,9 @@
     "pm2:stop": "pm2 stop all",
     "pm2:logs": "pm2 logs",
     "pm2:restart": "pm2 restart all",
-    "test": "echo \"Tests not yet configured\""
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "keywords": [
     "uptime",
@@ -32,6 +34,7 @@
   },
   "dependencies": {
     "axios": "^1.13.2",
+    "better-sqlite3": "^12.4.1",
     "chalk": "^5.6.2",
     "cors": "^2.8.5",
     "default-gateway": "^7.2.2",
@@ -50,5 +53,10 @@
     "tcp-ping": "^0.1.1",
     "uuid": "^13.0.0",
     "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@babel/preset-env": "^7.28.5",
+    "@babel/preset-typescript": "^7.28.5",
+    "jest": "^29.7.0"
   }
 }

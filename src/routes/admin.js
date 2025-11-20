@@ -3,6 +3,7 @@ const router = express.Router();
 const { getDB } = require('../config/db');
 const { ObjectId } = require('mongodb');
 const monitorService = require('../services/monitorService');
+const IncidentService = require('../services/incidentService');
 
 // Admin dashboard
 router.get('/', (req, res) => {
@@ -157,6 +158,109 @@ router.post('/api/actions/:id/execute', async (req, res) => {
     const result = await actionService.executeAction(action);
 
     res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ INCIDENT MANAGEMENT ROUTES ============
+
+// Get all incidents
+router.get('/api/incidents', async (req, res) => {
+  try {
+    const db = getDB();
+    const incidentService = new IncidentService(db);
+    const incidents = await incidentService.getIncidents();
+
+    res.json({ success: true, incidents });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get single incident
+router.get('/api/incidents/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const incidentService = new IncidentService(db);
+    const incident = await incidentService.getIncidentById(req.params.id);
+
+    if (!incident) {
+      return res.status(404).json({ success: false, error: 'Incident not found' });
+    }
+
+    res.json({ success: true, incident });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create incident
+router.post('/api/incidents', async (req, res) => {
+  try {
+    const db = getDB();
+    const incidentService = new IncidentService(db);
+    const { title, description, status, severity, affectedServices } = req.body;
+
+    if (!title || !description) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title and description are required',
+      });
+    }
+
+    const result = await incidentService.createIncident({
+      title,
+      description,
+      status,
+      severity,
+      affectedServices,
+    });
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update incident
+router.put('/api/incidents/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const incidentService = new IncidentService(db);
+    const { title, description, status, severity, affectedServices, updateMessage } = req.body;
+
+    const updated = await incidentService.updateIncident(req.params.id, {
+      title,
+      description,
+      status,
+      severity,
+      affectedServices,
+      updateMessage,
+    });
+
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Incident not found' });
+    }
+
+    res.json({ success: true, message: 'Incident updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete incident
+router.delete('/api/incidents/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const incidentService = new IncidentService(db);
+    const deleted = await incidentService.deleteIncident(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: 'Incident not found' });
+    }
+
+    res.json({ success: true, message: 'Incident deleted' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

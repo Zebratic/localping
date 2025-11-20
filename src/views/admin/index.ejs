@@ -22,146 +22,617 @@
     :root {
       color-scheme: dark;
     }
+
+    .uptime-bar {
+      display: inline-flex;
+      gap: 1px;
+      flex-wrap: wrap;
+    }
+
+    .uptime-segment {
+      width: 6px;
+      height: 20px;
+      border-radius: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .uptime-segment:hover {
+      transform: scaleY(1.3);
+    }
+
+    .uptime-segment.up {
+      background-color: #10b981;
+    }
+
+    .uptime-segment.down {
+      background-color: #ef4444;
+    }
+
     .fade-enter {
       animation: fadeIn 0.3s ease-in;
     }
+
     @keyframes fadeIn {
       from { opacity: 0; }
       to { opacity: 1; }
     }
+
+    .service-item-selected {
+      background-color: #334155;
+      border-left: 3px solid #06b6d4;
+    }
+
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      min-width: 350px;
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+      z-index: 1000;
+      animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes slideOut {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+    }
+
+    .notification.success {
+      background-color: #065f46;
+      border: 1px solid #10b981;
+      color: #d1fae5;
+    }
+
+    .notification.error {
+      background-color: #7f1d1d;
+      border: 1px solid #ef4444;
+      color: #fee2e2;
+    }
+
+    .notification-title {
+      font-weight: 600;
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .notification-stat {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.25rem 0;
+      font-size: 0.95rem;
+    }
+
+    .notification-close {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      font-size: 1.5rem;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    .notification-close:hover {
+      opacity: 1;
+    }
+
+    /* Sidebar Compact Styles */
+    .sidebar-top-expanded {
+      padding: 1rem;
+      gap: 1rem;
+    }
+
+    .sidebar-top-compact {
+      padding: 0.5rem;
+      gap: 0.5rem;
+    }
+
+    .sidebar-top-compact .bg-slate-700 {
+      padding: 0.5rem;
+    }
+
+    .sidebar-top-compact p.text-2xl {
+      font-size: 1.25rem;
+    }
+
+    .sidebar-top-compact button {
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+    }
   </style>
 </head>
 <body class="dark bg-slate-900 text-slate-100">
-  <div id="app">
-    <!-- Navigation -->
-    <nav class="bg-slate-800 border-b border-slate-700 sticky top-0 z-40">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16">
-          <div class="flex items-center">
-            <h1 class="text-2xl font-bold text-cyan-400">LocalPing</h1>
-            <span class="ml-4 px-3 py-1 bg-cyan-900 text-cyan-200 rounded text-sm">Admin</span>
-          </div>
+  <div id="app" class="min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-slate-800 border-b border-slate-700 sticky top-0 z-40">
+      <div class="px-6 py-4">
+        <div class="flex justify-between items-center">
           <div class="flex items-center gap-4">
-            <button onclick="location.reload()" class="text-slate-400 hover:text-slate-100">
+            <h1 class="text-2xl font-bold text-cyan-400">LocalPing</h1>
+            <span class="px-3 py-1 bg-cyan-900 text-cyan-200 rounded text-sm">Admin</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="showIncidentsPanel()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm flex items-center gap-2">
+              🚨 Incidents
+            </button>
+            <button onclick="showPublicUISettings()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm flex items-center gap-2">
+              ⚙️ Public Settings
+            </button>
+            <button onclick="window.open('/', '_blank')" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm flex items-center gap-2">
+              🌐 Public UI
+            </button>
+            <button onclick="location.reload()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">
               ↻ Refresh
             </button>
           </div>
         </div>
       </div>
-    </nav>
+    </header>
 
-    <!-- Main Content -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <!-- Header Stats -->
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h3 class="text-slate-400 text-sm font-medium">Total Targets</h3>
-          <p id="total-targets" class="text-3xl font-bold text-cyan-400 mt-2">-</p>
-        </div>
-        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h3 class="text-slate-400 text-sm font-medium">Targets Up</h3>
-          <p id="targets-up" class="text-3xl font-bold text-green-400 mt-2">-</p>
-        </div>
-        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h3 class="text-slate-400 text-sm font-medium">Targets Down</h3>
-          <p id="targets-down" class="text-3xl font-bold text-red-400 mt-2">-</p>
-        </div>
-        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h3 class="text-slate-400 text-sm font-medium">Active Monitors</h3>
-          <p id="active-monitors" class="text-3xl font-bold text-blue-400 mt-2">-</p>
-        </div>
-      </div>
-
-      <!-- Tabs -->
-      <div class="flex gap-2 mb-6 border-b border-slate-700">
-        <button onclick="switchTab('targets')" id="tab-targets" class="px-4 py-2 border-b-2 border-cyan-400 text-cyan-400">
-          Targets
-        </button>
-        <button onclick="switchTab('alerts')" id="tab-alerts" class="px-4 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-100">
-          Alerts
-        </button>
-        <button onclick="switchTab('actions')" id="tab-actions" class="px-4 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-100">
-          Quick-Fix Actions
-        </button>
-      </div>
-
-      <!-- Targets Tab -->
-      <div id="tab-content-targets" class="tab-content">
-        <div class="mb-4 flex gap-2">
-          <button onclick="showAddTargetModal()" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">
-            + Add Target
+    <!-- Main Layout -->
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Left Sidebar - Services List -->
+      <div class="w-96 bg-slate-800 border-r border-slate-700 overflow-y-auto flex flex-col">
+        <!-- Top Section - Add Monitor & Stats -->
+        <div id="sidebar-top-section" class="sidebar-top-expanded sticky top-0 bg-slate-800 border-b border-slate-700 p-4 space-y-4 transition-all duration-200">
+          <button onclick="showAddTargetForm()" class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-medium flex items-center justify-center gap-2">
+            <span>+</span> Add New Monitor
           </button>
-        </div>
-        <div id="targets-list" class="space-y-3">
-          <p class="text-slate-400">Loading targets...</p>
-        </div>
-      </div>
 
-      <!-- Alerts Tab -->
-      <div id="tab-content-alerts" class="tab-content hidden">
-        <div id="alerts-list" class="space-y-3">
-          <p class="text-slate-400">Loading alerts...</p>
-        </div>
-      </div>
-
-      <!-- Actions Tab -->
-      <div id="tab-content-actions" class="tab-content hidden">
-        <div class="mb-4 flex gap-2">
-          <button onclick="showAddActionModal()" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">
-            + Add Action
-          </button>
-        </div>
-        <div id="actions-list" class="space-y-3">
-          <p class="text-slate-400">Loading actions...</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Add Target Modal -->
-  <div id="add-target-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4 border border-slate-700">
-      <h2 class="text-xl font-bold mb-4">Add Target</h2>
-      <form onsubmit="addTarget(event)">
-        <div class="space-y-4">
-          <input type="text" placeholder="Target Name" id="target-name" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-          <input type="text" placeholder="Host/IP" id="target-host" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-          <select id="target-protocol" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-            <option>ICMP</option>
-            <option>TCP</option>
-            <option>UDP</option>
-            <option>HTTP</option>
-            <option>HTTPS</option>
-          </select>
-          <input type="number" placeholder="Port (optional)" id="target-port" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-          <input type="number" placeholder="Interval (seconds)" id="target-interval" value="60" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-          <div class="flex gap-2">
-            <button type="submit" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">Add</button>
-            <button type="button" onclick="document.getElementById('add-target-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">Cancel</button>
+          <!-- Quick Stats -->
+          <div class="grid grid-cols-2 gap-2">
+            <div class="bg-slate-700 rounded p-3">
+              <p class="text-slate-400 text-xs">Total</p>
+              <p id="total-targets" class="text-2xl font-bold text-cyan-400">-</p>
+            </div>
+            <div class="bg-slate-700 rounded p-3">
+              <p class="text-slate-400 text-xs">Up</p>
+              <p id="targets-up" class="text-2xl font-bold text-green-400">-</p>
+            </div>
+            <div class="bg-slate-700 rounded p-3">
+              <p class="text-slate-400 text-xs">Down</p>
+              <p id="targets-down" class="text-2xl font-bold text-red-400">-</p>
+            </div>
+            <div class="bg-slate-700 rounded p-3">
+              <p class="text-slate-400 text-xs">Active</p>
+              <p id="active-monitors" class="text-2xl font-bold text-blue-400">-</p>
+            </div>
           </div>
         </div>
+
+        <!-- Search & Filters -->
+        <div class="px-4 py-3 border-b border-slate-700">
+          <input type="text" id="search-input" placeholder="Search monitors..." class="w-full bg-slate-700 text-slate-100 px-3 py-2 rounded text-sm placeholder-slate-500">
+        </div>
+
+        <!-- Monitors List -->
+        <div id="services-list" class="flex-1 overflow-y-auto divide-y divide-slate-700">
+          <div class="px-4 py-8 text-center text-slate-400">Loading monitors...</div>
+        </div>
+      </div>
+
+      <!-- Right Panel - Details & Configuration -->
+      <div class="flex-1 overflow-y-auto flex flex-col">
+        <div id="no-selection" class="flex-1 flex items-center justify-center">
+          <div class="text-center text-slate-400">
+            <p class="text-lg">Select a monitor to view details</p>
+          </div>
+        </div>
+
+        <!-- Details View Panel -->
+        <div id="details-panel" class="hidden flex-1 overflow-y-auto">
+          <!-- Service Header -->
+          <div class="bg-slate-800 border-b border-slate-700 p-6">
+            <div class="flex justify-between items-start mb-4">
+              <div>
+                <h2 id="detail-name" class="text-3xl font-bold">Monitor Name</h2>
+                <p id="detail-host" class="text-slate-400 mt-2">Host information</p>
+              </div>
+              <div id="detail-status" class="px-4 py-2 rounded-lg font-medium text-lg">
+                Up
+              </div>
+            </div>
+
+            <!-- Check Interval Info -->
+            <p id="detail-interval" class="text-slate-400 text-sm">Check every 60 seconds</p>
+          </div>
+
+          <!-- Ping History Chart -->
+          <div class="p-6 border-b border-slate-700">
+            <h3 class="text-lg font-bold mb-4">Ping History (24h)</h3>
+            <div class="relative" style="height: 250px;">
+              <canvas id="ping-chart"></canvas>
+            </div>
+          </div>
+
+          <!-- Stats Grid -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-b border-slate-700">
+            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
+              <p class="text-slate-400 text-sm">Current Ping</p>
+              <p id="detail-current-ping" class="text-2xl font-bold text-cyan-400 mt-2">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
+              <p class="text-slate-400 text-sm">Avg Ping (24h)</p>
+              <p id="detail-avg-ping" class="text-2xl font-bold mt-2">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
+              <p class="text-slate-400 text-sm">Uptime (24h)</p>
+              <p id="detail-uptime-24h" class="text-2xl font-bold text-green-400 mt-2">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
+              <p class="text-slate-400 text-sm">Uptime (30d)</p>
+              <p id="detail-uptime-30d" class="text-2xl font-bold text-green-400 mt-2">-</p>
+            </div>
+          </div>
+
+          <!-- Uptime Visualization -->
+          <div class="p-6 border-b border-slate-700">
+            <h3 class="text-lg font-bold mb-4">30-Day Uptime</h3>
+            <div id="uptime-visualization" class="uptime-bar">
+              <!-- Will be filled by JS -->
+            </div>
+            <p class="text-slate-400 text-xs mt-4">Each block represents 1 hour of monitoring</p>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="p-6 flex gap-3">
+            <button onclick="testTarget()" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded font-medium">
+              ▶ Test Now
+            </button>
+            <button onclick="showEditForm()" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded font-medium">
+              ✏️ Edit
+            </button>
+            <button onclick="deleteTarget()" class="flex-1 bg-red-900 hover:bg-red-800 px-4 py-2 rounded font-medium">
+              🗑️ Delete
+            </button>
+          </div>
+        </div>
+
+        <!-- Form Panel - Replaces details when editing/adding -->
+        <div id="form-panel" class="hidden flex-1 overflow-y-auto flex flex-col">
+          <!-- Form Header -->
+          <div class="bg-slate-800 border-b border-slate-700 p-6 sticky top-0 z-10">
+            <div class="flex justify-between items-center">
+              <h2 id="form-title" class="text-3xl font-bold">Add Monitor</h2>
+              <button type="button" onclick="cancelEditForm()" class="text-slate-400 hover:text-slate-200 text-2xl">×</button>
+            </div>
+          </div>
+
+          <!-- Form Content -->
+          <form id="target-form" onsubmit="addTarget(event)" class="p-6 space-y-6 flex-1">
+        <!-- GENERAL SECTION -->
+        <div>
+          <h3 class="text-lg font-semibold text-white mb-4">General</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Monitor Type</label>
+              <select id="target-protocol" onchange="updateProtocolSettings()" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+                <option value="ICMP">ICMP (Ping)</option>
+                <option value="TCP">TCP Port</option>
+                <option value="UDP">UDP Port</option>
+                <option value="HTTP">HTTP</option>
+                <option value="HTTPS">HTTPS</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Friendly Name</label>
+              <input type="text" placeholder="e.g., Web Server, Database, API" id="target-name" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Host/IP Address</label>
+              <input type="text" placeholder="192.168.1.1 or example.com" id="target-host" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-slate-400 text-sm mb-2">Port (optional)</label>
+                <input type="number" placeholder="80, 443, 3306, etc." id="target-port" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-slate-400 text-sm mb-2">Heartbeat Interval</label>
+                <div class="flex gap-2">
+                  <input type="number" id="target-interval" value="60" min="5" max="3600" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+                  <span class="text-slate-400 pt-2 text-sm">seconds</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- APP CONFIGURATION SECTION -->
+        <div class="border-t border-slate-700 pt-4">
+          <h3 class="text-lg font-semibold text-white mb-4">Application (Optional)</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">App URL</label>
+              <input type="url" placeholder="https://example.com:8080 (opens in new tab when clicked)" id="target-app-url" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              <p class="text-slate-500 text-xs mt-1">Leave empty to hide from app launcher</p>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Custom Icon (Font Awesome)</label>
+              <input type="text" placeholder="fa-docker (auto-detected if left empty)" id="target-app-icon" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              <p class="text-slate-500 text-xs mt-1">https://fontawesome.com/icons</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- RETRIES SECTION -->
+        <div class="border-t border-slate-700 pt-4">
+          <h3 class="text-lg font-semibold text-white mb-4">Retries</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Retries</label>
+              <input type="number" id="target-retries" value="0" min="0" max="10" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              <p class="text-slate-500 text-xs mt-1">Maximum retries before the service is marked as down and a notification is sent</p>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Heartbeat Retry Interval</label>
+              <div class="flex gap-2">
+                <input type="number" id="target-retry-interval" value="5" min="1" max="60" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+                <span class="text-slate-400 pt-2 text-sm">seconds</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- HTTP OPTIONS (conditional) -->
+        <div id="http-options-section" class="border-t border-slate-700 pt-4 hidden">
+          <h3 class="text-lg font-semibold text-white mb-4">HTTP Options</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Method</label>
+              <select id="target-http-method" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="HEAD">HEAD</option>
+                <option value="PUT">PUT</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Request Timeout</label>
+              <div class="flex gap-2">
+                <input type="number" id="target-timeout" value="30" min="1" max="120" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+                <span class="text-slate-400 pt-2 text-sm">seconds</span>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Accepted Status Codes</label>
+              <input type="text" id="target-status-codes" value="200-299" placeholder="200-299, 301, 302" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              <p class="text-slate-500 text-xs mt-1">Select status codes which are considered as a successful response (comma-separated)</p>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Max Redirects</label>
+              <input type="number" id="target-max-redirects" value="5" min="0" max="20" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              <p class="text-slate-500 text-xs mt-1">Maximum number of redirects to follow. Set to 0 to disable redirects</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- AUTHENTICATION SECTION (conditional) -->
+        <div id="auth-section" class="border-t border-slate-700 pt-4 hidden">
+          <h3 class="text-lg font-semibold text-white mb-4">Authentication</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-slate-400 text-sm mb-2">Method</label>
+              <select id="target-auth-method" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+                <option value="none">None</option>
+                <option value="basic">Basic Auth</option>
+                <option value="bearer">Bearer Token</option>
+              </select>
+            </div>
+
+            <div id="basic-auth-fields" class="hidden space-y-4">
+              <div>
+                <label class="block text-slate-400 text-sm mb-2">Username</label>
+                <input type="text" id="target-auth-username" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-slate-400 text-sm mb-2">Password</label>
+                <input type="password" id="target-auth-password" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              </div>
+            </div>
+
+            <div id="bearer-auth-fields" class="hidden space-y-4">
+              <div>
+                <label class="block text-slate-400 text-sm mb-2">Bearer Token</label>
+                <input type="password" id="target-auth-token" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ADVANCED SECTION -->
+        <div class="border-t border-slate-700 pt-4">
+          <h3 class="text-lg font-semibold text-white mb-4">Advanced</h3>
+          <div class="space-y-4">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="target-ignore-ssl" class="w-4 h-4 bg-slate-700 border border-slate-600 rounded">
+              <span class="text-slate-300 text-sm">Ignore TLS/SSL errors for HTTPS websites</span>
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="target-upside-down" class="w-4 h-4 bg-slate-700 border border-slate-600 rounded">
+              <span class="text-slate-300 text-sm">Upside Down Mode</span>
+            </label>
+            <p class="text-slate-500 text-xs ml-6 -mt-3">Flip the status upside down. If the service is reachable, it is DOWN.</p>
+
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="target-enabled" checked class="w-4 h-4 bg-slate-700 border border-slate-600 rounded">
+              <span class="text-slate-300 text-sm">Show on public status page</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- PUBLIC UI SETTINGS SECTION -->
+        <div class="border-t border-slate-700 pt-4">
+          <h3 class="text-lg font-semibold text-white mb-4">Public UI Settings</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-slate-300 text-sm font-medium mb-2">Position (Display Order)</label>
+              <input type="number" id="target-position" value="0" min="0" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+              <p class="text-slate-500 text-xs mt-1">Lower numbers appear first. Services with the same position are sorted by name.</p>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 text-sm font-medium mb-2">Group/Category</label>
+              <input type="text" id="target-group" placeholder="e.g., Media, Tools, Services" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+              <p class="text-slate-500 text-xs mt-1">Services with the same group will be displayed together on the public page.</p>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 text-sm font-medium mb-2">Quick Commands</label>
+              <input type="text" id="target-quick-commands" placeholder="e.g., /jellyfin, /j, /media" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+              <p class="text-slate-500 text-xs mt-1">Comma-separated list of commands (e.g., /jellyfin, /j). Type these on the public page to quickly open the service.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUTTON SECTION -->
+        <div class="border-t border-slate-700 pt-4 flex gap-2">
+          <button type="submit" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-3 rounded font-medium transition">Save</button>
+          <button type="button" onclick="cancelEditForm()" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded transition">Cancel</button>
+        </div>
       </form>
+        </div>
+
+        <!-- Incidents Panel - Replaces details when viewing incidents -->
+        <div id="incidents-panel" class="hidden flex-1 overflow-y-auto flex flex-col">
+          <!-- Incidents Header -->
+          <div class="bg-slate-800 border-b border-slate-700 p-6 sticky top-0 z-10">
+            <div class="flex justify-between items-center">
+              <h2 class="text-3xl font-bold">Incident Management</h2>
+              <button type="button" onclick="hideIncidentsPanel()" class="text-slate-400 hover:text-slate-200 text-2xl">×</button>
+            </div>
+          </div>
+
+          <!-- Incidents Content -->
+          <div class="flex-1 overflow-y-auto p-6">
+            <!-- Action Buttons -->
+            <div class="flex gap-3 mb-6">
+              <button onclick="showCreateIncidentModal()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded font-medium">
+                + New Incident
+              </button>
+              <button onclick="loadIncidentsPanel()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded font-medium">
+                ↻ Refresh
+              </button>
+            </div>
+
+            <!-- Incidents List -->
+            <div id="incidents-list-panel" class="space-y-3">
+              <div class="text-center text-slate-400 py-8">Loading incidents...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <!-- Public UI Settings Modal -->
+  <div id="public-settings-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-slate-800 rounded-lg p-6 max-w-2xl w-full mx-4 border border-slate-700 max-h-96 overflow-y-auto">
+      <h2 class="text-xl font-bold mb-4">Public UI Settings</h2>
+      <p class="text-slate-400 text-sm mb-6">Select which monitors to display on the public status page:</p>
+
+      <div id="public-settings-list" class="space-y-3 mb-6">
+        <div class="text-slate-400 text-sm text-center py-4">Loading monitors...</div>
+      </div>
+
+      <div class="flex gap-2">
+        <button type="button" onclick="savePublicSettings()" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded font-medium">
+          Save Settings
+        </button>
+        <button type="button" onclick="document.getElementById('public-settings-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">
+          Close
+        </button>
+      </div>
     </div>
   </div>
 
-  <!-- Add Action Modal -->
-  <div id="add-action-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4 border border-slate-700">
-      <h2 class="text-xl font-bold mb-4">Add Quick-Fix Action</h2>
-      <form onsubmit="addAction(event)">
+  <!-- Incidents Panel Modal -->
+  <div id="incidents-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-slate-800 rounded-lg p-6 max-w-4xl w-full mx-4 border border-slate-700 max-h-96 overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold">Incident Management</h2>
+        <button onclick="document.getElementById('incidents-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-200 text-2xl">×</button>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        <button onclick="showCreateIncidentModal()" class="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded font-medium flex items-center justify-center gap-2">
+          + New Incident
+        </button>
+        <button onclick="loadIncidents()" class="w-full bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded font-medium">
+          Refresh
+        </button>
+        <button onclick="document.getElementById('incidents-modal').classList.add('hidden')" class="w-full bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded">
+          Close
+        </button>
+      </div>
+
+      <div id="incidents-list" class="space-y-3">
+        <div class="text-slate-400 text-sm text-center py-8">Loading incidents...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create/Edit Incident Modal -->
+  <div id="incident-form-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-slate-800 rounded-lg p-6 max-w-2xl w-full mx-4 border border-slate-700 max-h-96 overflow-y-auto">
+      <h2 class="text-xl font-bold mb-4">Create Incident Report</h2>
+      <form id="incident-form" onsubmit="saveIncident(event)">
         <div class="space-y-4">
-          <input type="text" placeholder="Action Name" id="action-name" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-          <select id="action-type" onchange="updateActionForm()" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-            <option value="">Select Type</option>
-            <option value="command">Command</option>
-            <option value="ssh">SSH</option>
-            <option value="http">HTTP Request</option>
-            <option value="script">Script</option>
+          <input type="text" id="incident-title" placeholder="Incident Title" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+
+          <textarea id="incident-description" placeholder="Describe the incident..." required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 h-24 resize-none"></textarea>
+
+          <select id="incident-severity" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+            <option value="minor">Minor</option>
+            <option value="major" selected>Major</option>
+            <option value="critical">Critical</option>
           </select>
-          <div id="action-fields"></div>
+
+          <select id="incident-status" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
+            <option value="investigating" selected>Investigating</option>
+            <option value="identified">Identified</option>
+            <option value="monitoring">Monitoring</option>
+            <option value="resolved">Resolved</option>
+          </select>
+
           <div class="flex gap-2">
-            <button type="submit" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded">Add</button>
-            <button type="button" onclick="document.getElementById('add-action-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">Cancel</button>
+            <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-medium">
+              Report Incident
+            </button>
+            <button type="button" onclick="document.getElementById('incident-form-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">
+              Cancel
+            </button>
           </div>
         </div>
       </form>

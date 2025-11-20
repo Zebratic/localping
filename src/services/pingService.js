@@ -15,7 +15,7 @@ class PingService {
 
   /**
    * Ping a target using the specified protocol
-   * @param {Object} target - Target object {host, port, protocol, timeout}
+   * @param {Object} target - Target object {host, port, protocol, timeout, httpMethod, statusCodes, ...}
    * @returns {Promise<Object>} Result {success, responseTime, error}
    */
   async ping(target) {
@@ -30,9 +30,9 @@ class PingService {
         case 'UDP':
           return await this.pingUDP(target.host, target.port || 53, start);
         case 'HTTP':
-          return await this.pingHTTP(`http://${target.host}:${target.port || 80}${target.path || '/'}`, start);
+          return await this.pingHTTP(`http://${target.host}:${target.port || 80}${target.path || '/'}`, start, target);
         case 'HTTPS':
-          return await this.pingHTTP(`https://${target.host}:${target.port || 443}${target.path || '/'}`, start);
+          return await this.pingHTTP(`https://${target.host}:${target.port || 443}${target.path || '/'}`, start, target);
         default:
           return {
             success: false,
@@ -171,17 +171,51 @@ class PingService {
   }
 
   /**
-   * HTTP/HTTPS Ping
+   * HTTP/HTTPS Ping with advanced options
    */
-  async pingHTTP(url, start) {
+  async pingHTTP(url, start, target = {}) {
     try {
-      const response = await axios.get(url, {
-        timeout: this.timeout,
+      // Get timeout from target config or use default
+      const timeout = (target.timeout || 30) * 1000;
+
+      // Build axios config
+      const axiosConfig = {
+        timeout,
         validateStatus: () => true, // Don't throw on any status code
-      });
+        maxRedirects: target.maxRedirects !== undefined ? target.maxRedirects : 5,
+        method: (target.httpMethod || 'GET').toUpperCase(),
+      };
+
+      // Handle SSL/TLS options
+      if (target.ignoreSsl === true) {
+        axiosConfig.httpsAgent = require('https').Agent({ rejectUnauthorized: false });
+      }
+
+      // Handle authentication
+      if (target.auth) {
+        if (target.auth.type === 'basic') {
+          axiosConfig.auth = {
+            username: target.auth.username,
+            password: target.auth.password,
+          };
+        } else if (target.auth.type === 'bearer') {
+          axiosConfig.headers = {
+            'Authorization': `Bearer ${target.auth.token}`,
+          };
+        }
+      }
+
+      const response = await axios(url, axiosConfig);
 
       const responseTime = Date.now() - start;
-      const success = response.status >= 200 && response.status < 300;
+
+      // Check if status code is in accepted list
+      let success = false;
+      const statusCodes = target.statusCodes || '200-299';
+
+      if (this.isStatusCodeAccepted(response.status, statusCodes)) {
+        success = true;
+      }
 
       return {
         success,
@@ -197,6 +231,33 @@ class PingService {
         protocol: url.startsWith('https') ? 'HTTPS' : 'HTTP',
       };
     }
+  }
+
+  /**
+   * Check if a status code is in the accepted list
+   * Supports ranges like "200-299" and individual codes like "200,201,404"
+   */
+  isStatusCodeAccepted(statusCode, statusCodes) {
+    if (!statusCodes) return statusCode >= 200 && statusCode < 300;
+
+    const parts = statusCodes.split(',').map(s => s.trim());
+
+    for (const part of parts) {
+      if (part.includes('-')) {
+        // Range like "200-299"
+        const [start, end] = part.split('-').map(s => parseInt(s.trim()));
+        if (statusCode >= start && statusCode <= end) {
+          return true;
+        }
+      } else {
+        // Individual code like "200"
+        if (parseInt(part) === statusCode) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   /**

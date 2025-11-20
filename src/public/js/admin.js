@@ -1,56 +1,28 @@
-let currentTab = 'targets';
+let pingChart = null;
+let selectedTargetId = null;
+let allTargets = [];
 
-// Get API key from environment or query parameter
-function getApiKey() {
-  const url = new URL(window.location);
-  return url.searchParams.get('apiKey') || localStorage.getItem('apiKey') || '';
-}
+// API Key - stored in window for admin panel
+const ADMIN_API_KEY = 'localping-admin-key-12345';
 
 // Configure axios to include API key by default
 axios.interceptors.request.use((config) => {
-  const apiKey = getApiKey();
-  if (apiKey) {
-    config.headers['X-API-Key'] = apiKey;
-  }
+  config.headers['X-API-Key'] = ADMIN_API_KEY;
   return config;
 });
 
-// Switch between tabs
-function switchTab(tab) {
-  currentTab = tab;
+// Load on page load
+loadDashboard();
 
-  // Update tab buttons
-  document.querySelectorAll('[id^="tab-"]').forEach((el) => {
-    if (el.id === `tab-${tab}`) {
-      el.classList.add('border-cyan-400', 'text-cyan-400');
-      el.classList.remove('border-transparent', 'text-slate-400');
-    } else {
-      el.classList.remove('border-cyan-400', 'text-cyan-400');
-      el.classList.add('border-transparent', 'text-slate-400');
-    }
-  });
+// Auto-refresh every 15 seconds
+setInterval(loadDashboard, 15000);
 
-  // Update content
-  document.querySelectorAll('.tab-content').forEach((el) => {
-    el.classList.add('hidden');
-  });
-  document.getElementById(`tab-content-${tab}`).classList.remove('hidden');
-
-  // Load content
-  if (tab === 'targets') {
-    loadTargets();
-  } else if (tab === 'alerts') {
-    loadAlerts();
-  } else if (tab === 'actions') {
-    loadActions();
-  }
-}
-
-// Load dashboard data
 async function loadDashboard() {
   try {
     const res = await axios.get('/admin/api/dashboard');
     const { dashboard } = res.data;
+
+    allTargets = dashboard.targets;
 
     // Update stats
     const upCount = dashboard.targets.filter((t) => t.currentStatus === 'up').length;
@@ -61,431 +33,854 @@ async function loadDashboard() {
     document.getElementById('targets-down').textContent = downCount;
     document.getElementById('active-monitors').textContent = dashboard.targets.filter((t) => t.enabled).length;
 
-    // Display targets
-    displayTargets(dashboard.targets);
-    displayAlerts(dashboard.recentAlerts);
+    // Display monitors list
+    displayMonitorsList(dashboard.targets);
+
+    // Update selected monitor if one is selected (but NOT if form is open)
+    const formPanel = document.getElementById('form-panel');
+    if (selectedTargetId && !formPanel.classList.contains('hidden')) {
+      // Form is open, don't switch to details view
+      return;
+    }
+
+    if (selectedTargetId) {
+      const selectedTarget = dashboard.targets.find(t => t._id === selectedTargetId);
+      if (selectedTarget) {
+        displayMonitorDetail(selectedTarget);
+      }
+    }
   } catch (error) {
     console.error('Error loading dashboard:', error);
   }
 }
 
-// Load targets
-async function loadTargets() {
-  try {
-    const res = await axios.get('/api/targets');
-    displayTargets(res.data.targets);
-  } catch (error) {
-    console.error('Error loading targets:', error);
-  }
-}
+function displayMonitorsList(targets) {
+  const list = document.getElementById('services-list');
+  const searchTerm = document.getElementById('search-input')?.value.toLowerCase() || '';
 
-// Display targets
-function displayTargets(targets) {
-  const list = document.getElementById('targets-list');
+  const filtered = targets.filter(target =>
+    target.name.toLowerCase().includes(searchTerm) ||
+    target.host.toLowerCase().includes(searchTerm)
+  );
 
-  if (targets.length === 0) {
-    list.innerHTML = '<p class="text-slate-400">No targets configured</p>';
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="px-4 py-8 text-center text-slate-400">No monitors found</div>';
     return;
   }
 
-  list.innerHTML = targets
-    .map(
-      (target) => `
-    <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 fade-enter">
-      <div class="flex justify-between items-start mb-3">
-        <div>
-          <h3 class="font-semibold text-lg">${target.name}</h3>
-          <p class="text-slate-400 text-sm">${target.host}:${target.port || 'default'} (${target.protocol})</p>
+  list.innerHTML = filtered.map(target => {
+    const isSelected = selectedTargetId === target._id;
+    const statusColor = target.currentStatus === 'up' ? 'bg-green-500' : 'bg-red-500';
+
+    return `
+      <div
+        onclick="selectMonitor('${target._id}')"
+        class="px-4 py-3 cursor-pointer hover:bg-slate-700/50 transition ${isSelected ? 'service-item-selected' : ''}"
+      >
+        <div class="flex items-start justify-between mb-2">
+          <div class="flex items-center gap-2 flex-1">
+            <div class="w-2 h-2 rounded-full ${statusColor} flex-shrink-0"></div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm truncate">${target.name}</h3>
+              <p class="text-slate-400 text-xs">${target.host}:${target.port || 'default'}</p>
+            </div>
+          </div>
+          <span class="text-xs font-medium px-2 py-1 rounded ${target.currentStatus === 'up' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'} flex-shrink-0">
+            ${target.currentStatus === 'up' ? '✓' : '✗'}
+          </span>
         </div>
-        <span class="px-3 py-1 rounded text-sm font-medium ${target.currentStatus === 'up' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'}">
-          ${target.currentStatus === 'up' ? '✓ UP' : '✗ DOWN'}
-        </span>
-      </div>
-      <div class="flex gap-2">
-        <button onclick="testTarget('${target._id}')" class="text-sm px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded">
-          Test
-        </button>
-        <button onclick="editTarget('${target._id}')" class="text-sm px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded">
-          Edit
-        </button>
-        <button onclick="deleteTarget('${target._id}')" class="text-sm px-3 py-1 bg-red-900 hover:bg-red-800 rounded">
-          Delete
-        </button>
-      </div>
-    </div>
-  `
-    )
-    .join('');
-}
-
-// Load alerts
-async function loadAlerts() {
-  try {
-    const res = await axios.get('/api/alerts?limit=100');
-    displayAlerts(res.data.alerts);
-  } catch (error) {
-    console.error('Error loading alerts:', error);
-  }
-}
-
-// Display alerts
-function displayAlerts(alerts) {
-  const list = document.getElementById('alerts-list');
-
-  if (alerts.length === 0) {
-    list.innerHTML = '<p class="text-slate-400">No alerts</p>';
-    return;
-  }
-
-  list.innerHTML = alerts
-    .map(
-      (alert) => `
-    <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 fade-enter">
-      <div class="flex justify-between items-start">
-        <div>
-          <p class="font-semibold ${alert.type === 'down' ? 'text-red-400' : 'text-green-400'}">
-            ${alert.type === 'down' ? '✗' : '✓'} ${alert.message}
-          </p>
-          <p class="text-slate-400 text-sm">${new Date(alert.timestamp).toLocaleString()}</p>
+        <div class="uptime-bar uptime-bar-${target._id}" style="width: 100%; max-width: 200px;">
+          Loading...
         </div>
       </div>
-    </div>
-  `
-    )
-    .join('');
+    `;
+  }).join('');
+
+  // Load uptime data for all monitors
+  filtered.forEach(target => {
+    loadAndDisplayMiniUptime(target._id);
+  });
 }
 
-// Load actions
-async function loadActions() {
+async function loadAndDisplayMiniUptime(targetId) {
   try {
-    const res = await axios.get('/admin/api/actions');
-    displayActions(res.data.actions);
-  } catch (error) {
-    console.error('Error loading actions:', error);
-  }
-}
+    const res = await axios.get(`/api/targets/${targetId}/statistics?days=1`);
+    const stats = res.data.statistics || [];
 
-// Display actions
-function displayActions(actions) {
-  const list = document.getElementById('actions-list');
-
-  if (actions.length === 0) {
-    list.innerHTML = '<p class="text-slate-400">No quick-fix actions configured</p>';
-    return;
-  }
-
-  list.innerHTML = actions
-    .map(
-      (action) => `
-    <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 fade-enter">
-      <div class="flex justify-between items-start mb-3">
-        <div>
-          <h3 class="font-semibold text-lg">${action.name}</h3>
-          <p class="text-slate-400 text-sm">${action.description || 'No description'}</p>
-          <p class="text-slate-500 text-xs mt-1">Type: ${action.type}</p>
-        </div>
-      </div>
-      <div class="flex gap-2">
-        <button onclick="executeAction('${action._id}')" class="text-sm px-3 py-1 bg-cyan-600 hover:bg-cyan-700 rounded">
-          Execute
-        </button>
-        <button onclick="editAction('${action._id}')" class="text-sm px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded">
-          Edit
-        </button>
-        <button onclick="deleteAction('${action._id}')" class="text-sm px-3 py-1 bg-red-900 hover:bg-red-800 rounded">
-          Delete
-        </button>
-      </div>
-    </div>
-  `
-    )
-    .join('');
-}
-
-// Test target
-async function testTarget(targetId) {
-  try {
-    const res = await axios.post(`/api/targets/${targetId}/test`);
-    const result = res.data.result;
-    alert(
-      `Test Result:\nSuccess: ${result.success}\nResponse Time: ${result.responseTime}ms\n${
-        result.error ? 'Error: ' + result.error : ''
-      }`
-    );
-  } catch (error) {
-    alert('Error testing target: ' + error.message);
-  }
-}
-
-// Edit target
-async function editTarget(targetId) {
-  try {
-    const res = await axios.get(`/api/targets/${targetId}`, {
-      headers: { 'X-API-Key': document.querySelector('[data-api-key]')?.getAttribute('data-api-key') || '' }
+    let html = '';
+    stats.forEach(stat => {
+      const isUp = stat.successfulPings > 0;
+      html += `<div class="uptime-segment ${isUp ? 'up' : 'down'}" style="width: 4px; height: 12px;" title="${isUp ? 'Up' : 'Down'}"></div>`;
     });
+
+    const el = document.querySelector(`.uptime-bar-${targetId}`);
+    if (el) {
+      el.innerHTML = html;
+    }
+  } catch (error) {
+    console.error('Error loading uptime bars:', error);
+  }
+}
+
+function selectMonitor(targetId) {
+  selectedTargetId = targetId;
+  const selectedTarget = allTargets.find(t => t._id === targetId);
+  if (selectedTarget) {
+    displayMonitorDetail(selectedTarget);
+    // Compact the sidebar when a monitor is selected
+    const sidebarTop = document.getElementById('sidebar-top-section');
+    sidebarTop.classList.remove('sidebar-top-expanded');
+    sidebarTop.classList.add('sidebar-top-compact');
+  }
+}
+
+async function displayMonitorDetail(target) {
+  // Show details panel
+  document.getElementById('no-selection').classList.add('hidden');
+  document.getElementById('details-panel').classList.remove('hidden');
+
+  // Update header immediately
+  document.getElementById('detail-name').textContent = target.name;
+  document.getElementById('detail-host').textContent = `${target.host}:${target.port || 'default'} • ${target.protocol}`;
+  document.getElementById('detail-interval').textContent = `Check every ${target.interval || 60} seconds`;
+
+  // Update status badge
+  const statusBadge = document.getElementById('detail-status');
+  if (target.currentStatus === 'up') {
+    statusBadge.textContent = '✓ Up';
+    statusBadge.className = 'px-4 py-2 rounded-lg font-medium text-lg bg-green-900 text-green-200';
+  } else {
+    statusBadge.textContent = '✗ Down';
+    statusBadge.className = 'px-4 py-2 rounded-lg font-medium text-lg bg-red-900 text-red-200';
+  }
+
+  // Set loading state for chart
+  document.getElementById('detail-uptime-24h').textContent = 'Loading...';
+  document.getElementById('detail-uptime-30d').textContent = 'Loading...';
+  document.getElementById('detail-current-ping').textContent = 'Loading...';
+  document.getElementById('detail-avg-ping').textContent = 'Loading...';
+
+  // Load uptime data
+  try {
+    const res24h = await axios.get(`/api/targets/${target._id}/uptime?days=1`);
+    const res30d = await axios.get(`/api/targets/${target._id}/uptime?days=30`);
+    const resStats = await axios.get(`/api/targets/${target._id}/statistics?days=1`);
+
+    const uptime24h = res24h.data.uptime;
+    const uptime30d = res30d.data.uptime;
+    const stats = resStats.data.statistics || [];
+
+    // Get the most recent avg response time
+    const latestStat = stats.length > 0 ? stats[stats.length - 1] : null;
+    const currentPing = latestStat?.lastResponseTime || 0;
+    const avgPing = latestStat?.avgResponseTime || 0;
+
+    // Update uptime stats
+    document.getElementById('detail-uptime-24h').textContent = `${uptime24h.toFixed(2)}%`;
+    document.getElementById('detail-uptime-30d').textContent = `${uptime30d.toFixed(2)}%`;
+    document.getElementById('detail-current-ping').textContent = currentPing.toFixed(2) + ' ms';
+    document.getElementById('detail-avg-ping').textContent = avgPing.toFixed(2) + ' ms';
+
+    // Generate uptime visualization
+    await generateUptimeVisualization(target._id);
+
+    // Load and display ping chart
+    await loadPingChart(target._id);
+  } catch (error) {
+    console.error('Error loading monitor details:', error);
+    document.getElementById('detail-uptime-24h').textContent = '-- %';
+    document.getElementById('detail-uptime-30d').textContent = '-- %';
+    document.getElementById('detail-current-ping').textContent = '-- ms';
+    document.getElementById('detail-avg-ping').textContent = '-- ms';
+  }
+}
+
+async function generateUptimeVisualization(targetId) {
+  try {
+    const res = await axios.get(`/api/targets/${targetId}/statistics?days=30`);
+    const stats = res.data.statistics || [];
+
+    const viz = document.getElementById('uptime-visualization');
+    viz.innerHTML = '';
+
+    // Create segments based on real statistics data
+    stats.forEach(stat => {
+      const segment = document.createElement('div');
+      segment.className = 'uptime-segment';
+
+      const isUp = stat.successfulPings > 0;
+      if (!isUp) {
+        segment.classList.add('down');
+      } else {
+        segment.classList.add('up');
+      }
+
+      segment.title = `${new Date(stat.date).toLocaleDateString()}: ${isUp ? 'Up' : 'Down'}`;
+      viz.appendChild(segment);
+    });
+  } catch (error) {
+    console.error('Error generating uptime visualization:', error);
+  }
+}
+
+async function loadPingChart(targetId) {
+  try {
+    const res = await axios.get(`/api/targets/${targetId}/statistics?days=1`);
+    const stats = res.data.statistics || [];
+
+    const labels = [];
+    const data = [];
+
+    stats.forEach(stat => {
+      const date = new Date(stat.date);
+      labels.push(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      data.push(stat.avgResponseTime || 0);
+    });
+
+    const ctx = document.getElementById('ping-chart').getContext('2d');
+
+    if (pingChart) {
+      pingChart.destroy();
+    }
+
+    pingChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Response Time (ms)',
+            data,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 2,
+            pointBackgroundColor: '#10b981',
+            pointBorderColor: '#fff',
+            pointHoverRadius: 5,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: '#cbd5e1' },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: { color: '#475569' },
+            ticks: { color: '#cbd5e1' },
+          },
+          x: {
+            grid: { color: '#475569' },
+            ticks: { color: '#cbd5e1', maxRotation: 45, minRotation: 0 },
+          },
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error loading ping chart:', error);
+  }
+}
+
+// Form panel functions
+function showAddTargetForm() {
+  const formPanel = document.getElementById('form-panel');
+  const detailsPanel = document.getElementById('details-panel');
+  const noSelection = document.getElementById('no-selection');
+  const form = document.getElementById('target-form');
+  const title = document.getElementById('form-title');
+
+  title.textContent = 'Add Monitor';
+  form.reset();
+  delete form.dataset.targetId;
+
+  // Reset protocol-specific sections
+  updateProtocolSettings();
+  resetAuthenticationMethod();
+
+  // Show form panel, hide details
+  formPanel.classList.remove('hidden');
+  detailsPanel.classList.add('hidden');
+  noSelection.classList.add('hidden');
+}
+
+function cancelEditForm() {
+  const formPanel = document.getElementById('form-panel');
+  const detailsPanel = document.getElementById('details-panel');
+  const noSelection = document.getElementById('no-selection');
+  const sidebarTop = document.getElementById('sidebar-top-section');
+
+  // If a monitor is selected, show details. Otherwise show no-selection
+  if (selectedTargetId) {
+    formPanel.classList.add('hidden');
+    detailsPanel.classList.remove('hidden');
+    // Keep sidebar compact when a monitor is selected
+    sidebarTop.classList.remove('sidebar-top-expanded');
+    sidebarTop.classList.add('sidebar-top-compact');
+  } else {
+    formPanel.classList.add('hidden');
+    noSelection.classList.remove('hidden');
+    // Expand sidebar when no monitor is selected
+    sidebarTop.classList.remove('sidebar-top-compact');
+    sidebarTop.classList.add('sidebar-top-expanded');
+  }
+}
+
+function showEditForm() {
+  const formPanel = document.getElementById('form-panel');
+  const detailsPanel = document.getElementById('details-panel');
+  const form = document.getElementById('target-form');
+
+  // First load the target data
+  editTarget();
+
+  // Then show the form panel
+  setTimeout(() => {
+    formPanel.classList.remove('hidden');
+    detailsPanel.classList.add('hidden');
+  }, 10);
+}
+
+function updateProtocolSettings() {
+  const protocol = document.getElementById('target-protocol').value;
+  const httpSection = document.getElementById('http-options-section');
+  const authSection = document.getElementById('auth-section');
+
+  // Show HTTP options for HTTP/HTTPS protocols
+  if (protocol === 'HTTP' || protocol === 'HTTPS') {
+    httpSection.classList.remove('hidden');
+    authSection.classList.remove('hidden');
+  } else {
+    httpSection.classList.add('hidden');
+    authSection.classList.add('hidden');
+  }
+}
+
+function resetAuthenticationMethod() {
+  const authMethod = document.getElementById('target-auth-method');
+  const basicFields = document.getElementById('basic-auth-fields');
+  const bearerFields = document.getElementById('bearer-auth-fields');
+
+  authMethod.value = 'none';
+  basicFields.classList.add('hidden');
+  bearerFields.classList.add('hidden');
+}
+
+// Listen for auth method changes
+document.addEventListener('DOMContentLoaded', () => {
+  const authMethod = document.getElementById('target-auth-method');
+  if (authMethod) {
+    authMethod.addEventListener('change', (e) => {
+      const basicFields = document.getElementById('basic-auth-fields');
+      const bearerFields = document.getElementById('bearer-auth-fields');
+
+      basicFields.classList.add('hidden');
+      bearerFields.classList.add('hidden');
+
+      if (e.target.value === 'basic') {
+        basicFields.classList.remove('hidden');
+      } else if (e.target.value === 'bearer') {
+        bearerFields.classList.remove('hidden');
+      }
+    });
+  }
+});
+
+async function addTarget(event) {
+  event.preventDefault();
+
+  const form = document.getElementById('target-form');
+  const isEdit = form.dataset.targetId;
+
+  const target = {
+    name: document.getElementById('target-name').value,
+    host: document.getElementById('target-host').value,
+    protocol: document.getElementById('target-protocol').value,
+    port: document.getElementById('target-port').value ? parseInt(document.getElementById('target-port').value) : null,
+    interval: document.getElementById('target-interval').value ? parseInt(document.getElementById('target-interval').value) : 60,
+    enabled: document.getElementById('target-enabled').checked,
+    appUrl: document.getElementById('target-app-url').value || null,
+    appIcon: document.getElementById('target-app-icon').value || null,
+    retries: parseInt(document.getElementById('target-retries').value) || 0,
+    retryInterval: parseInt(document.getElementById('target-retry-interval').value) || 5,
+    timeout: parseInt(document.getElementById('target-timeout').value) || 30,
+    httpMethod: document.getElementById('target-http-method').value || 'GET',
+    statusCodes: document.getElementById('target-status-codes').value || '200-299',
+    maxRedirects: parseInt(document.getElementById('target-max-redirects').value) || 5,
+    ignoreSsl: document.getElementById('target-ignore-ssl').checked,
+    upsideDown: document.getElementById('target-upside-down').checked,
+    position: parseInt(document.getElementById('target-position').value) || 0,
+    group: document.getElementById('target-group').value || null,
+    quickCommands: document.getElementById('target-quick-commands').value
+      ? document.getElementById('target-quick-commands').value.split(',').map(cmd => cmd.trim()).filter(cmd => cmd)
+      : [],
+  };
+
+  // Add authentication if set
+  const authMethod = document.getElementById('target-auth-method').value;
+  if (authMethod === 'basic') {
+    target.auth = {
+      type: 'basic',
+      username: document.getElementById('target-auth-username').value,
+      password: document.getElementById('target-auth-password').value,
+    };
+  } else if (authMethod === 'bearer') {
+    target.auth = {
+      type: 'bearer',
+      token: document.getElementById('target-auth-token').value,
+    };
+  }
+
+  try {
+    if (isEdit) {
+      await axios.put(`/api/targets/${form.dataset.targetId}`, target);
+    } else {
+      await axios.post('/api/targets', target);
+    }
+
+    // Close form and return to details
+    const formPanel = document.getElementById('form-panel');
+    const detailsPanel = document.getElementById('details-panel');
+    formPanel.classList.add('hidden');
+
+    form.reset();
+    document.getElementById('target-enabled').checked = true;
+
+    // Reload dashboard and show the saved monitor details
+    await loadDashboard();
+
+    // If we just saved a new monitor, select the first one
+    if (!isEdit && allTargets.length > 0) {
+      selectMonitor(allTargets[0]._id);
+    } else if (isEdit) {
+      // If editing, refresh the details view
+      displayMonitorDetail(allTargets.find(t => t._id === form.dataset.targetId));
+    }
+  } catch (error) {
+    alert('Error saving target: ' + error.message);
+  }
+}
+
+async function editTarget() {
+  if (!selectedTargetId) return;
+
+  try {
+    const res = await axios.get(`/api/targets/${selectedTargetId}`);
     const target = res.data.target;
 
-    // Pre-fill the form
+    // General section
     document.getElementById('target-name').value = target.name;
     document.getElementById('target-host').value = target.host;
     document.getElementById('target-protocol').value = target.protocol;
     document.getElementById('target-port').value = target.port || '';
     document.getElementById('target-interval').value = target.interval || 60;
 
-    // Change button text and form action
-    const modal = document.getElementById('add-target-modal');
-    const form = modal.querySelector('form');
-    const title = modal.querySelector('h2');
+    // Application section
+    document.getElementById('target-app-url').value = target.appUrl || '';
+    document.getElementById('target-app-icon').value = target.appIcon || '';
 
-    title.textContent = 'Edit Target';
-    form.dataset.targetId = targetId;
-    form.onsubmit = async (e) => await updateTarget(e, targetId);
+    // Retries section
+    document.getElementById('target-retries').value = target.retries || 0;
+    document.getElementById('target-retry-interval').value = target.retryInterval || 5;
 
-    modal.classList.remove('hidden');
+    // HTTP Options section
+    document.getElementById('target-http-method').value = target.httpMethod || 'GET';
+    document.getElementById('target-timeout').value = target.timeout || 30;
+    document.getElementById('target-status-codes').value = target.statusCodes || '200-299';
+    document.getElementById('target-max-redirects').value = target.maxRedirects || 5;
+
+    // Authentication section
+    if (target.auth) {
+      if (target.auth.type === 'basic') {
+        document.getElementById('target-auth-method').value = 'basic';
+        document.getElementById('target-auth-username').value = target.auth.username || '';
+        document.getElementById('target-auth-password').value = target.auth.password || '';
+      } else if (target.auth.type === 'bearer') {
+        document.getElementById('target-auth-method').value = 'bearer';
+        document.getElementById('target-auth-token').value = target.auth.token || '';
+      }
+    } else {
+      document.getElementById('target-auth-method').value = 'none';
+    }
+
+    // Advanced section
+    document.getElementById('target-ignore-ssl').checked = target.ignoreSsl || false;
+    document.getElementById('target-upside-down').checked = target.upsideDown || false;
+    document.getElementById('target-enabled').checked = target.enabled !== false;
+
+    // Public UI settings
+    document.getElementById('target-position').value = target.position || 0;
+    document.getElementById('target-group').value = target.group || '';
+    const quickCommandsInput = document.getElementById('target-quick-commands');
+    if (quickCommandsInput) {
+      quickCommandsInput.value = (target.quickCommands || []).join(', ');
+    }
+
+    const form = document.getElementById('target-form');
+    const title = document.getElementById('form-title');
+
+    title.textContent = 'Edit Monitor';
+    form.dataset.targetId = selectedTargetId;
+
+    // Update protocol settings to show HTTP/auth options if needed
+    updateProtocolSettings();
   } catch (error) {
     alert('Error loading target: ' + error.message);
   }
 }
 
-// Update target
-async function updateTarget(event, targetId) {
-  event.preventDefault();
-
-  const target = {
-    name: document.getElementById('target-name').value,
-    host: document.getElementById('target-host').value,
-    protocol: document.getElementById('target-protocol').value,
-    port: document.getElementById('target-port').value ? parseInt(document.getElementById('target-port').value) : null,
-    interval: document.getElementById('target-interval').value ? parseInt(document.getElementById('target-interval').value) : 60,
-  };
+async function deleteTarget() {
+  if (!selectedTargetId) return;
+  if (!confirm('Are you sure you want to delete this monitor?')) return;
 
   try {
-    await axios.put(`/api/targets/${targetId}`, target);
-    document.getElementById('add-target-modal').classList.add('hidden');
-    document.querySelector('#add-target-modal form').reset();
-    document.querySelector('#add-target-modal h2').textContent = 'Add Target';
-    loadTargets();
-  } catch (error) {
-    alert('Error updating target: ' + error.message);
-  }
-}
-
-// Delete target
-async function deleteTarget(targetId) {
-  if (!confirm('Are you sure you want to delete this target?')) return;
-
-  try {
-    await axios.delete(`/api/targets/${targetId}`);
-    loadTargets();
+    await axios.delete(`/api/targets/${selectedTargetId}`);
+    selectedTargetId = null;
+    document.getElementById('no-selection').classList.remove('hidden');
+    document.getElementById('details-panel').classList.add('hidden');
+    loadDashboard();
   } catch (error) {
     alert('Error deleting target: ' + error.message);
   }
 }
 
-// Show add target modal
-function showAddTargetModal() {
-  document.getElementById('add-target-modal').classList.remove('hidden');
-}
-
-// Add target
-async function addTarget(event) {
-  event.preventDefault();
-
-  const target = {
-    name: document.getElementById('target-name').value,
-    host: document.getElementById('target-host').value,
-    protocol: document.getElementById('target-protocol').value,
-    port: document.getElementById('target-port').value ? parseInt(document.getElementById('target-port').value) : null,
-    interval: document.getElementById('target-interval').value ? parseInt(document.getElementById('target-interval').value) : 60,
-  };
+async function testTarget() {
+  if (!selectedTargetId) return;
 
   try {
-    await axios.post('/api/targets', target);
-    document.getElementById('add-target-modal').classList.add('hidden');
-    document.querySelector('#add-target-modal form').reset();
-    loadTargets();
+    const res = await axios.post(`/api/targets/${selectedTargetId}/test`);
+    const result = res.data.result;
+
+    showTestNotification(result);
   } catch (error) {
-    alert('Error adding target: ' + error.message);
+    showTestNotification(null, error.message);
   }
 }
 
-// Show add action modal
-function showAddActionModal() {
-  document.getElementById('add-action-modal').classList.remove('hidden');
+function showTestNotification(result, errorMessage) {
+  const notificationId = 'test-notification-' + Date.now();
+  const isSuccess = result && result.success;
+  const targetName = allTargets.find(t => t._id === selectedTargetId)?.name || 'Target';
+
+  const notification = document.createElement('div');
+  notification.id = notificationId;
+  notification.className = `notification ${isSuccess ? 'success' : 'error'}`;
+
+  if (isSuccess) {
+    notification.innerHTML = `
+      <button class="notification-close" onclick="document.getElementById('${notificationId}').remove()">×</button>
+      <div class="notification-title">✓ ${targetName} is UP</div>
+      <div class="notification-stat">
+        <span>Response Time:</span>
+        <span><strong>${(result.responseTime || 0).toFixed(2)} ms</strong></span>
+      </div>
+      <div class="notification-stat">
+        <span>Protocol:</span>
+        <span><strong>${result.protocol || 'N/A'}</strong></span>
+      </div>
+      <div class="notification-stat">
+        <span>Timestamp:</span>
+        <span><strong>${new Date().toLocaleTimeString()}</strong></span>
+      </div>
+    `;
+  } else {
+    notification.innerHTML = `
+      <button class="notification-close" onclick="document.getElementById('${notificationId}').remove()">×</button>
+      <div class="notification-title">✗ ${targetName} is DOWN</div>
+      <div class="notification-stat">
+        <span>Error:</span>
+        <span><strong>${errorMessage || result?.error || 'Connection failed'}</strong></span>
+      </div>
+      <div class="notification-stat">
+        <span>Timestamp:</span>
+        <span><strong>${new Date().toLocaleTimeString()}</strong></span>
+      </div>
+    `;
+  }
+
+  document.body.appendChild(notification);
+
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    const el = document.getElementById(notificationId);
+    if (el) {
+      el.style.animation = 'slideOut 0.3s ease-in forwards';
+      setTimeout(() => el.remove(), 300);
+    }
+  }, 5000);
 }
 
-// Update action form based on type
-function updateActionForm() {
-  const type = document.getElementById('action-type').value;
-  const fieldsDiv = document.getElementById('action-fields');
+// Search functionality
+document.getElementById('search-input')?.addEventListener('input', () => {
+  displayMonitorsList(allTargets);
+});
 
-  const fields = {
-    command: '<input type="text" placeholder="Command" id="action-command" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">',
-    ssh: `
-      <input type="text" placeholder="Host" id="action-ssh-host" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-      <input type="text" placeholder="User (optional)" id="action-ssh-user" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-      <input type="number" placeholder="Port (default 22)" id="action-ssh-port" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-      <input type="text" placeholder="Command" id="action-ssh-command" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-    `,
-    http: `
-      <input type="text" placeholder="URL" id="action-http-url" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-      <select id="action-http-method" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-        <option>GET</option>
-        <option>POST</option>
-        <option>PUT</option>
-      </select>
-    `,
-    script: '<input type="text" placeholder="Script Path" id="action-script-path" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">',
-  };
+// Public UI Settings functions
+function showPublicUISettings() {
+  const modal = document.getElementById('public-settings-modal');
+  const settingsList = document.getElementById('public-settings-list');
 
-  fieldsDiv.innerHTML = fields[type] || '';
+  if (allTargets.length === 0) {
+    settingsList.innerHTML = '<div class="text-slate-400 text-sm text-center py-4">No monitors available</div>';
+    modal.classList.remove('hidden');
+    return;
+  }
+
+  settingsList.innerHTML = allTargets.map(target => {
+    const isEnabled = target.enabled !== false;
+    return `
+      <label class="flex items-center gap-3 p-3 bg-slate-700/30 rounded cursor-pointer hover:bg-slate-700/50 transition">
+        <input
+          type="checkbox"
+          class="public-ui-setting w-4 h-4 cursor-pointer"
+          data-target-id="${target._id}"
+          ${isEnabled ? 'checked' : ''}
+        >
+        <div class="flex-1">
+          <div class="text-sm font-medium text-white">${target.name}</div>
+          <div class="text-xs text-slate-400">${target.host}:${target.port || 'default'}</div>
+        </div>
+        <span class="text-xs px-2 py-1 rounded ${isEnabled ? 'bg-green-900 text-green-200' : 'bg-slate-600 text-slate-300'}">
+          ${isEnabled ? 'Visible' : 'Hidden'}
+        </span>
+      </label>
+    `;
+  }).join('');
+
+  modal.classList.remove('hidden');
 }
 
-// Add action
-async function addAction(event) {
-  event.preventDefault();
+async function savePublicSettings() {
+  const checkboxes = document.querySelectorAll('.public-ui-setting');
+  const updates = [];
 
-  const type = document.getElementById('action-type').value;
-  const name = document.getElementById('action-name').value;
-
-  const action = {
-    name,
-    type,
-    description: '',
-  };
-
-  // Add type-specific fields
-  if (type === 'command') {
-    action.command = document.getElementById('action-command').value;
-  } else if (type === 'ssh') {
-    action.host = document.getElementById('action-ssh-host').value;
-    action.user = document.getElementById('action-ssh-user').value;
-    action.port = document.getElementById('action-ssh-port').value;
-    action.command = document.getElementById('action-ssh-command').value;
-  } else if (type === 'http') {
-    action.url = document.getElementById('action-http-url').value;
-    action.method = document.getElementById('action-http-method').value;
-  } else if (type === 'script') {
-    action.scriptPath = document.getElementById('action-script-path').value;
+  for (const checkbox of checkboxes) {
+    const targetId = checkbox.dataset.targetId;
+    const isEnabled = checkbox.checked;
+    updates.push({ targetId, enabled: isEnabled });
   }
 
   try {
-    await axios.post('/admin/api/actions', action);
-    document.getElementById('add-action-modal').classList.add('hidden');
-    document.querySelector('#add-action-modal form').reset();
-    loadActions();
-  } catch (error) {
-    alert('Error adding action: ' + error.message);
-  }
-}
-
-// Edit action
-async function editAction(actionId) {
-  try {
-    const res = await axios.get(`/admin/api/actions/${actionId}`, {
-      headers: { 'X-API-Key': document.querySelector('[data-api-key]')?.getAttribute('data-api-key') || '' }
-    });
-    const action = res.data.action;
-
-    // Pre-fill the form
-    document.getElementById('action-name').value = action.name;
-    document.getElementById('action-type').value = action.type;
-    updateActionForm();
-
-    // Pre-fill type-specific fields
-    if (action.type === 'command') {
-      document.getElementById('action-command').value = action.command;
-    } else if (action.type === 'ssh') {
-      document.getElementById('action-ssh-host').value = action.host;
-      document.getElementById('action-ssh-user').value = action.user || '';
-      document.getElementById('action-ssh-port').value = action.port || 22;
-      document.getElementById('action-ssh-command').value = action.command;
-    } else if (action.type === 'http') {
-      document.getElementById('action-http-url').value = action.url;
-      document.getElementById('action-http-method').value = action.method || 'GET';
-    } else if (action.type === 'script') {
-      document.getElementById('action-script-path').value = action.scriptPath;
+    // Update each target's enabled status
+    for (const update of updates) {
+      await axios.put(`/api/targets/${update.targetId}`, {
+        enabled: update.enabled
+      });
     }
 
-    // Change button text and form action
-    const modal = document.getElementById('add-action-modal');
-    const form = modal.querySelector('form');
-    const title = modal.querySelector('h2');
+    document.getElementById('public-settings-modal').classList.add('hidden');
 
-    title.textContent = 'Edit Action';
-    form.dataset.actionId = actionId;
-    form.onsubmit = async (e) => await updateAction(e, actionId);
+    // Show success notification
+    showSuccessNotification('Public UI settings saved successfully!');
 
-    modal.classList.remove('hidden');
+    // Reload dashboard
+    await loadDashboard();
   } catch (error) {
-    alert('Error loading action: ' + error.message);
+    alert('Error saving settings: ' + error.message);
   }
 }
 
-// Update action
-async function updateAction(event, actionId) {
+function showSuccessNotification(message) {
+  const notificationId = 'success-notification-' + Date.now();
+  const notification = document.createElement('div');
+  notification.id = notificationId;
+  notification.className = 'notification success';
+  notification.innerHTML = `
+    <button class="notification-close" onclick="document.getElementById('${notificationId}').remove()">×</button>
+    <div class="notification-title">✓ ${message}</div>
+  `;
+
+  document.body.appendChild(notification);
+
+  setTimeout(() => {
+    const el = document.getElementById(notificationId);
+    if (el) {
+      el.style.animation = 'slideOut 0.3s ease-in forwards';
+      setTimeout(() => el.remove(), 300);
+    }
+  }, 3000);
+}
+
+// ============ INCIDENT MANAGEMENT FUNCTIONS ============
+
+function showIncidentsPanel() {
+  // Hide details and form panels
+  document.getElementById('details-panel').classList.add('hidden');
+  document.getElementById('form-panel').classList.add('hidden');
+  document.getElementById('no-selection').classList.add('hidden');
+
+  // Show incidents panel
+  document.getElementById('incidents-panel').classList.remove('hidden');
+
+  loadIncidentsPanel();
+}
+
+function hideIncidentsPanel() {
+  const incidentsPanel = document.getElementById('incidents-panel');
+  const noSelection = document.getElementById('no-selection');
+  const sidebarTop = document.getElementById('sidebar-top-section');
+
+  incidentsPanel.classList.add('hidden');
+
+  // If a monitor is selected, show details with compact sidebar. Otherwise show no-selection with expanded sidebar
+  if (selectedTargetId) {
+    noSelection.classList.add('hidden');
+    const selectedTarget = allTargets.find(t => t._id === selectedTargetId);
+    if (selectedTarget) {
+      displayMonitorDetail(selectedTarget);
+      sidebarTop.classList.remove('sidebar-top-expanded');
+      sidebarTop.classList.add('sidebar-top-compact');
+    }
+  } else {
+    noSelection.classList.remove('hidden');
+    sidebarTop.classList.remove('sidebar-top-compact');
+    sidebarTop.classList.add('sidebar-top-expanded');
+  }
+}
+
+function loadIncidentsPanel() {
+  loadIncidents();
+}
+
+async function loadIncidents() {
+  try {
+    const res = await axios.get('/admin/api/incidents');
+    const incidents = res.data.incidents || [];
+
+    const list = document.getElementById('incidents-list-panel');
+
+    if (incidents.length === 0) {
+      list.innerHTML = '<div class="text-slate-400 text-sm text-center py-8">No incidents reported</div>';
+      return;
+    }
+
+    list.innerHTML = incidents.map(incident => {
+      const severityColor = {
+        minor: 'bg-yellow-900 text-yellow-200',
+        major: 'bg-orange-900 text-orange-200',
+        critical: 'bg-red-900 text-red-200'
+      }[incident.severity] || 'bg-slate-700';
+
+      const statusColor = {
+        investigating: 'bg-blue-900 text-blue-200',
+        identified: 'bg-cyan-900 text-cyan-200',
+        monitoring: 'bg-purple-900 text-purple-200',
+        resolved: 'bg-green-900 text-green-200'
+      }[incident.status] || 'bg-slate-700';
+
+      return `
+        <div class="bg-slate-700/30 rounded p-4 border border-slate-600">
+          <div class="flex justify-between items-start mb-3">
+            <div class="flex-1">
+              <h3 class="font-semibold text-white text-sm">${incident.title}</h3>
+              <p class="text-slate-400 text-xs mt-1">${new Date(incident.createdAt).toLocaleString()}</p>
+            </div>
+            <div class="flex gap-2">
+              <span class="text-xs px-2 py-1 rounded ${severityColor}">
+                ${incident.severity.toUpperCase()}
+              </span>
+              <span class="text-xs px-2 py-1 rounded ${statusColor}">
+                ${incident.status.toUpperCase()}
+              </span>
+            </div>
+          </div>
+          <p class="text-slate-300 text-xs mb-3">${incident.description}</p>
+          <div class="flex gap-2">
+            <button onclick="editIncident('${incident._id}')" class="flex-1 bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs">
+              Edit
+            </button>
+            <button onclick="deleteIncident('${incident._id}')" class="flex-1 bg-red-900 hover:bg-red-800 px-2 py-1 rounded text-xs">
+              Delete
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (error) {
+    console.error('Error loading incidents:', error);
+    const list = document.getElementById('incidents-list-panel');
+    if (list) {
+      list.innerHTML = `<div class="text-red-400 text-sm">Error loading incidents</div>`;
+    }
+  }
+}
+
+function showCreateIncidentModal() {
+  document.getElementById('incident-form').reset();
+  document.getElementById('incident-form-modal').classList.remove('hidden');
+  delete document.getElementById('incident-form').dataset.incidentId;
+}
+
+async function editIncident(incidentId) {
+  try {
+    const res = await axios.get(`/admin/api/incidents/${incidentId}`);
+    const incident = res.data.incident;
+
+    document.getElementById('incident-title').value = incident.title;
+    document.getElementById('incident-description').value = incident.description;
+    document.getElementById('incident-severity').value = incident.severity;
+    document.getElementById('incident-status').value = incident.status;
+
+    document.getElementById('incident-form').dataset.incidentId = incidentId;
+    document.getElementById('incident-form-modal').classList.remove('hidden');
+  } catch (error) {
+    alert('Error loading incident: ' + error.message);
+  }
+}
+
+async function saveIncident(event) {
   event.preventDefault();
 
-  const type = document.getElementById('action-type').value;
-  const name = document.getElementById('action-name').value;
-
-  const action = {
-    name,
-    type,
-    description: '',
-  };
-
-  // Add type-specific fields
-  if (type === 'command') {
-    action.command = document.getElementById('action-command').value;
-  } else if (type === 'ssh') {
-    action.host = document.getElementById('action-ssh-host').value;
-    action.user = document.getElementById('action-ssh-user').value;
-    action.port = document.getElementById('action-ssh-port').value;
-    action.command = document.getElementById('action-ssh-command').value;
-  } else if (type === 'http') {
-    action.url = document.getElementById('action-http-url').value;
-    action.method = document.getElementById('action-http-method').value;
-  } else if (type === 'script') {
-    action.scriptPath = document.getElementById('action-script-path').value;
-  }
+  const title = document.getElementById('incident-title').value;
+  const description = document.getElementById('incident-description').value;
+  const severity = document.getElementById('incident-severity').value;
+  const status = document.getElementById('incident-status').value;
+  const incidentId = document.getElementById('incident-form').dataset.incidentId;
 
   try {
-    await axios.put(`/admin/api/actions/${actionId}`, action);
-    document.getElementById('add-action-modal').classList.add('hidden');
-    document.querySelector('#add-action-modal form').reset();
-    document.querySelector('#add-action-modal h2').textContent = 'Add Action';
-    loadActions();
+    if (incidentId) {
+      // Update existing incident
+      await axios.put(`/admin/api/incidents/${incidentId}`, {
+        title,
+        description,
+        severity,
+        status
+      });
+      showSuccessNotification('Incident updated successfully!');
+    } else {
+      // Create new incident
+      await axios.post('/admin/api/incidents', {
+        title,
+        description,
+        severity,
+        status
+      });
+      showSuccessNotification('Incident reported successfully!');
+    }
+
+    document.getElementById('incident-form-modal').classList.add('hidden');
+    loadIncidents();
   } catch (error) {
-    alert('Error updating action: ' + error.message);
+    alert('Error saving incident: ' + error.message);
   }
 }
 
-// Execute action
-async function executeAction(actionId) {
-  try {
-    const res = await axios.post(`/api/actions/${actionId}/execute`);
-    const result = res.data.result;
-    alert(`Action executed successfully!\nExecution time: ${result.executionTime}ms`);
-  } catch (error) {
-    alert('Error executing action: ' + error.message);
-  }
-}
-
-// Delete action
-async function deleteAction(actionId) {
-  if (!confirm('Are you sure you want to delete this action?')) return;
+async function deleteIncident(incidentId) {
+  if (!confirm('Are you sure you want to delete this incident?')) return;
 
   try {
-    await axios.delete(`/admin/api/actions/${actionId}`);
-    loadActions();
+    await axios.delete(`/admin/api/incidents/${incidentId}`);
+    showSuccessNotification('Incident deleted successfully!');
+    loadIncidents();
   } catch (error) {
-    alert('Error deleting action: ' + error.message);
+    alert('Error deleting incident: ' + error.message);
   }
 }
-
-// Auto-refresh dashboard every 30 seconds
-setInterval(loadDashboard, 30000);
-
-// Load on page load
-loadDashboard();

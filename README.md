@@ -17,35 +17,38 @@ This will:
 - ✅ Clone the repository to `/opt/localping`
 - ✅ Create and configure `.env` file with secure values
 - ✅ Install npm dependencies
-- ✅ Run interactive setup wizard to:
-  - Create admin username and password
-  - Auto-detect and add gateway monitor
-  - Add Cloudflare DNS (1.1.1.1) monitor
 - ✅ Set up ICMP capabilities for ping functionality
 - ✅ Create a systemd service (runs Node.js directly for production)
 - ✅ Enable auto-start on system boot
 - ✅ Start the service immediately
+
+**After installation:**
+- Visit `http://<your-ip>:8000/setup` for the interactive setup wizard
+- Create admin credentials and configure your first monitors
+- Login to the admin panel to manage your monitors
 
 **Custom installation path:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zebratic/localping/main/install.sh | sudo bash -s - https://github.com/zebratic/localping.git main /custom/path
 ```
 
-### Setup Wizard
+### First-Time Setup
 
-After installation, the setup wizard will run automatically and prompt you to:
+After installation, access the setup wizard:
 
-1. **Set admin credentials** - Create an admin username and password
-2. **Configure network monitoring** - Auto-detects your gateway IP
-3. **Add default monitors** - Pre-configures:
-   - Gateway monitoring (ICMP ping)
-   - Cloudflare DNS monitoring at 1.1.1.1 (ICMP ping)
+1. Visit `http://<your-ip>:8000/setup`
+2. The wizard will prompt you to:
+   - Create an admin username and password
+   - Configure your network gateway IP (auto-detected)
+   - Review default monitors:
+     - Gateway monitoring (ICMP ping)
+     - Cloudflare DNS at 1.1.1.1 (ICMP ping)
+3. Click "Complete Setup" to initialize your LocalPing instance
+4. You'll be redirected to the login page
 
-You can re-run the wizard anytime with:
-```bash
-cd /opt/localping
-npm run setup
-```
+### Admin Panel Access
+
+After setup, login at `http://<your-ip>:8000/admin/login` with your credentials.
 
 ### Manual Setup (for development)
 
@@ -88,9 +91,31 @@ npm run dev
 - **Public Dashboard**: http://localhost:8000
 - **API**: http://localhost:8000/api
 
+## Authentication
+
+LocalPing uses a layered authentication approach:
+
+### Web UI (Admin Panel)
+- **Session-based authentication** with secure cookies
+- Password stored in `.env` as `ADMIN_PASSWORD` (set during setup)
+- 24-hour session expiration
+- Protected admin routes require login
+
+### API Access
+- **External API calls:** Use `ADMIN_API_KEY` header
+- **Admin panel API:** Uses secure session cookies (no key needed)
+- API key is auto-generated and cannot be changed
+
+### Security Features
+- httpOnly cookies (immune to XSS attacks)
+- sameSite: strict (prevents CSRF)
+- HTTPS-only cookies in production
+- Rate limiting on API endpoints
+- Setup validation and password confirmation
+
 ## Environment Variables
 
-The installation script automatically creates `.env` with secure defaults. Key variables:
+The installation script automatically creates `.env` with secure defaults:
 
 ```env
 # Server
@@ -110,7 +135,7 @@ NOTIFICATION_METHOD=dbus
 PING_INTERVAL=60
 ALERT_COOLDOWN=300
 
-# API Authentication
+# API Authentication (auto-generated)
 ADMIN_API_KEY=<random-generated>
 ```
 
@@ -118,6 +143,7 @@ ADMIN_API_KEY=<random-generated>
 - All data is stored in a local SQLite database at `data/localping.db` - no external dependencies needed!
 - Admin credentials are created during the setup wizard
 - SESSION_SECRET and ADMIN_API_KEY are auto-generated for security
+- Never commit `.env` to version control
 
 ## Service Management
 
@@ -179,6 +205,32 @@ sudo npm run dev
 sudo setcap cap_net_raw=ep $(which node)
 npm run dev
 ```
+
+## Browser Notifications
+
+LocalPing supports browser desktop and in-page notifications for status changes.
+
+### Enabling Notifications
+1. Visit the public dashboard at `http://<your-ip>:8000`
+2. Browser will request notification permission (first visit)
+3. Click "Allow" to enable desktop notifications
+4. Notifications will show when monitors go down/up
+
+### Features
+- **Desktop Notifications:** System-level alerts (Windows, macOS, Linux)
+- **In-Page Notifications:** Toast messages that appear on screen
+- **Smart Alerts:** Only notifies on status changes (not on every refresh)
+- **Persistent Settings:** Your preferences are saved in browser storage
+
+### Supported Browsers
+- Chrome/Chromium
+- Firefox
+- Safari (macOS 13+)
+- Edge
+- Opera
+
+### Fallback
+If browser notifications are unavailable, LocalPing falls back to in-page toast notifications.
 
 ## Configuration
 

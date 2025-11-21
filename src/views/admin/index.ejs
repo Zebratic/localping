@@ -23,44 +23,87 @@
       color-scheme: dark;
     }
 
-    .uptime-bar {
-      display: inline-flex;
-      gap: 1px;
-      flex-wrap: wrap;
+    body {
+      background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+      min-height: 100vh;
     }
 
-    .uptime-segment {
-      width: 6px;
-      height: 20px;
-      border-radius: 1px;
-      cursor: pointer;
-      transition: all 0.2s;
+    .tab-button {
+      transition: all 0.3s ease;
+      position: relative;
+      padding: 0.75rem 1.5rem;
+      font-weight: 500;
     }
 
-    .uptime-segment:hover {
-      transform: scaleY(1.3);
+    .tab-button:not(.active) {
+      color: #9ca3af;
     }
 
-    .uptime-segment.up {
-      background-color: #10b981;
+    .tab-button.active {
+      color: #4f46e5;
     }
 
-    .uptime-segment.down {
-      background-color: #ef4444;
+    .tab-button.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
     }
 
-    .fade-enter {
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
       animation: fadeIn 0.3s ease-in;
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .service-item-selected {
-      background-color: #334155;
-      border-left: 3px solid #06b6d4;
+    .monitor-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .monitor-card:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(79, 70, 229, 0.3);
+    }
+
+    .monitor-card.selected {
+      background: rgba(79, 70, 229, 0.1);
+      border-color: #4f46e5;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.375rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .status-badge.up {
+      background-color: rgba(16, 185, 129, 0.1);
+      color: #10b981;
+    }
+
+    .status-badge.down {
+      background-color: rgba(239, 68, 68, 0.1);
+      color: #ef4444;
     }
 
     .notification {
@@ -86,567 +129,281 @@
       }
     }
 
-    @keyframes slideOut {
-      from {
-        transform: translateX(0);
-        opacity: 1;
-      }
-      to {
-        transform: translateX(400px);
-        opacity: 0;
-      }
-    }
-
     .notification.success {
-      background-color: #065f46;
+      background-color: rgba(16, 185, 129, 0.2);
       border: 1px solid #10b981;
       color: #d1fae5;
     }
 
     .notification.error {
-      background-color: #7f1d1d;
+      background-color: rgba(239, 68, 68, 0.2);
       border: 1px solid #ef4444;
       color: #fee2e2;
     }
 
-    .notification-title {
-      font-weight: 600;
-      font-size: 1.1rem;
-      margin-bottom: 0.5rem;
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin-bottom: 1rem;
     }
 
-    .notification-stat {
-      display: flex;
-      justify-content: space-between;
-      padding: 0.25rem 0;
-      font-size: 0.95rem;
+    .form-input {
+      background-color: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+      color: white;
+      transition: all 0.3s ease;
     }
 
-    .notification-close {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      background: none;
-      border: none;
-      color: inherit;
+    .form-input:focus {
+      outline: none;
+      border-color: #4f46e5;
+      background-color: rgba(79, 70, 229, 0.1);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.5rem;
+      font-weight: 500;
       cursor: pointer;
-      font-size: 1.5rem;
-      opacity: 0.7;
-      transition: opacity 0.2s;
+      transition: all 0.3s ease;
+      border: none;
     }
 
-    .notification-close:hover {
-      opacity: 1;
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(79, 70, 229, 0.3);
     }
 
-    /* Sidebar Compact Styles */
-    .sidebar-top-expanded {
-      padding: 1rem;
-      gap: 1rem;
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
     }
 
-    .sidebar-top-compact {
-      padding: 0.5rem;
-      gap: 0.5rem;
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.5rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: 1px solid rgba(255, 255, 255, 0.2);
     }
 
-    .sidebar-top-compact .bg-slate-700 {
-      padding: 0.5rem;
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
     }
 
-    .sidebar-top-compact p.text-2xl {
-      font-size: 1.25rem;
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.5rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: 1px solid #ef4444;
     }
 
-    .sidebar-top-compact button {
-      padding: 0.5rem 1rem;
-      font-size: 0.875rem;
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.3);
     }
   </style>
 </head>
-<body class="dark bg-slate-900 text-slate-100">
-  <div id="app" class="min-h-screen flex flex-col">
-    <!-- Header -->
-    <header class="bg-slate-800 border-b border-slate-700 sticky top-0 z-40">
-      <div class="px-6 py-4">
-        <div class="flex justify-between items-center">
-          <div class="flex items-center gap-4">
-            <h1 class="text-2xl font-bold text-cyan-400">LocalPing</h1>
-            <span class="px-3 py-1 bg-cyan-900 text-cyan-200 rounded text-sm">Admin</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <button onclick="showIncidentsPanel()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm flex items-center gap-2">
-              🚨 Incidents
-            </button>
-            <button onclick="showPublicUISettings()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm flex items-center gap-2">
-              ⚙️ Public Settings
-            </button>
-            <button onclick="window.open('/', '_blank')" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm flex items-center gap-2">
-              🌐 Public UI
-            </button>
-            <button onclick="location.reload()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">
-              ↻ Refresh
-            </button>
-          </div>
-        </div>
-      </div>
-    </header>
+<body class="bg-gray-950 text-white">
+  <!-- Header -->
+  <header class="border-b border-gray-800 bg-black/40 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+      <h1 class="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
+        LocalPing Admin
+      </h1>
+      <button onclick="logout()" class="btn-secondary">
+        Logout
+      </button>
+    </div>
+  </header>
 
-    <!-- Main Layout -->
-    <div class="flex-1 flex overflow-hidden">
-      <!-- Left Sidebar - Services List -->
-      <div class="w-96 bg-slate-800 border-r border-slate-700 overflow-y-auto flex flex-col">
-        <!-- Top Section - Add Monitor & Stats -->
-        <div id="sidebar-top-section" class="sidebar-top-expanded sticky top-0 bg-slate-800 border-b border-slate-700 p-4 space-y-4 transition-all duration-200">
-          <button onclick="showAddTargetForm()" class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-medium flex items-center justify-center gap-2">
-            <span>+</span> Add New Monitor
-          </button>
+  <!-- Navigation Tabs -->
+  <div class="border-b border-gray-800 bg-black/20 sticky top-16 z-40">
+    <div class="max-w-7xl mx-auto px-4 flex gap-8">
+      <button class="tab-button active" onclick="switchTab('monitors')">
+        📊 Monitors
+      </button>
+      <button class="tab-button" onclick="switchTab('incidents')">
+        🚨 Incidents
+      </button>
+      <button class="tab-button" onclick="switchTab('settings')">
+        ⚙️ Settings
+      </button>
+    </div>
+  </div>
 
-          <!-- Quick Stats -->
-          <div class="grid grid-cols-2 gap-2">
-            <div class="bg-slate-700 rounded p-3">
-              <p class="text-slate-400 text-xs">Total</p>
-              <p id="total-targets" class="text-2xl font-bold text-cyan-400">-</p>
-            </div>
-            <div class="bg-slate-700 rounded p-3">
-              <p class="text-slate-400 text-xs">Up</p>
-              <p id="targets-up" class="text-2xl font-bold text-green-400">-</p>
-            </div>
-            <div class="bg-slate-700 rounded p-3">
-              <p class="text-slate-400 text-xs">Down</p>
-              <p id="targets-down" class="text-2xl font-bold text-red-400">-</p>
-            </div>
-            <div class="bg-slate-700 rounded p-3">
-              <p class="text-slate-400 text-xs">Active</p>
-              <p id="active-monitors" class="text-2xl font-bold text-blue-400">-</p>
-            </div>
+  <main class="max-w-7xl mx-auto px-4 py-8">
+    <!-- Monitors Tab -->
+    <div id="monitors" class="tab-content active">
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        <!-- Monitor List -->
+        <div class="lg:col-span-1 min-h-[400px]">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Monitors</h2>
+            <button onclick="addNewMonitor()" class="btn-primary text-sm">
+              + Add
+            </button>
+          </div>
+          <div id="monitorList" class="space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
+            <!-- Monitor items will be populated here -->
           </div>
         </div>
 
-        <!-- Search & Filters -->
-        <div class="px-4 py-3 border-b border-slate-700">
-          <input type="text" id="search-input" placeholder="Search monitors..." class="w-full bg-slate-700 text-slate-100 px-3 py-2 rounded text-sm placeholder-slate-500">
-        </div>
-
-        <!-- Monitors List -->
-        <div id="services-list" class="flex-1 overflow-y-auto divide-y divide-slate-700">
-          <div class="px-4 py-8 text-center text-slate-400">Loading monitors...</div>
-        </div>
-      </div>
-
-      <!-- Right Panel - Details & Configuration -->
-      <div class="flex-1 overflow-y-auto flex flex-col">
-        <div id="no-selection" class="flex-1 flex items-center justify-center">
-          <div class="text-center text-slate-400">
-            <p class="text-lg">Select a monitor to view details</p>
-          </div>
-        </div>
-
-        <!-- Details View Panel -->
-        <div id="details-panel" class="hidden flex-1 overflow-y-auto">
-          <!-- Service Header -->
-          <div class="bg-slate-800 border-b border-slate-700 p-6">
-            <div class="flex justify-between items-start mb-4">
+        <!-- Monitor Details / Edit View -->
+        <div class="lg:col-span-3">
+          <div id="monitorDetails" class="hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+              <!-- Charts on the left -->
               <div>
-                <h2 id="detail-name" class="text-3xl font-bold">Monitor Name</h2>
-                <p id="detail-host" class="text-slate-400 mt-2">Host information</p>
+                <h3 class="text-lg font-semibold mb-4" id="monitorName">Select a monitor</h3>
+                <div class="chart-container">
+                  <canvas id="statusChart"></canvas>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-4">
+                  <div class="grid grid-cols-2 gap-4">
+                    <div>
+                      <p class="text-gray-400 text-sm">Status</p>
+                      <p class="text-xl font-bold"><span id="monitorStatus" class="text-green-400">Up</span></p>
+                    </div>
+                    <div>
+                      <p class="text-gray-400 text-sm">Uptime</p>
+                      <p class="text-xl font-bold"><span id="monitorUptime">99.9%</span></p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div id="detail-status" class="px-4 py-2 rounded-lg font-medium text-lg">
-                Up
+
+              <!-- Edit form on the right -->
+              <div>
+                <h3 class="text-lg font-semibold mb-4">Edit Monitor</h3>
+                <form id="editForm" class="space-y-4">
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Monitor Name</label>
+                    <input type="text" id="editName" class="form-input w-full" placeholder="e.g., Web Server">
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Host</label>
+                    <input type="text" id="editHost" class="form-input w-full" placeholder="192.168.1.1 or example.com">
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Protocol</label>
+                    <select id="editProtocol" class="form-input w-full">
+                      <option value="ICMP">ICMP (Ping)</option>
+                      <option value="TCP">TCP</option>
+                      <option value="UDP">UDP</option>
+                      <option value="HTTP">HTTP</option>
+                      <option value="HTTPS">HTTPS</option>
+                    </select>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-4">
+                    <div>
+                      <label class="block text-sm font-medium mb-1">Port</label>
+                      <input type="number" id="editPort" class="form-input w-full" placeholder="Optional">
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium mb-1">Interval (sec)</label>
+                      <input type="number" id="editInterval" class="form-input w-full" min="5" max="3600">
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Group</label>
+                    <input type="text" id="editGroup" class="form-input w-full" placeholder="e.g., Network">
+                  </div>
+
+                  <div class="flex gap-2 pt-4">
+                    <button type="button" onclick="saveMonitor()" class="btn-primary flex-1">
+                      Save Changes
+                    </button>
+                    <button type="button" onclick="deleteMonitor()" class="btn-danger flex-1">
+                      Delete
+                    </button>
+                    <button type="button" onclick="cancelEdit()" class="btn-secondary">
+                      Cancel
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
-
-            <!-- Check Interval Info -->
-            <p id="detail-interval" class="text-slate-400 text-sm">Check every 60 seconds</p>
           </div>
 
-          <!-- Ping History Chart -->
-          <div class="p-6 border-b border-slate-700">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-lg font-bold">Ping History</h3>
-              <div class="flex gap-2">
-                <button onclick="loadPingChart(selectedTargetId, 0.04)" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="1h">1H</button>
-                <button onclick="loadPingChart(selectedTargetId, 1)" class="period-btn px-3 py-1 rounded text-xs bg-cyan-600 text-white" data-period="24h">24H</button>
-                <button onclick="loadPingChart(selectedTargetId, 7)" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="7d">7D</button>
-                <button onclick="loadPingChart(selectedTargetId, 30)" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="30d">30D</button>
-              </div>
-            </div>
-            <div class="relative" style="height: 250px;">
-              <canvas id="ping-chart"></canvas>
-            </div>
-          </div>
-
-          <!-- Stats Grid -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-b border-slate-700">
-            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
-              <p class="text-slate-400 text-sm">Current Ping</p>
-              <p id="detail-current-ping" class="text-2xl font-bold text-cyan-400 mt-2">-</p>
-            </div>
-            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
-              <p class="text-slate-400 text-sm">Avg Ping (24h)</p>
-              <p id="detail-avg-ping" class="text-2xl font-bold mt-2">-</p>
-            </div>
-            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
-              <p class="text-slate-400 text-sm">Uptime (24h)</p>
-              <p id="detail-uptime-24h" class="text-2xl font-bold text-green-400 mt-2">-</p>
-            </div>
-            <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
-              <p class="text-slate-400 text-sm">Uptime (30d)</p>
-              <p id="detail-uptime-30d" class="text-2xl font-bold text-green-400 mt-2">-</p>
-            </div>
-          </div>
-
-          <!-- Uptime Visualization -->
-          <div class="p-6 border-b border-slate-700">
-            <h3 class="text-lg font-bold mb-4">30-Day Uptime</h3>
-            <div id="uptime-visualization" class="uptime-bar">
-              <!-- Will be filled by JS -->
-            </div>
-            <p class="text-slate-400 text-xs mt-4">Each block represents 1 hour of monitoring</p>
-          </div>
-
-          <!-- Action Buttons -->
-          <div class="p-6 flex gap-3">
-            <button onclick="testTarget()" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded font-medium">
-              ▶ Test Now
-            </button>
-            <button onclick="showEditForm()" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded font-medium">
-              ✏️ Edit
-            </button>
-            <button onclick="deleteTarget()" class="flex-1 bg-red-900 hover:bg-red-800 px-4 py-2 rounded font-medium">
-              🗑️ Delete
-            </button>
+          <!-- Empty state -->
+          <div id="emptyState" class="text-center py-12">
+            <p class="text-gray-400 text-lg">Select a monitor to view details and edit settings</p>
           </div>
         </div>
+      </div>
+    </div>
 
-        <!-- Form Panel - Replaces details when editing/adding -->
-        <div id="form-panel" class="hidden flex-1 overflow-y-auto flex flex-col">
-          <!-- Form Header -->
-          <div class="bg-slate-800 border-b border-slate-700 p-6 sticky top-0 z-10">
-            <div class="flex justify-between items-center">
-              <h2 id="form-title" class="text-3xl font-bold">Add Monitor</h2>
-              <button type="button" onclick="cancelEditForm()" class="text-slate-400 hover:text-slate-200 text-2xl">×</button>
-            </div>
-          </div>
+    <!-- Incidents Tab -->
+    <div id="incidents" class="tab-content">
+      <div>
+        <h2 class="text-2xl font-bold mb-6">Incidents</h2>
+        <div id="incidentsList" class="space-y-4">
+          <!-- Incidents will be populated here -->
+        </div>
+      </div>
+    </div>
 
-          <!-- Form Content -->
-          <form id="target-form" onsubmit="addTarget(event)" class="p-6 space-y-6 flex-1">
-        <!-- GENERAL SECTION -->
-        <div>
-          <h3 class="text-lg font-semibold text-white mb-4">General</h3>
+    <!-- Settings Tab -->
+    <div id="settings" class="tab-content">
+      <div>
+        <h2 class="text-2xl font-bold mb-6">Settings</h2>
+        <div class="bg-gray-800/50 rounded-lg p-6 max-w-2xl">
           <div class="space-y-4">
             <div>
-              <label class="block text-slate-400 text-sm mb-2">Monitor Type</label>
-              <select id="target-protocol" onchange="updateProtocolSettings()" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-                <option value="ICMP">ICMP (Ping)</option>
-                <option value="TCP">TCP Port</option>
-                <option value="UDP">UDP Port</option>
-                <option value="HTTP">HTTP</option>
-                <option value="HTTPS">HTTPS</option>
-              </select>
+              <label class="block text-sm font-medium mb-2">Admin Password</label>
+              <button onclick="changePassword()" class="btn-primary">
+                Change Password
+              </button>
             </div>
 
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Friendly Name</label>
-              <input type="text" placeholder="e.g., Web Server, Database, API" id="target-name" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-            </div>
-
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Host/IP Address</label>
-              <input type="text" placeholder="192.168.1.1 or example.com" id="target-host" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-            </div>
-
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-slate-400 text-sm mb-2">Port (optional)</label>
-                <input type="number" placeholder="80, 443, 3306, etc." id="target-port" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-slate-400 text-sm mb-2">Heartbeat Interval</label>
-                <div class="flex gap-2">
-                  <input type="number" id="target-interval" value="60" min="5" max="3600" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-                  <span class="text-slate-400 pt-2 text-sm">seconds</span>
+            <div class="border-t border-gray-700 pt-4">
+              <label class="block text-sm font-medium mb-2">Monitoring Settings</label>
+              <p class="text-gray-400 text-sm mb-4">Configure default monitoring behavior</p>
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-sm font-medium mb-1">Default Check Interval</label>
+                  <input type="number" id="defaultInterval" class="form-input w-full" placeholder="60">
+                  <p class="text-gray-500 text-xs mt-1">Seconds between checks</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium mb-1">Alert Cooldown</label>
+                  <input type="number" id="alertCooldown" class="form-input w-full" placeholder="300">
+                  <p class="text-gray-500 text-xs mt-1">Seconds to wait before alerting again</p>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- APP CONFIGURATION SECTION -->
-        <div class="border-t border-slate-700 pt-4">
-          <h3 class="text-lg font-semibold text-white mb-4">Application (Optional)</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">App URL</label>
-              <input type="url" placeholder="https://example.com:8080 (opens in new tab when clicked)" id="target-app-url" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              <p class="text-slate-500 text-xs mt-1">Leave empty to hide from app launcher</p>
-            </div>
-
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Custom Icon (Font Awesome)</label>
-              <input type="text" placeholder="fa-docker (auto-detected if left empty)" id="target-app-icon" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              <p class="text-slate-500 text-xs mt-1">https://fontawesome.com/icons</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- RETRIES SECTION -->
-        <div class="border-t border-slate-700 pt-4">
-          <h3 class="text-lg font-semibold text-white mb-4">Retries</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Retries</label>
-              <input type="number" id="target-retries" value="0" min="0" max="10" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              <p class="text-slate-500 text-xs mt-1">Maximum retries before the service is marked as down and a notification is sent</p>
-            </div>
-
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Heartbeat Retry Interval</label>
-              <div class="flex gap-2">
-                <input type="number" id="target-retry-interval" value="5" min="1" max="60" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-                <span class="text-slate-400 pt-2 text-sm">seconds</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- HTTP OPTIONS (conditional) -->
-        <div id="http-options-section" class="border-t border-slate-700 pt-4 hidden">
-          <h3 class="text-lg font-semibold text-white mb-4">HTTP Options</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Method</label>
-              <select id="target-http-method" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="HEAD">HEAD</option>
-                <option value="PUT">PUT</option>
-              </select>
-            </div>
-
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Request Timeout</label>
-              <div class="flex gap-2">
-                <input type="number" id="target-timeout" value="30" min="1" max="120" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-                <span class="text-slate-400 pt-2 text-sm">seconds</span>
-              </div>
-            </div>
-
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Accepted Status Codes</label>
-              <input type="text" id="target-status-codes" value="200-299" placeholder="200-299, 301, 302" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              <p class="text-slate-500 text-xs mt-1">Select status codes which are considered as a successful response (comma-separated)</p>
-            </div>
-
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Max Redirects</label>
-              <input type="number" id="target-max-redirects" value="5" min="0" max="20" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              <p class="text-slate-500 text-xs mt-1">Maximum number of redirects to follow. Set to 0 to disable redirects</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- AUTHENTICATION SECTION (conditional) -->
-        <div id="auth-section" class="border-t border-slate-700 pt-4 hidden">
-          <h3 class="text-lg font-semibold text-white mb-4">Authentication</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-slate-400 text-sm mb-2">Method</label>
-              <select id="target-auth-method" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-                <option value="none">None</option>
-                <option value="basic">Basic Auth</option>
-                <option value="bearer">Bearer Token</option>
-              </select>
-            </div>
-
-            <div id="basic-auth-fields" class="hidden space-y-4">
-              <div>
-                <label class="block text-slate-400 text-sm mb-2">Username</label>
-                <input type="text" id="target-auth-username" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-slate-400 text-sm mb-2">Password</label>
-                <input type="password" id="target-auth-password" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              </div>
-            </div>
-
-            <div id="bearer-auth-fields" class="hidden space-y-4">
-              <div>
-                <label class="block text-slate-400 text-sm mb-2">Bearer Token</label>
-                <input type="password" id="target-auth-token" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:border-cyan-500 focus:outline-none">
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ADVANCED SECTION -->
-        <div class="border-t border-slate-700 pt-4">
-          <h3 class="text-lg font-semibold text-white mb-4">Advanced</h3>
-          <div class="space-y-4">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" id="target-ignore-ssl" class="w-4 h-4 bg-slate-700 border border-slate-600 rounded">
-              <span class="text-slate-300 text-sm">Ignore TLS/SSL errors for HTTPS websites</span>
-            </label>
-
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" id="target-upside-down" class="w-4 h-4 bg-slate-700 border border-slate-600 rounded">
-              <span class="text-slate-300 text-sm">Upside Down Mode</span>
-            </label>
-            <p class="text-slate-500 text-xs ml-6 -mt-3">Flip the status upside down. If the service is reachable, it is DOWN.</p>
-
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" id="target-enabled" checked class="w-4 h-4 bg-slate-700 border border-slate-600 rounded">
-              <span class="text-slate-300 text-sm">Show on public status page</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- PUBLIC UI SETTINGS SECTION -->
-        <div class="border-t border-slate-700 pt-4">
-          <h3 class="text-lg font-semibold text-white mb-4">Public UI Settings</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-slate-300 text-sm font-medium mb-2">Position (Display Order)</label>
-              <input type="number" id="target-position" value="0" min="0" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-              <p class="text-slate-500 text-xs mt-1">Lower numbers appear first. Services with the same position are sorted by name.</p>
-            </div>
-
-            <div>
-              <label class="block text-slate-300 text-sm font-medium mb-2">Group/Category</label>
-              <input type="text" id="target-group" placeholder="e.g., Media, Tools, Services" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-              <p class="text-slate-500 text-xs mt-1">Services with the same group will be displayed together on the public page.</p>
-            </div>
-
-            <div>
-              <label class="block text-slate-300 text-sm font-medium mb-2">Quick Commands</label>
-              <input type="text" id="target-quick-commands" placeholder="e.g., /jellyfin, /j, /media" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-              <p class="text-slate-500 text-xs mt-1">Comma-separated list of commands (e.g., /jellyfin, /j). Type these on the public page to quickly open the service.</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- BUTTON SECTION -->
-        <div class="border-t border-slate-700 pt-4 flex gap-2">
-          <button type="submit" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-3 rounded font-medium transition">Save</button>
-          <button type="button" onclick="cancelEditForm()" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded transition">Cancel</button>
-        </div>
-      </form>
-        </div>
-
-        <!-- Incidents Panel - Replaces details when viewing incidents -->
-        <div id="incidents-panel" class="hidden flex-1 overflow-y-auto flex flex-col">
-          <!-- Incidents Header -->
-          <div class="bg-slate-800 border-b border-slate-700 p-6 sticky top-0 z-10">
-            <div class="flex justify-between items-center">
-              <h2 class="text-3xl font-bold">Incident Management</h2>
-              <button type="button" onclick="hideIncidentsPanel()" class="text-slate-400 hover:text-slate-200 text-2xl">×</button>
-            </div>
-          </div>
-
-          <!-- Incidents Content -->
-          <div class="flex-1 overflow-y-auto p-6">
-            <!-- Action Buttons -->
-            <div class="flex gap-3 mb-6">
-              <button onclick="showCreateIncidentModal()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded font-medium">
-                + New Incident
-              </button>
-              <button onclick="loadIncidentsPanel()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded font-medium">
-                ↻ Refresh
-              </button>
-            </div>
-
-            <!-- Incidents List -->
-            <div id="incidents-list-panel" class="space-y-3">
-              <div class="text-center text-slate-400 py-8">Loading incidents...</div>
+            <div class="border-t border-gray-700 pt-4">
+              <h3 class="font-semibold mb-3">About</h3>
+              <p class="text-gray-400 text-sm">LocalPing - Homelab Dashboard & System Monitor</p>
+              <p class="text-gray-500 text-xs mt-1">Version 1.0.0</p>
             </div>
           </div>
         </div>
       </div>
     </div>
+  </main>
 
-  <!-- Public UI Settings Modal -->
-  <div id="public-settings-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-2xl w-full mx-4 border border-slate-700 max-h-96 overflow-y-auto">
-      <h2 class="text-xl font-bold mb-4">Public UI Settings</h2>
-      <p class="text-slate-400 text-sm mb-6">Select which monitors to display on the public status page:</p>
+  <!-- Notifications -->
+  <div id="notificationContainer"></div>
 
-      <div id="public-settings-list" class="space-y-3 mb-6">
-        <div class="text-slate-400 text-sm text-center py-4">Loading monitors...</div>
-      </div>
-
-      <div class="flex gap-2">
-        <button type="button" onclick="savePublicSettings()" class="flex-1 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded font-medium">
-          Save Settings
-        </button>
-        <button type="button" onclick="document.getElementById('public-settings-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">
-          Close
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Incidents Panel Modal -->
-  <div id="incidents-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-4xl w-full mx-4 border border-slate-700 max-h-96 overflow-y-auto">
-      <div class="flex justify-between items-center mb-4">
-        <h2 class="text-xl font-bold">Incident Management</h2>
-        <button onclick="document.getElementById('incidents-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-200 text-2xl">×</button>
-      </div>
-
-      <div class="grid grid-cols-3 gap-4 mb-6">
-        <button onclick="showCreateIncidentModal()" class="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded font-medium flex items-center justify-center gap-2">
-          + New Incident
-        </button>
-        <button onclick="loadIncidents()" class="w-full bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded font-medium">
-          Refresh
-        </button>
-        <button onclick="document.getElementById('incidents-modal').classList.add('hidden')" class="w-full bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded">
-          Close
-        </button>
-      </div>
-
-      <div id="incidents-list" class="space-y-3">
-        <div class="text-slate-400 text-sm text-center py-8">Loading incidents...</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Create/Edit Incident Modal -->
-  <div id="incident-form-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-2xl w-full mx-4 border border-slate-700 max-h-96 overflow-y-auto">
-      <h2 class="text-xl font-bold mb-4">Create Incident Report</h2>
-      <form id="incident-form" onsubmit="saveIncident(event)">
-        <div class="space-y-4">
-          <input type="text" id="incident-title" placeholder="Incident Title" required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-
-          <textarea id="incident-description" placeholder="Describe the incident..." required class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100 h-24 resize-none"></textarea>
-
-          <select id="incident-severity" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-            <option value="minor">Minor</option>
-            <option value="major" selected>Major</option>
-            <option value="critical">Critical</option>
-          </select>
-
-          <select id="incident-status" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-slate-100">
-            <option value="investigating" selected>Investigating</option>
-            <option value="identified">Identified</option>
-            <option value="monitoring">Monitoring</option>
-            <option value="resolved">Resolved</option>
-          </select>
-
-          <div class="flex gap-2">
-            <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-medium">
-              Report Incident
-            </button>
-            <button type="button" onclick="document.getElementById('incident-form-modal').classList.add('hidden')" class="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">
-              Cancel
-            </button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <script src="/js/admin.js"></script>
+  <script src="/js/admin-new.js"></script>
 </body>
 </html>

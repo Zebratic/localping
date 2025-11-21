@@ -15,6 +15,7 @@ fi
 REPO_URL="${1:-https://github.com/zebratic/localping.git}"
 BRANCH="${2:-main}"
 INSTALL_DIR="${3:-/opt/localping}"
+SKIP_UPDATE="${4:-false}"
 
 echo "📋 Installation Configuration:"
 echo "   Repository: $REPO_URL"
@@ -38,11 +39,15 @@ if [ -d "$INSTALL_DIR" ]; then
         echo "  • Configuration (.env file)"
         echo "  • Admin credentials"
         echo ""
-        read -p "Continue with update? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "❌ Update cancelled."
-            exit 0
+
+        # Only ask for confirmation if running in interactive terminal and not skipping confirmation
+        if [ "$SKIP_UPDATE" != "true" ] && [ -t 0 ]; then
+            read -p "Continue with update? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "❌ Update cancelled."
+                exit 0
+            fi
         fi
         IS_UPDATE=true
     else

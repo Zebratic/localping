@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { getDB } = require('../config/db');
-const { ObjectId } = require('mongodb');
 const monitorService = require('../services/monitorService');
 const IncidentService = require('../services/incidentService');
 
@@ -57,7 +56,7 @@ router.get('/api/actions', async (req, res) => {
 router.get('/api/actions/:id', async (req, res) => {
   try {
     const db = getDB();
-    const actionId = new ObjectId(req.params.id);
+    const actionId = req.params.id;
     const action = await db.collection('actions').findOne({ _id: actionId });
 
     if (!action) {
@@ -87,7 +86,7 @@ router.post('/api/actions', async (req, res) => {
       name,
       description: description || '',
       type,
-      targetId: targetId ? new ObjectId(targetId) : null,
+      targetId: targetId ? targetId : null,
       ...actionData,
       createdAt: new Date(),
     };
@@ -108,7 +107,7 @@ router.post('/api/actions', async (req, res) => {
 router.put('/api/actions/:id', async (req, res) => {
   try {
     const db = getDB();
-    const actionId = new ObjectId(req.params.id);
+    const actionId = req.params.id;
 
     const result = await db.collection('actions').updateOne(
       { _id: actionId },
@@ -129,7 +128,7 @@ router.put('/api/actions/:id', async (req, res) => {
 router.delete('/api/actions/:id', async (req, res) => {
   try {
     const db = getDB();
-    const actionId = new ObjectId(req.params.id);
+    const actionId = req.params.id;
 
     const result = await db.collection('actions').deleteOne({ _id: actionId });
 
@@ -147,7 +146,7 @@ router.delete('/api/actions/:id', async (req, res) => {
 router.post('/api/actions/:id/execute', async (req, res) => {
   try {
     const db = getDB();
-    const actionId = new ObjectId(req.params.id);
+    const actionId = req.params.id;
     const action = await db.collection('actions').findOne({ _id: actionId });
 
     if (!action) {

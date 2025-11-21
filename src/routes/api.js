@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { getDB } = require('../config/db');
-const { ObjectId } = require('mongodb');
 const { v4: uuidv4 } = require('uuid');
 const monitorService = require('../services/monitorService');
 const pingService = require('../services/pingService');
@@ -33,7 +32,7 @@ router.get('/targets', async (req, res) => {
 router.get('/targets/:id', async (req, res) => {
   try {
     const db = getDB();
-    const target = await db.collection('targets').findOne({ _id: new ObjectId(req.params.id) });
+    const target = await db.collection('targets').findOne({ _id: req.params.id });
 
     if (!target) {
       return res.status(404).json({ success: false, error: 'Target not found' });
@@ -140,7 +139,7 @@ router.post('/targets', validateTargetInput, async (req, res) => {
 router.put('/targets/:id', validateTargetInput, async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
     const {
       name,
       host,
@@ -226,7 +225,7 @@ router.put('/targets/:id', validateTargetInput, async (req, res) => {
 router.delete('/targets/:id', async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
 
     // Stop monitoring
     monitorService.stopTargetMonitor(targetId);
@@ -253,7 +252,7 @@ router.delete('/targets/:id', async (req, res) => {
 router.get('/targets/:id/results', async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
     const limit = parseInt(req.query.limit) || 100;
     const skip = parseInt(req.query.skip) || 0;
 
@@ -283,7 +282,7 @@ router.get('/targets/:id/results', async (req, res) => {
 router.get('/targets/:id/statistics', async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
     const days = parseInt(req.query.days) || 30;
 
     const startDate = new Date();
@@ -309,7 +308,7 @@ router.get('/alerts', async (req, res) => {
   try {
     const db = getDB();
     const limit = parseInt(req.query.limit) || 50;
-    const targetId = req.query.targetId ? new ObjectId(req.query.targetId) : null;
+    const targetId = req.query.targetId ? req.query.targetId : null;
 
     const query = targetId ? { targetId } : {};
 
@@ -330,7 +329,7 @@ router.get('/alerts', async (req, res) => {
 router.post('/targets/:id/test', async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
 
     const target = await db.collection('targets').findOne({ _id: targetId });
 
@@ -353,7 +352,7 @@ router.post('/targets/:id/test', async (req, res) => {
 router.post('/actions/:id/execute', async (req, res) => {
   try {
     const db = getDB();
-    const actionId = new ObjectId(req.params.id);
+    const actionId = req.params.id;
 
     const action = await db.collection('actions').findOne({ _id: actionId });
 

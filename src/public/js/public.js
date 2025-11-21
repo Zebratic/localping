@@ -536,7 +536,7 @@ function getIconForApp(appName, customIcon) {
     'minio': 'fa-database',
     'postgresql': 'fa-database',
     'mysql': 'fa-database',
-    'mongodb': 'fa-leaf',
+    'sqlite': 'fa-database',
     'redis': 'fa-database',
     'elasticsearch': 'fa-search',
     'kibana': 'fa-chart-line',
@@ -610,6 +610,12 @@ function updateServicesList(targets) {
 
   countEl.textContent = `(${targets.length})`;
 
+  // Check if services list is still showing loading message
+  const loadingMsg = list.querySelector('.text-center.text-slate-400');
+  if (loadingMsg) {
+    list.innerHTML = ''; // Clear loading message
+  }
+
   // Update each service row dynamically without re-rendering
   targets.forEach(target => {
     const serviceEl = document.getElementById(`service-${target._id}`);
@@ -618,6 +624,7 @@ function updateServicesList(targets) {
       // If service doesn't exist, add it
       list.innerHTML += createServiceElement(target);
       loadAndDisplayUptime(target._id);
+      loadAndDisplayUptimeBars(target._id);
     } else {
       // Update existing service
       const isUp = target.isUp;
@@ -633,6 +640,7 @@ function updateServicesList(targets) {
 
       // Reload uptime data
       loadAndDisplayUptime(target._id);
+      loadAndDisplayUptimeBars(target._id);
     }
   });
 
@@ -679,6 +687,42 @@ async function loadAndDisplayUptime(targetId) {
   const el = document.querySelector(`.uptime-${targetId}`);
   if (el) {
     el.textContent = uptime + '%';
+  }
+}
+
+async function loadAndDisplayUptimeBars(targetId) {
+  try {
+    // Fetch statistics for the last 30 days (hourly data)
+    const res = await axios.get(`/api/targets/${targetId}/statistics?days=30`);
+    const stats = res.data.statistics || [];
+
+    // Get the uptime bar container
+    const serviceEl = document.getElementById(`service-${targetId}`);
+    if (!serviceEl) return;
+
+    const uptimeBar = serviceEl.querySelector('.uptime-bar');
+    if (!uptimeBar) return;
+
+    // Clear loading segments and rebuild with actual data
+    let html = '';
+    stats.forEach(stat => {
+      const isUp = stat.successfulPings > 0;
+      const status = isUp ? 'up' : 'down';
+      const uptime = stat.successfulPings > 0 ? ((stat.successfulPings / stat.totalPings) * 100).toFixed(0) : 0;
+      html += `<div class="uptime-segment ${status}" title="${new Date(stat.date).toLocaleDateString()}: ${uptime}% up"></div>`;
+    });
+
+    // If no stats yet, show loading state
+    if (stats.length === 0) {
+      html = '';
+      for (let i = 0; i < 40; i++) {
+        html += `<div class="uptime-segment" style="background-color: #64748b;" title="No data"></div>`;
+      }
+    }
+
+    uptimeBar.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading uptime bars:', error);
   }
 }
 
@@ -802,6 +846,7 @@ async function loadServiceDetails(serviceId) {
 
         <!-- Time Period Selector -->
         <div class="flex gap-2">
+          <button onclick="switchChartPeriod('${serviceId}', '1h')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="1h">1H</button>
           <button onclick="switchChartPeriod('${serviceId}', '24h')" class="period-btn px-3 py-1 rounded text-xs bg-cyan-600 text-white" data-period="24h">24H</button>
           <button onclick="switchChartPeriod('${serviceId}', '7d')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="7d">7D</button>
           <button onclick="switchChartPeriod('${serviceId}', '30d')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="30d">30D</button>
@@ -874,7 +919,9 @@ async function loadServiceChart(serviceId, period) {
     if (!canvas) return;
 
     let days = 1;
-    if (period === '7d') {
+    if (period === '1h') {
+      days = 0.04; // 1 hour = 1/24 days
+    } else if (period === '7d') {
       days = 7;
     } else if (period === '30d') {
       days = 30;
@@ -892,7 +939,7 @@ async function loadServiceChart(serviceId, period) {
 
     statistics.forEach(stat => {
       const date = new Date(stat.date);
-      if (period === '24h') {
+      if (period === '1h' || period === '24h') {
         labels.push(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       } else {
         labels.push(date.toLocaleDateString([], { month: 'short', day: 'numeric' }));

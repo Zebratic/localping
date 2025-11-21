@@ -67,7 +67,7 @@ class MonitorService {
       const timestamp = new Date();
       const targetIdStr = target._id.toString();
 
-      // Store ping result in MongoDB
+      // Store ping result in SQLite
       await db.collection('pingResults').insertOne({
         targetId: target._id,
         ...result,

@@ -223,9 +223,22 @@ async function generateUptimeVisualization(targetId) {
   }
 }
 
-async function loadPingChart(targetId) {
+async function loadPingChart(targetId, days = 1) {
   try {
-    const res = await axios.get(`/api/targets/${targetId}/statistics?days=1`);
+    // Update button styling
+    document.querySelectorAll('.period-btn').forEach(btn => {
+      btn.classList.remove('bg-cyan-600', 'text-white');
+      btn.classList.add('bg-slate-700', 'hover:bg-slate-600');
+    });
+
+    // Find and highlight the clicked button
+    const clickedBtn = document.querySelector(`.period-btn[data-period="${days <= 0.05 ? '1h' : days === 1 ? '24h' : days === 7 ? '7d' : '30d'}"]`);
+    if (clickedBtn) {
+      clickedBtn.classList.remove('bg-slate-700', 'hover:bg-slate-600');
+      clickedBtn.classList.add('bg-cyan-600', 'text-white');
+    }
+
+    const res = await axios.get(`/api/targets/${targetId}/statistics?days=${days}`);
     const stats = res.data.statistics || [];
 
     const labels = [];
@@ -233,7 +246,12 @@ async function loadPingChart(targetId) {
 
     stats.forEach(stat => {
       const date = new Date(stat.date);
-      labels.push(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      const label = days <= 0.05
+        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : days <= 1
+        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      labels.push(label);
       data.push(stat.avgResponseTime || 0);
     });
 

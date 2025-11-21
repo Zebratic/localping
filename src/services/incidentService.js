@@ -54,10 +54,9 @@ class IncidentService {
 
   async getIncidentById(incidentId) {
     try {
-      const { ObjectId } = require('mongodb');
       const incident = await this.db
         .collection('incidents')
-        .findOne({ _id: new ObjectId(incidentId) });
+        .findOne({ _id: incidentId });
 
       return incident;
     } catch (error) {
@@ -68,7 +67,6 @@ class IncidentService {
 
   async updateIncident(incidentId, data) {
     try {
-      const { ObjectId } = require('mongodb');
       const updateData = {};
 
       if (data.title !== undefined) updateData.title = data.title;
@@ -85,7 +83,7 @@ class IncidentService {
       // Add update to the updates array
       if (data.updateMessage) {
         await this.db.collection('incidents').updateOne(
-          { _id: new ObjectId(incidentId) },
+          { _id: incidentId },
           {
             $push: {
               updates: {
@@ -100,7 +98,7 @@ class IncidentService {
 
       const result = await this.db
         .collection('incidents')
-        .updateOne({ _id: new ObjectId(incidentId) }, { $set: updateData });
+        .updateOne({ _id: incidentId }, { $set: updateData });
 
       return result.modifiedCount > 0;
     } catch (error) {
@@ -111,10 +109,9 @@ class IncidentService {
 
   async deleteIncident(incidentId) {
     try {
-      const { ObjectId } = require('mongodb');
       const result = await this.db
         .collection('incidents')
-        .deleteOne({ _id: new ObjectId(incidentId) });
+        .deleteOne({ _id: incidentId });
 
       return result.deletedCount > 0;
     } catch (error) {

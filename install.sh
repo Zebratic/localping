@@ -17,8 +17,7 @@ apt install -y \
     nodejs \
     npm \
     curl \
-    libnotify-bin \
-    notification-daemon
+    libnotify-bin
 
 echo "📁 Cloning LocalPing repository..."
 cd /opt || mkdir -p /opt && cd /opt

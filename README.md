@@ -7,17 +7,17 @@ A simple, self-hosted uptime monitoring system for your homelab. Monitor TrueNAS
 One-liner deployment:
 
 ```bash
-sudo apt update && sudo apt install -y curl && curl -fsSL https://raw.githubusercontent.com/yourusername/localping/main/install.sh | bash
+sudo apt update && sudo apt install -y curl && curl -fsSL https://raw.githubusercontent.com/zebratic/localping/main/install.sh | bash
 ```
 
 Or manual setup:
 
 ```bash
 # Install dependencies
-sudo apt update && sudo apt install -y nodejs npm mongodb curl libnotify-bin
+sudo apt update && sudo apt install -y nodejs npm curl libnotify-bin
 
 # Clone and setup
-git clone https://github.com/yourusername/localping.git && cd localping
+git clone https://github.com/zebratic/localping.git && cd localping
 npm install
 
 # Start with PM2
@@ -49,10 +49,7 @@ Copy `.env.example` to `.env` and configure:
 # Server
 API_PORT=8000
 NODE_ENV=production
-
-# Database (optional - uses local SQLite by default)
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DB=localping
+SESSION_SECRET=your_random_secret_here
 
 # Notifications
 NOTIFICATION_ENABLED=true
@@ -61,7 +58,12 @@ NOTIFICATION_METHOD=dbus
 # Monitoring
 PING_INTERVAL=60
 ALERT_COOLDOWN=300
+
+# API Authentication
+ADMIN_API_KEY=localping-admin-key-12345
 ```
+
+All data is stored in a local SQLite database at `data/localping.db` - no external dependencies needed!
 
 ## Commands
 
@@ -108,8 +110,8 @@ localping/
 
 ## Troubleshooting
 
-### MongoDB not needed?
-By default, LocalPing uses SQLite for storage and works completely offline. MongoDB is optional for advanced features.
+### No External Database Needed!
+LocalPing uses SQLite for all storage - completely self-contained and offline-capable. The database file is stored at `data/localping.db`.
 
 ### ICMP requires sudo
 ```bash

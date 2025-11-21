@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { getDB } = require('../config/db');
-const { ObjectId } = require('mongodb');
 const monitorService = require('../services/monitorService');
 const faviconService = require('../services/faviconService');
 
@@ -34,7 +33,7 @@ router.get('/api/targets', async (req, res) => {
 router.get('/api/targets/:id/statistics', async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
     const days = parseInt(req.query.days) || 30;
 
     // Verify target exists and is enabled
@@ -69,7 +68,7 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
 router.get('/api/targets/:id/uptime', async (req, res) => {
   try {
     const db = getDB();
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
     const days = parseInt(req.query.days) || 30;
 
     const target = await db.collection('targets').findOne({

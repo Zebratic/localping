@@ -262,7 +262,15 @@
 
           <!-- Ping History Chart -->
           <div class="p-6 border-b border-slate-700">
-            <h3 class="text-lg font-bold mb-4">Ping History (24h)</h3>
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="text-lg font-bold">Ping History</h3>
+              <div class="flex gap-2">
+                <button onclick="loadPingChart(selectedTargetId, 0.04)" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="1h">1H</button>
+                <button onclick="loadPingChart(selectedTargetId, 1)" class="period-btn px-3 py-1 rounded text-xs bg-cyan-600 text-white" data-period="24h">24H</button>
+                <button onclick="loadPingChart(selectedTargetId, 7)" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="7d">7D</button>
+                <button onclick="loadPingChart(selectedTargetId, 30)" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="30d">30D</button>
+              </div>
+            </div>
             <div class="relative" style="height: 250px;">
               <canvas id="ping-chart"></canvas>
             </div>

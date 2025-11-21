@@ -71,7 +71,7 @@ const startServer = async () => {
     // Initialize SQLite database
     sqliteService.initializeDatabase();
 
-    // Connect to MongoDB database
+    // Connect to SQLite database
     db = await connectDB();
     console.log(chalk.green('✓ Connected to database'));
 

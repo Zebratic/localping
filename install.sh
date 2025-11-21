@@ -93,6 +93,9 @@ fi
 echo "📥 Installing npm dependencies..."
 npm install --silent 2>/dev/null || npm install
 
+echo "📁 Creating data directory..."
+mkdir -p "$INSTALL_DIR/data"
+
 echo "🔧 Setting up environment file..."
 if [ ! -f ".env" ]; then
     # Generate secure random strings
@@ -160,15 +163,12 @@ AmbientCapabilities=CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_RAW
 
 # Security settings
-ProtectSystem=strict
 ProtectHome=true
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectRuntimeDirectory=yes
+PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-ReadWritePaths=$INSTALL_DIR/data
 
 # Process management
 StandardOutput=journal

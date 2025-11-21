@@ -11,57 +11,89 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-INSTALL_DIR="${1:-}"
+# Parse arguments
+REPO_URL="${1:-https://github.com/zebratic/localping.git}"
+BRANCH="${2:-main}"
+INSTALL_DIR="${3:-/opt/localping}"
 
-# Auto-detect LocalPing directory if not provided
-if [ -z "$INSTALL_DIR" ]; then
-    if [ -d "/opt/localping" ] && [ -f "/opt/localping/.env.example" ]; then
-        INSTALL_DIR="/opt/localping"
-    elif [ -d "$HOME/localping" ] && [ -f "$HOME/localping/.env.example" ]; then
-        INSTALL_DIR="$HOME/localping"
-    elif [ -f ".env.example" ]; then
-        INSTALL_DIR="$(pwd)"
-    else
-        echo "❌ LocalPing directory not found!"
-        echo ""
-        echo "Usage: sudo bash install.sh [/path/to/localping]"
-        echo "Example: sudo bash install.sh /opt/localping"
-        exit 1
+echo "📋 Installation Configuration:"
+echo "   Repository: $REPO_URL"
+echo "   Branch: $BRANCH"
+echo "   Install Path: $INSTALL_DIR"
+echo ""
+
+# Detect if already installed
+if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/.env" ]; then
+    echo "⚠️  LocalPing already installed at $INSTALL_DIR"
+    read -p "Do you want to update it? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborting installation."
+        exit 0
     fi
+    IS_UPDATE=true
+else
+    IS_UPDATE=false
 fi
 
 echo "📦 Installing system dependencies..."
-apt-get update -qq
+apt-get update -qq 2>/dev/null || apt-get update
+
+# Install minimal dependencies
 apt-get install -y -qq \
+    curl \
+    git \
+    build-essential \
+    python3 \
+    libnotify-bin \
+    2>/dev/null || apt-get install -y \
     curl \
     git \
     build-essential \
     python3 \
     libnotify-bin
 
-# Check if Node.js/npm is installed
+# Install Node.js if not present
 if ! command -v node &> /dev/null; then
-    echo "📦 Installing Node.js and npm..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y -qq nodejs
+    echo "📦 Installing Node.js v20..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null
+    apt-get install -y -qq nodejs 2>/dev/null || apt-get install -y nodejs
 fi
 
-echo "📁 Setting up LocalPing at: $INSTALL_DIR"
-cd "$INSTALL_DIR" || {
-    echo "❌ Failed to enter directory: $INSTALL_DIR"
-    exit 1
-}
+# Install git if not present (shouldn't happen but just in case)
+if ! command -v git &> /dev/null; then
+    echo "📦 Installing git..."
+    apt-get install -y -qq git 2>/dev/null || apt-get install -y git
+fi
+
+echo "✅ System dependencies installed"
+
+# Clone or update repository
+if [ "$IS_UPDATE" = false ]; then
+    echo "📥 Cloning LocalPing repository..."
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+else
+    echo "🔄 Updating LocalPing repository..."
+    cd "$INSTALL_DIR"
+    git fetch origin
+    git checkout "$BRANCH"
+    git pull origin "$BRANCH"
+fi
+
+cd "$INSTALL_DIR"
 
 # Validate required files exist
 if [ ! -f ".env.example" ]; then
     echo "❌ .env.example not found at $INSTALL_DIR"
+    echo "The repository may be corrupted. Please try again."
     exit 1
 fi
 
 echo "📥 Installing npm dependencies..."
-npm install --silent
+npm install --silent 2>/dev/null || npm install
 
-echo "🔧 Creating .env file..."
+echo "🔧 Setting up environment file..."
 if [ ! -f ".env" ]; then
     # Generate secure random strings
     SESSION_SECRET=$(openssl rand -base64 32)
@@ -90,20 +122,20 @@ else
 fi
 
 echo "🔐 Setting ICMP capabilities for Node.js..."
-setcap cap_net_raw=ep "$(which node)" 2>/dev/null || true
+NODE_PATH=$(which node)
+setcap cap_net_raw=ep "$NODE_PATH" 2>/dev/null || true
 
 echo "📥 Installing PM2 globally..."
-npm install -g pm2 --silent
-pm2 install pm2-auto-pull 2>/dev/null || true
+npm install -g pm2 --silent 2>/dev/null || npm install -g pm2
 
-INSTALL_PATH=$(cd "$INSTALL_DIR" && pwd)
+# Get the user who ran sudo
 SERVICE_USER="${SUDO_USER:-root}"
 SERVICE_NAME="localping"
 
 echo "🛠️  Creating systemd service..."
 
 # Create systemd service file
-cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
+cat > "/etc/systemd/system/${SERVICE_NAME}.service" << 'SYSTEMD_EOF'
 [Unit]
 Description=LocalPing - System Uptime Monitor
 After=network-online.target
@@ -111,13 +143,13 @@ Wants=network-online.target
 
 [Service]
 Type=forking
-User=$SERVICE_USER
-WorkingDirectory=$INSTALL_PATH
+User=SERVICE_USER_PLACEHOLDER
+WorkingDirectory=INSTALL_DIR_PLACEHOLDER
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="NODE_ENV=production"
 
 # Start the service
-ExecStart=/usr/local/bin/pm2 start ecosystem.config.js --name $SERVICE_NAME
+ExecStart=/usr/local/bin/pm2 start ecosystem.config.js --name localping
 
 # Restart automatically
 Restart=always
@@ -132,40 +164,45 @@ ProtectSystem=strict
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectRuntimeDirectory=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
 
 # Logs
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=$SERVICE_NAME
+SyslogIdentifier=localping
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SYSTEMD_EOF
 
-# Create stop script that properly cleans up PM2
-cat > "/etc/systemd/system/${SERVICE_NAME}-stop.service" << EOF
-[Unit]
-Description=LocalPing Stop Handler
-Before=$SERVICE_NAME.service
+# Replace placeholders
+sed -i "s|SERVICE_USER_PLACEHOLDER|$SERVICE_USER|g" "/etc/systemd/system/${SERVICE_NAME}.service"
+sed -i "s|INSTALL_DIR_PLACEHOLDER|$INSTALL_DIR|g" "/etc/systemd/system/${SERVICE_NAME}.service"
 
-[Service]
-Type=oneshot
-User=$SERVICE_USER
-WorkingDirectory=$INSTALL_PATH
-ExecStart=/usr/local/bin/pm2 kill
+# Set permissions
+chown root:root "/etc/systemd/system/${SERVICE_NAME}.service"
+chmod 644 "/etc/systemd/system/${SERVICE_NAME}.service"
 
-[Install]
-WantedBy=$SERVICE_NAME.service
-EOF
-
-# Reload systemd and enable the service
+# Reload systemd
 systemctl daemon-reload
-systemctl enable "$SERVICE_NAME" --now
+
+# Enable and start the service
+echo "🚀 Starting LocalPing service..."
+systemctl enable "$SERVICE_NAME"
+systemctl start "$SERVICE_NAME"
+
+# Wait for service to start
+sleep 2
 
 echo "✅ Systemd service created and enabled"
+echo ""
 
+# Show status
 echo "📊 Service Status:"
-systemctl status "$SERVICE_NAME" --no-pager || true
+systemctl status "$SERVICE_NAME" --no-pager 2>&1 | head -n 20 || true
 
 echo ""
 echo "✅ Installation complete!"
@@ -173,15 +210,18 @@ echo ""
 echo "📊 Access LocalPing:"
 echo "   Admin Panel:  http://localhost:8000/admin"
 echo "   Public Page:  http://localhost:8000"
+echo "   API:          http://localhost:8000/api"
 echo ""
-echo "📖 Available Commands:"
-echo "   View logs:        journalctl -u $SERVICE_NAME -f"
-echo "   Service status:   systemctl status $SERVICE_NAME"
-echo "   Start service:    systemctl start $SERVICE_NAME"
-echo "   Stop service:     systemctl stop $SERVICE_NAME"
-echo "   Restart service:  systemctl restart $SERVICE_NAME"
-echo "   PM2 logs:         pm2 logs"
-echo "   PM2 status:       pm2 status"
+echo "📖 Useful Commands:"
+echo "   View logs:          journalctl -u $SERVICE_NAME -f"
+echo "   Service status:     systemctl status $SERVICE_NAME"
+echo "   Start service:      systemctl start $SERVICE_NAME"
+echo "   Stop service:       systemctl stop $SERVICE_NAME"
+echo "   Restart service:    systemctl restart $SERVICE_NAME"
+echo "   View PM2 logs:      pm2 logs"
+echo "   Check PM2 status:   pm2 status"
+echo "   Install directory:  $INSTALL_DIR"
 echo ""
 echo "ℹ️  The service will auto-start on system boot."
+echo "ℹ️  Environment file located at: $INSTALL_DIR/.env"
 echo ""

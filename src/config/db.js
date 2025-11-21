@@ -450,8 +450,81 @@ const createCollectionWrapper = (name) => {
           return val;
         });
 
-        // Standard INSERT - let the application handle conflicts
-        const sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders})`;
+        // Use INSERT OR REPLACE for tables with unique constraints to prevent errors
+        let sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders})`;
+        
+        // Handle unique constraints with ON CONFLICT for specific tables
+        if (name === 'statistics') {
+          // Statistics has UNIQUE(targetId, date) - use ON CONFLICT to increment values atomically
+          // This handles race conditions where multiple pings try to insert simultaneously
+          const updateClauses = [];
+          // Increment counters
+          if (fields.includes('totalPings')) {
+            updateClauses.push(`"totalPings" = "totalPings" + excluded."totalPings"`);
+          }
+          if (fields.includes('successfulPings')) {
+            updateClauses.push(`"successfulPings" = "successfulPings" + excluded."successfulPings"`);
+          }
+          if (fields.includes('failedPings')) {
+            updateClauses.push(`"failedPings" = "failedPings" + excluded."failedPings"`);
+          }
+          // Update latest values
+          if (fields.includes('lastResponseTime')) {
+            updateClauses.push(`"lastResponseTime" = excluded."lastResponseTime"`);
+          }
+          // Recalculate average: weighted average of existing and new
+          if (fields.includes('avgResponseTime')) {
+            updateClauses.push(`"avgResponseTime" = CASE 
+              WHEN "totalPings" + excluded."totalPings" > 0 
+              THEN ("avgResponseTime" * "totalPings" + excluded."avgResponseTime" * excluded."totalPings") / ("totalPings" + excluded."totalPings")
+              ELSE excluded."avgResponseTime"
+            END`);
+          }
+          // Recalculate uptime percentage
+          if (fields.includes('uptime')) {
+            updateClauses.push(`"uptime" = CASE 
+              WHEN "totalPings" + excluded."totalPings" > 0 
+              THEN (CAST("successfulPings" + excluded."successfulPings" AS REAL) / CAST("totalPings" + excluded."totalPings" AS REAL)) * 100
+              ELSE excluded."uptime"
+            END`);
+          }
+          // Update min/max response times
+          if (fields.includes('minResponseTime')) {
+            updateClauses.push(`"minResponseTime" = CASE 
+              WHEN "minResponseTime" IS NULL THEN excluded."minResponseTime"
+              WHEN excluded."minResponseTime" IS NULL THEN "minResponseTime"
+              WHEN "minResponseTime" < excluded."minResponseTime" THEN "minResponseTime"
+              ELSE excluded."minResponseTime"
+            END`);
+          }
+          if (fields.includes('maxResponseTime')) {
+            updateClauses.push(`"maxResponseTime" = CASE 
+              WHEN "maxResponseTime" IS NULL THEN excluded."maxResponseTime"
+              WHEN excluded."maxResponseTime" IS NULL THEN "maxResponseTime"
+              WHEN "maxResponseTime" > excluded."maxResponseTime" THEN "maxResponseTime"
+              ELSE excluded."maxResponseTime"
+            END`);
+          }
+          if (updateClauses.length > 0) {
+            sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(targetId, date) DO UPDATE SET ${updateClauses.join(', ')}`;
+          }
+        } else if (name === 'actions') {
+          // Actions has UNIQUE(targetId, name) - use ON CONFLICT to update instead
+          const updateFields = fields.filter(f => f !== '_id' && f !== 'targetId' && f !== 'name');
+          const updateClauses = updateFields.map(f => `"${f}" = excluded."${f}"`).join(', ');
+          sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(targetId, name) DO UPDATE SET ${updateClauses}`;
+        } else if (name === 'favicons') {
+          // Favicons has UNIQUE(appUrl) - use ON CONFLICT to update instead
+          const updateFields = fields.filter(f => f !== '_id' && f !== 'appUrl');
+          const updateClauses = updateFields.map(f => `"${f}" = excluded."${f}"`).join(', ');
+          sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(appUrl) DO UPDATE SET ${updateClauses}`;
+        } else if (name === 'targets') {
+          // Targets has UNIQUE(name) - use ON CONFLICT to update instead
+          const updateFields = fields.filter(f => f !== '_id' && f !== 'name');
+          const updateClauses = updateFields.map(f => `"${f}" = excluded."${f}"`).join(', ');
+          sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(name) DO UPDATE SET ${updateClauses}`;
+        }
+        
         const stmt = db.prepare(sql);
         stmt.run(...values);
         

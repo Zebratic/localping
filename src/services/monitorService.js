@@ -13,30 +13,38 @@ class MonitorService {
   }
 
   /**
-   * Start monitoring all enabled targets
+   * Start monitoring all enabled targets (non-blocking)
    */
-  async startMonitoring() {
-    try {
-      const db = getDB();
-      const targets = await db.collection('targets').find({ enabled: true }).toArray();
+  startMonitoring() {
+    // Run in background to avoid blocking webserver startup
+    setImmediate(async () => {
+      try {
+        const db = getDB();
+        const targets = await db.collection('targets').find({ enabled: true }).toArray();
 
-      console.log(chalk.green(`✓ Starting monitor for ${targets.length} targets`));
+        console.log(chalk.green(`✓ Starting monitor for ${targets.length} targets`));
 
-      // Ping all targets immediately to get current status
-      if (targets.length > 0) {
-        console.log(chalk.blue('↪ Pinging all monitors to get current status...'));
-        const pingPromises = targets.map(target => this.pingTarget(target));
-        await Promise.allSettled(pingPromises);
-        console.log(chalk.green('✓ Initial ping complete, status updated'));
+        // Set up monitoring intervals for all targets immediately
+        for (const target of targets) {
+          this.startTargetMonitor(target);
+        }
+
+        // Ping all targets in background to get current status (non-blocking)
+        if (targets.length > 0) {
+          console.log(chalk.blue('↪ Pinging all monitors to get current status (background)...'));
+          // Don't await - let it run in background
+          Promise.allSettled(targets.map(target => this.pingTarget(target)))
+            .then(() => {
+              console.log(chalk.green('✓ Initial ping complete, status updated'));
+            })
+            .catch((error) => {
+              console.error(chalk.yellow('Some initial pings failed:'), error.message);
+            });
+        }
+      } catch (error) {
+        console.error(chalk.red('Error starting monitoring:'), error.message);
       }
-
-      // Set up monitoring intervals for all targets
-      for (const target of targets) {
-        this.startTargetMonitor(target);
-      }
-    } catch (error) {
-      console.error(chalk.red('Error starting monitoring:'), error.message);
-    }
+    });
   }
 
   /**
@@ -66,31 +74,15 @@ class MonitorService {
   }
 
   /**
-   * Ping a target and store result
+   * Ping a target and store result (non-blocking)
    */
   async pingTarget(target) {
     try {
+      // Ping is now non-blocking via worker threads
       const result = await pingService.ping(target);
-      const db = getDB();
-      const timestamp = new Date();
       const targetIdStr = target._id.toString();
 
-      // Store ping result in SQLite
-      await db.collection('pingResults').insertOne({
-        targetId: target._id,
-        ...result,
-        timestamp,
-      });
-
-      // Also store in SQLite for local persistence
-      sqliteService.storePingResult(targetIdStr, {
-        success: result.success,
-        responseTime: result.responseTime,
-        statusCode: result.statusCode,
-        error: result.error,
-      }, timestamp.toISOString());
-
-      // Get current in-memory status
+      // Get current in-memory status (synchronous, fast)
       const currentStatus = this.targetStatus.get(targetIdStr);
 
       // Determine status based on ping result and upside down mode
@@ -121,20 +113,63 @@ class MonitorService {
         }
       }
 
-      // Only trigger alerts if status actually changed (not just unknown -> known)
-      if (newStatus !== currentStatus && currentStatus !== 'unknown') {
-        if (newStatus === 'down') {
-          await this.handleTargetDown(target);
-        } else if (newStatus === 'up') {
-          await this.handleTargetUp(target);
-        }
-      }
-
-      // Always update status
+      // Always update status immediately (in-memory, fast)
       this.targetStatus.set(targetIdStr, newStatus);
 
-      // Update statistics
-      await this.updateStatistics(target, result);
+      // Defer database operations to next tick to avoid blocking
+      setImmediate(async () => {
+        try {
+          const db = getDB();
+          const timestamp = new Date();
+
+          // Store ping result in MongoDB (non-blocking)
+          db.collection('pingResults').insertOne({
+            targetId: target._id,
+            ...result,
+            timestamp,
+          }).catch(err => {
+            // Silently handle DB errors to avoid log spam
+            if (process.env.NODE_ENV === 'development') {
+              console.error(chalk.yellow(`DB write error for ${target.name}:`), err.message);
+            }
+          });
+
+          // Also store in SQLite for local persistence (non-blocking)
+          sqliteService.storePingResult(targetIdStr, {
+            success: result.success,
+            responseTime: result.responseTime,
+            statusCode: result.statusCode,
+            error: result.error,
+          }, timestamp.toISOString());
+
+          // Update statistics (non-blocking)
+          this.updateStatistics(target, result).catch(() => {
+            // Silently ignore statistics errors
+          });
+
+          // Handle alerts (non-blocking)
+          if (newStatus !== currentStatus && currentStatus !== 'unknown') {
+            if (newStatus === 'down') {
+              this.handleTargetDown(target).catch(err => {
+                if (process.env.NODE_ENV === 'development') {
+                  console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
+                }
+              });
+            } else if (newStatus === 'up') {
+              this.handleTargetUp(target).catch(err => {
+                if (process.env.NODE_ENV === 'development') {
+                  console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
+                }
+              });
+            }
+          }
+        } catch (error) {
+          // Silently handle errors to avoid blocking
+          if (process.env.NODE_ENV === 'development') {
+            console.error(chalk.yellow(`Error processing result for ${target.name}:`), error.message);
+          }
+        }
+      });
     } catch (error) {
       console.error(chalk.red(`Error pinging ${target.name}:`), error.message);
     }
@@ -332,6 +367,14 @@ class MonitorService {
    */
   getTargetStatus(targetId) {
     return this.targetStatus.get(targetId.toString ? targetId.toString() : targetId) || 'unknown';
+  }
+
+  /**
+   * Set target status (for manual updates like test endpoints)
+   */
+  setTargetStatus(targetId, status) {
+    const targetIdStr = targetId.toString ? targetId.toString() : targetId;
+    this.targetStatus.set(targetIdStr, status);
   }
 
   /**

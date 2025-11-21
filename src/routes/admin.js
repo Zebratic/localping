@@ -539,6 +539,8 @@ router.post('/api/targets', async (req, res) => {
       enabled,
       publicVisible,
       publicShowDetails,
+      publicShowStatus,
+      publicShowAppLink,
       appUrl,
       appIcon,
       retries,
@@ -572,6 +574,8 @@ router.post('/api/targets', async (req, res) => {
       enabled: enabled !== false,
       publicVisible: publicVisible !== false,
       publicShowDetails: publicShowDetails === true,
+      publicShowStatus: publicShowStatus !== false, // Default to true
+      publicShowAppLink: publicShowAppLink !== false, // Default to true
       appUrl: appUrl || null,
       appIcon: appIcon || null,
       retries: retries !== undefined ? retries : 0,
@@ -620,6 +624,8 @@ router.put('/api/targets/:id', async (req, res) => {
       enabled,
       publicVisible,
       publicShowDetails,
+      publicShowStatus,
+      publicShowAppLink,
       appUrl,
       appIcon,
       retries,
@@ -642,8 +648,10 @@ router.put('/api/targets/:id', async (req, res) => {
     if (port !== undefined) updateData.port = port;
     if (protocol !== undefined) updateData.protocol = protocol.toUpperCase();
     if (interval !== undefined) updateData.interval = interval;
-    if (publicVisible !== undefined) updateData.publicVisible = publicVisible === true;
-    if (publicShowDetails !== undefined) updateData.publicShowDetails = publicShowDetails === true;
+    if (publicVisible !== undefined) updateData.publicVisible = Boolean(publicVisible);
+    if (publicShowDetails !== undefined) updateData.publicShowDetails = Boolean(publicShowDetails);
+    if (publicShowStatus !== undefined) updateData.publicShowStatus = publicShowStatus !== false; // Default to true
+    if (publicShowAppLink !== undefined) updateData.publicShowAppLink = publicShowAppLink !== false; // Default to true
     if (appUrl !== undefined) updateData.appUrl = appUrl;
     if (appIcon !== undefined) updateData.appIcon = appIcon;
     if (retries !== undefined) updateData.retries = retries;
@@ -685,6 +693,35 @@ router.put('/api/targets/:id', async (req, res) => {
     }
 
     res.json({ success: true, message: 'Target updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update target positions (bulk)
+router.put('/api/targets/positions', async (req, res) => {
+  try {
+    const db = getDB();
+    const { positions } = req.body; // Array of { targetId, position }
+
+    if (!Array.isArray(positions)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Positions must be an array',
+      });
+    }
+
+    // Update all positions in a transaction
+    const updatePromises = positions.map(({ targetId, position }) =>
+      db.collection('targets').updateOne(
+        { _id: targetId },
+        { $set: { position: position || 0, updatedAt: new Date() } }
+      )
+    );
+
+    await Promise.all(updatePromises);
+
+    res.json({ success: true, message: 'Positions updated' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -878,10 +915,39 @@ router.post('/api/targets/:id/test', async (req, res) => {
     const pingService = require('../services/pingService');
     const result = await pingService.ping(target);
 
+    // Update status in monitorService to reflect the test result
+    let newStatus = 'unknown';
+    
+    // Determine status based on ping result and upside down mode
+    let pingSuccess = result.success;
+    if (target.upsideDown === true) {
+      pingSuccess = !pingSuccess; // Invert the status
+    }
+    
+    if (pingSuccess) {
+      newStatus = 'up';
+    } else {
+      newStatus = 'down';
+    }
+    
+    // Update the status in monitorService
+    monitorService.setTargetStatus(targetId, newStatus);
+
     res.json({
       success: result.success,
       result,
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Clear cache
+router.post('/api/cache/clear', async (req, res) => {
+  try {
+    const cacheService = require('../services/cacheService');
+    cacheService.clear();
+    res.json({ success: true, message: 'Cache cleared' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

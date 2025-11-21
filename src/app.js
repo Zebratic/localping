@@ -167,10 +167,10 @@ const startServer = async () => {
       console.log(chalk.cyan('✓ API routes loaded with authentication'));
     }
 
-    // Start monitoring
-    await monitorService.startMonitoring();
+    // Start monitoring (non-blocking - runs in background)
+    monitorService.startMonitoring();
 
-    // Listen on port
+    // Listen on port (starts immediately, doesn't wait for monitoring)
     const port = process.env.API_PORT || 3000;
     app.listen(port, () => {
       console.log(chalk.green(`✓ Server running on http://localhost:${port}`));
@@ -188,6 +188,8 @@ const shutdown = async (signal) => {
 
   try {
     monitorService.stopAllMonitoring();
+    const pingService = require('./services/pingService');
+    await pingService.shutdown();
     await closeDB();
     sqliteService.closeDatabase();
     console.log(chalk.green('✓ Server shut down successfully'));

@@ -1,4 +1,4 @@
-const workerPool = require('./workers/workerPool');
+const { parentPort } = require('worker_threads');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const axios = require('axios');
@@ -7,99 +7,37 @@ const dgram = require('dgram');
 
 const execAsync = promisify(exec);
 
-class PingService {
+/**
+ * Ping worker - handles ping operations in a separate thread
+ */
+class PingWorker {
   constructor() {
     this.timeout = 5000; // 5 seconds default timeout
-    this.useWorkers = true; // Use worker threads by default
   }
 
-  /**
-   * Ping a target using the specified protocol (multithreaded via worker pool)
-   * @param {Object} target - Target object {host, port, protocol, timeout, httpMethod, statusCodes, ...}
-   * @returns {Promise<Object>} Result {success, responseTime, error}
-   */
-  async ping(target) {
-    if (this.useWorkers) {
-      // Use worker pool for non-blocking multithreaded pings
-      return await workerPool.execute(target);
-    }
-    
-    // Fallback to direct execution (shouldn't be used in production)
-    return await this.pingDirect(target);
-  }
-
-  /**
-   * Direct ping (fallback method, not recommended for production)
-   * @private
-   */
-  async pingDirect(target) {
-    const start = Date.now();
+  async pingICMP(host, timeout) {
     try {
-      switch (target.protocol?.toUpperCase()) {
-        case 'ICMP':
-          return await this.pingICMP(target.host, start);
-        case 'TCP':
-          return await this.pingTCP(target.host, target.port || 80, start);
-        case 'UDP':
-          return await this.pingUDP(target.host, target.port || 53, start);
-        case 'HTTP':
-          return await this.pingHTTP(`http://${target.host}:${target.port || 80}${target.path || '/'}`, start, target);
-        case 'HTTPS':
-          return await this.pingHTTP(`https://${target.host}:${target.port || 443}${target.path || '/'}`, start, target);
-        default:
-          return {
-            success: false,
-            responseTime: 0,
-            error: 'Unknown protocol: ' + target.protocol,
-          };
-      }
-    } catch (error) {
-      return {
-        success: false,
-        responseTime: Date.now() - start,
-        error: error.message,
-      };
-    }
-  }
-
-  /**
-   * ICMP Ping using system ping command
-   * Requires running with elevated privileges
-   */
-  async pingICMP(host, start) {
-    try {
-      // Using -c 1 for Linux/Mac, -n 1 for Windows
       const isWindows = process.platform === 'win32';
-      const cmd = isWindows ? `ping -n 1 -w ${this.timeout} ${host}` : `ping -c 1 -W ${this.timeout / 1000} ${host}`;
+      const cmd = isWindows 
+        ? `ping -n 1 -w ${timeout} ${host}` 
+        : `ping -c 1 -W ${timeout / 1000} ${host}`;
 
-      const { stdout } = await execAsync(cmd, { timeout: this.timeout + 1000 });
-
-      const responseTime = Date.now() - start;
-      return {
-        success: true,
-        responseTime,
-        protocol: 'ICMP',
-      };
+      const { stdout } = await execAsync(cmd, { timeout: timeout + 1000 });
+      return { success: true, protocol: 'ICMP' };
     } catch (error) {
-      return {
-        success: false,
-        responseTime: Date.now() - start,
+      return { 
+        success: false, 
         error: 'ICMP ping failed: ' + error.message,
-        protocol: 'ICMP',
+        protocol: 'ICMP'
       };
     }
   }
 
-  /**
-   * TCP Ping to a specific port
-   */
-  async pingTCP(host, port, start) {
+  async pingTCP(host, port) {
     return new Promise((resolve) => {
       const startTime = Date.now();
-
       tcpPing.probe(host, port, (err, available) => {
         const responseTime = Date.now() - startTime;
-
         if (err || !available) {
           resolve({
             success: false,
@@ -118,14 +56,12 @@ class PingService {
     });
   }
 
-  /**
-   * UDP Ping (simple datagram send/receive)
-   */
-  async pingUDP(host, port, start) {
+  async pingUDP(host, port, timeout) {
     return new Promise((resolve) => {
+      const start = Date.now();
       const client = dgram.createSocket('udp4');
       const message = Buffer.from('ping');
-      let resolved = false; // Track if we've already resolved
+      let resolved = false;
 
       const timeoutHandle = setTimeout(() => {
         if (!resolved) {
@@ -138,7 +74,7 @@ class PingService {
             protocol: 'UDP',
           });
         }
-      }, this.timeout);
+      }, timeout);
 
       client.send(message, 0, message.length, port, host, (err) => {
         if (err && !resolved) {
@@ -158,7 +94,7 @@ class PingService {
         if (!resolved) {
           resolved = true;
           clearTimeout(timeoutHandle);
-          client.close(); // Close immediately before resolve
+          client.close();
           resolve({
             success: true,
             responseTime: Date.now() - start,
@@ -183,23 +119,16 @@ class PingService {
     });
   }
 
-  /**
-   * HTTP/HTTPS Ping with advanced options
-   */
-  async pingHTTP(url, start, target = {}) {
+  async pingHTTP(url, target = {}) {
     try {
-      // Get timeout from target config or use default
       const timeout = (target.timeout || 30) * 1000;
-
-      // Build axios config
       const axiosConfig = {
         timeout,
-        validateStatus: () => true, // Don't throw on any status code
+        validateStatus: () => true,
         maxRedirects: target.maxRedirects !== undefined ? target.maxRedirects : 5,
         method: (target.httpMethod || 'GET').toUpperCase(),
       };
 
-      // Handle SSL/TLS options
       if (target.ignoreSsl === true || target.ignoreSsl === 1) {
         const httpsAgent = require('https').Agent({ rejectUnauthorized: false });
         const httpAgent = require('http').Agent({ rejectUnauthorized: false });
@@ -207,7 +136,6 @@ class PingService {
         axiosConfig.httpAgent = httpAgent;
       }
 
-      // Handle authentication
       let auth = target.auth;
       if (auth && typeof auth === 'string') {
         try {
@@ -231,91 +159,101 @@ class PingService {
       }
 
       const response = await axios(url, axiosConfig);
-
-      const responseTime = Date.now() - start;
-
-      // Check if status code is in accepted list
-      let success = false;
       const statusCodes = target.statusCodes || '200-299';
-
-      if (this.isStatusCodeAccepted(response.status, statusCodes)) {
-        success = true;
-      }
+      const success = this.isStatusCodeAccepted(response.status, statusCodes);
 
       return {
         success,
-        responseTime,
         statusCode: response.status,
         protocol: url.startsWith('https') ? 'HTTPS' : 'HTTP',
       };
     } catch (error) {
       return {
         success: false,
-        responseTime: Date.now() - start,
         error: error.message,
         protocol: url.startsWith('https') ? 'HTTPS' : 'HTTP',
       };
     }
   }
 
-  /**
-   * Check if a status code is in the accepted list
-   * Supports ranges like "200-299" and individual codes like "200,201,404"
-   */
   isStatusCodeAccepted(statusCode, statusCodes) {
     if (!statusCodes) return statusCode >= 200 && statusCode < 300;
-
     const parts = statusCodes.split(',').map(s => s.trim());
-
     for (const part of parts) {
       if (part.includes('-')) {
-        // Range like "200-299"
         const [start, end] = part.split('-').map(s => parseInt(s.trim()));
         if (statusCode >= start && statusCode <= end) {
           return true;
         }
       } else {
-        // Individual code like "200"
         if (parseInt(part) === statusCode) {
           return true;
         }
       }
     }
-
     return false;
   }
 
-  /**
-   * Batch ping multiple targets (optimized with worker pool)
-   */
-  async pingBatch(targets) {
-    if (this.useWorkers) {
-      // Use worker pool batch execution for optimal performance
-      return await workerPool.executeBatch(targets);
-    }
-    // Fallback
-    const results = await Promise.all(targets.map((target) => this.pingDirect(target)));
-    return results;
-  }
+  async executePing(target) {
+    const start = Date.now();
+    const timeout = target.timeout ? target.timeout * 1000 : this.timeout;
 
-  /**
-   * Shutdown worker pool (call during graceful shutdown)
-   */
-  async shutdown() {
-    if (this.useWorkers) {
-      await workerPool.shutdown();
-    }
-  }
+    try {
+      let result;
+      switch (target.protocol?.toUpperCase()) {
+        case 'ICMP':
+          result = await this.pingICMP(target.host, timeout);
+          break;
+        case 'TCP':
+          result = await this.pingTCP(target.host, target.port || 80);
+          break;
+        case 'UDP':
+          result = await this.pingUDP(target.host, target.port || 53, timeout);
+          break;
+        case 'HTTP':
+          result = await this.pingHTTP(`http://${target.host}:${target.port || 80}${target.path || '/'}`, target);
+          break;
+        case 'HTTPS':
+          result = await this.pingHTTP(`https://${target.host}:${target.port || 443}${target.path || '/'}`, target);
+          break;
+        default:
+          result = {
+            success: false,
+            error: 'Unknown protocol: ' + target.protocol,
+          };
+      }
 
-  /**
-   * Get worker pool statistics
-   */
-  getPoolStats() {
-    if (this.useWorkers) {
-      return workerPool.getStats();
+      result.responseTime = result.responseTime || (Date.now() - start);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        responseTime: Date.now() - start,
+        error: error.message,
+      };
     }
-    return null;
   }
 }
 
-module.exports = new PingService();
+// Handle messages from main thread
+const worker = new PingWorker();
+
+parentPort.on('message', async (message) => {
+  try {
+    const result = await worker.executePing(message.target);
+    parentPort.postMessage({
+      id: message.id,
+      result,
+    });
+  } catch (error) {
+    parentPort.postMessage({
+      id: message.id,
+      result: {
+        success: false,
+        responseTime: 0,
+        error: error.message,
+      },
+    });
+  }
+});
+

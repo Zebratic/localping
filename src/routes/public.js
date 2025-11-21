@@ -254,6 +254,9 @@ router.get('/api/status', async (req, res) => {
         position: target.position || 0,
         group: target.group || null,
         quickCommands: quickCommands,
+        publicShowDetails: target.publicShowDetails === true,
+        publicShowStatus: target.publicShowStatus !== false, // Default to true
+        publicShowAppLink: target.publicShowAppLink !== false, // Default to true
       };
     }));
 

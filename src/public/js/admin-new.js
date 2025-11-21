@@ -1465,6 +1465,9 @@ async function testAllMonitors() {
   const originalText = testAllBtn.innerHTML;
   
   try {
+    // Clear cache to ensure live results
+    await axios.post('/admin/api/cache/clear');
+    
     // Get all monitors
     const response = await axios.get('/admin/api/dashboard');
     const targets = response.data.dashboard.targets;
@@ -1549,6 +1552,9 @@ async function testAllMonitors() {
 
     await Promise.all(testPromises);
 
+    // Clear cache again before reloading to ensure fresh data
+    await axios.post('/admin/api/cache/clear');
+
     // Reload monitors list to refresh all statuses
     await loadMonitors();
 
@@ -1580,79 +1586,198 @@ async function loadVisibility() {
       return;
     }
 
-    // Sort by name
-    targets.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Sort by position, then by name
+    targets.sort((a, b) => {
+      const posA = a.position || 0;
+      const posB = b.position || 0;
+      if (posA !== posB) return posA - posB;
+      return (a.name || '').localeCompare(b.name || '');
+    });
 
-    targets.forEach(target => {
+    targets.forEach((target, index) => {
       const isPublic = target.publicVisible !== false; // Default to true if not set
       const showDetails = target.publicShowDetails === true; // Default to false
+      const showStatus = target.publicShowStatus !== false; // Default to true
+      const showAppLink = target.publicShowAppLink !== false; // Default to true
       const hasAppUrl = target.appUrl && target.appUrl.trim() !== '';
       
       const item = document.createElement('div');
-      item.className = 'flex flex-col gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/30';
+      item.className = 'visibility-item flex flex-col gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/30 cursor-move';
+      item.dataset.targetId = target._id;
+      item.dataset.position = target.position || index;
+      item.draggable = true;
       item.innerHTML = `
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-3">
-            <h4 class="font-semibold text-white">${target.name}</h4>
-            ${hasAppUrl ? '<span class="text-xs text-cyan-400 bg-cyan-400/10 px-2 py-1 rounded">App Link</span>' : ''}
-            ${!target.enabled ? '<span class="text-xs text-slate-400 bg-slate-700/50 px-2 py-1 rounded">Disabled</span>' : ''}
+        <div class="flex items-start gap-3">
+          <div class="drag-handle text-slate-500 hover:text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0 mt-1">
+            <i class="fas fa-grip-vertical"></i>
           </div>
-          <p class="text-sm text-slate-400 mt-1">${target.host}${target.port ? ':' + target.port : ''} (${target.protocol})</p>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h4 class="font-semibold text-white">${target.name}</h4>
+              ${hasAppUrl ? '<span class="text-xs text-cyan-400 bg-cyan-400/10 px-2 py-1 rounded">App Link</span>' : ''}
+              ${!target.enabled ? '<span class="text-xs text-slate-400 bg-slate-700/50 px-2 py-1 rounded">Disabled</span>' : ''}
+            </div>
+            <p class="text-sm text-slate-400 mt-1">${target.host}${target.port ? ':' + target.port : ''} (${target.protocol})</p>
+          </div>
         </div>
-        <div class="flex items-center justify-between gap-4">
-          <label class="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" 
-                   class="checkbox-input" 
-                   ${isPublic ? 'checked' : ''} 
-                   onchange="toggleMonitorVisibility('${target._id}', this.checked)">
-            <span class="text-sm text-slate-300">Publicly Visible</span>
-          </label>
-          ${isPublic ? `
-            <label class="flex items-center gap-3 cursor-pointer">
+        <div class="flex flex-col gap-3 pl-8">
+          <div class="flex items-center gap-4 flex-wrap">
+            <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" 
-                     class="checkbox-input" 
-                     ${showDetails ? 'checked' : ''} 
-                     onchange="toggleMonitorDetails('${target._id}', this.checked)">
-              <span class="text-sm text-slate-300">Show Technical Details</span>
+                     class="checkbox-input visibility-checkbox" 
+                     data-field="publicVisible"
+                     data-target-id="${target._id}"
+                     ${isPublic ? 'checked' : ''} 
+                     onchange="toggleVisibilityField('${target._id}', 'publicVisible', this.checked)">
+              <span class="text-sm text-slate-300">Publicly Visible</span>
             </label>
-          ` : ''}
+            ${isPublic ? `
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" 
+                       class="checkbox-input visibility-checkbox" 
+                       data-field="publicShowDetails"
+                       data-target-id="${target._id}"
+                       ${showDetails ? 'checked' : ''} 
+                       onchange="toggleVisibilityField('${target._id}', 'publicShowDetails', this.checked)">
+                <span class="text-sm text-slate-300">Show Technical Details</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" 
+                       class="checkbox-input visibility-checkbox" 
+                       data-field="publicShowStatus"
+                       data-target-id="${target._id}"
+                       ${showStatus ? 'checked' : ''} 
+                       onchange="toggleVisibilityField('${target._id}', 'publicShowStatus', this.checked)">
+                <span class="text-sm text-slate-300">Show Status Monitor</span>
+              </label>
+              ${hasAppUrl ? `
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" 
+                         class="checkbox-input visibility-checkbox" 
+                         data-field="publicShowAppLink"
+                         data-target-id="${target._id}"
+                         ${showAppLink ? 'checked' : ''} 
+                         onchange="toggleVisibilityField('${target._id}', 'publicShowAppLink', this.checked)">
+                  <span class="text-sm text-slate-300">Show App Link</span>
+                </label>
+              ` : ''}
+            ` : ''}
+          </div>
         </div>
       `;
       visibilityList.appendChild(item);
     });
+
+    // Setup drag and drop
+    setupDragAndDrop();
   } catch (error) {
     console.error('Error loading visibility settings:', error);
     showNotification('Error loading visibility settings', 'error');
   }
 }
 
-// Toggle monitor visibility
-async function toggleMonitorVisibility(targetId, isPublic) {
-  try {
-    await axios.put(`/admin/api/targets/${targetId}`, {
-      publicVisible: isPublic
+// Setup drag and drop for reordering
+function setupDragAndDrop() {
+  const visibilityList = document.getElementById('visibilityList');
+  const items = document.querySelectorAll('.visibility-item');
+  let draggedElement = null;
+
+  items.forEach(item => {
+    item.addEventListener('dragstart', (e) => {
+      draggedElement = item;
+      item.style.opacity = '0.5';
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
     });
-    showNotification(`Monitor visibility updated to ${isPublic ? 'public' : 'private'}`, 'success');
-    // Reload to update UI (show/hide details checkbox)
-    loadVisibility();
+
+    item.addEventListener('dragend', (e) => {
+      item.style.opacity = '1';
+      item.classList.remove('dragging');
+      draggedElement = null;
+    });
+
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      
+      if (!draggedElement) return;
+      
+      const afterElement = getDragAfterElement(visibilityList, e.clientY);
+      if (afterElement == null) {
+        visibilityList.appendChild(draggedElement);
+      } else {
+        visibilityList.insertBefore(draggedElement, afterElement);
+      }
+    });
+
+    item.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      if (draggedElement && draggedElement !== item) {
+        await savePositions();
+      }
+    });
+  });
+}
+
+// Get element after which to insert dragged element
+function getDragAfterElement(container, y) {
+  const draggableElements = [...container.querySelectorAll('.visibility-item:not(.dragging)')];
+  
+  return draggableElements.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    
+    if (offset < 0 && offset > closest.offset) {
+      return { offset: offset, element: child };
+    } else {
+      return closest;
+    }
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
+
+// Save positions after reordering
+async function savePositions() {
+  try {
+    const items = document.querySelectorAll('.visibility-item');
+    const positions = Array.from(items).map((item, index) => ({
+      targetId: item.dataset.targetId,
+      position: index
+    }));
+
+    await axios.put('/admin/api/targets/positions', { positions });
+    showNotification('Monitor order saved', 'success');
   } catch (error) {
-    console.error('Error updating monitor visibility:', error);
-    showNotification(error.response?.data?.error || 'Error updating visibility', 'error');
-    // Reload to reset checkbox state
+    console.error('Error saving positions:', error);
+    showNotification('Error saving monitor order', 'error');
+    // Reload to reset positions
     loadVisibility();
   }
 }
 
-// Toggle monitor technical details visibility
-async function toggleMonitorDetails(targetId, showDetails) {
+// Toggle visibility field (unified function for all visibility toggles)
+async function toggleVisibilityField(targetId, field, value) {
   try {
-    await axios.put(`/admin/api/targets/${targetId}`, {
-      publicShowDetails: showDetails
-    });
-    showNotification(`Technical details visibility ${showDetails ? 'enabled' : 'disabled'}`, 'success');
+    const updateData = {};
+    updateData[field] = value;
+    
+    await axios.put(`/admin/api/targets/${targetId}`, updateData);
+    
+    const fieldNames = {
+      publicVisible: 'Public visibility',
+      publicShowDetails: 'Technical details',
+      publicShowStatus: 'Status monitor',
+      publicShowAppLink: 'App link'
+    };
+    
+    showNotification(`${fieldNames[field] || field} ${value ? 'enabled' : 'disabled'}`, 'success');
+    
+    // Reload to update UI (show/hide conditional checkboxes)
+    if (field === 'publicVisible') {
+      loadVisibility();
+    }
   } catch (error) {
-    console.error('Error updating technical details visibility:', error);
-    showNotification(error.response?.data?.error || 'Error updating details visibility', 'error');
+    console.error(`Error updating ${field}:`, error);
+    showNotification(error.response?.data?.error || `Error updating ${field}`, 'error');
     // Reload to reset checkbox state
     loadVisibility();
   }

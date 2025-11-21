@@ -323,7 +323,8 @@ function displayApps(targets) {
   }
 
   // Separate targets into apps and services
-  const apps = targets.filter(t => t.appUrl || t.appIcon);
+  // Only show apps if publicShowAppLink is true (default true)
+  const apps = targets.filter(t => (t.appUrl || t.appIcon) && (t.publicShowAppLink !== false));
   const appCount = apps.length;
 
   if (appCount === 0) {
@@ -791,8 +792,11 @@ function updateServicesList(targets) {
 
   if (!list) return;
 
+  // Filter targets to only show those with publicShowStatus enabled (default true)
+  const visibleTargets = targets.filter(t => t.publicShowStatus !== false);
+
   // Show all targets in status page
-  if (targets.length === 0) {
+  if (visibleTargets.length === 0) {
     // Only clear if we're not on the status page or if there are no existing services
     const existingServices = list.querySelectorAll('.service-item');
     if (existingServices.length === 0) {
@@ -802,7 +806,7 @@ function updateServicesList(targets) {
     return;
   }
 
-  countEl.textContent = `(${targets.length})`;
+  countEl.textContent = `(${visibleTargets.length})`;
 
   // Check if services list is still showing loading message (only clear if it's the ONLY content)
   const loadingMsg = list.querySelector('.text-center.text-slate-400');
@@ -819,7 +823,7 @@ function updateServicesList(targets) {
   });
 
   // Update each service row dynamically without re-rendering
-  targets.forEach(target => {
+  visibleTargets.forEach(target => {
     existingServiceIds.delete(target._id); // Mark as still existing
     const serviceEl = document.getElementById(`service-${target._id}`);
 

@@ -194,14 +194,8 @@ router.post('/', async (req, res) => {
     // Automatically log the user in after setup
     req.session.adminAuthenticated = true;
 
-    // Save session before redirecting to ensure cookie is set
-    req.session.save((err) => {
-      if (err) {
-        console.error(chalk.red('Failed to save session during setup:'), err.message);
-      }
-      // Redirect to admin dashboard (user is now authenticated)
-      res.redirect('/admin');
-    });
+    // Redirect to admin dashboard - middleware will set cookie automatically
+    res.redirect('/admin');
   } catch (err) {
     console.error(chalk.red('Setup error:'), err.message);
     const detectedGateway = await detectGateway();

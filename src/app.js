@@ -33,17 +33,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
 // Session middleware for admin authentication
-app.use(session({
+const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'localping-dev-secret',
   resave: false,
   saveUninitialized: true,
   cookie: {
-    secure: process.env.NODE_ENV === 'production' && process.env.SECURE_COOKIES === 'true', // HTTPS only if explicitly enabled
+    secure: false, // Allow HTTP cookies for development - can be set via SECURE_COOKIES env var
     httpOnly: true,
     sameSite: 'lax', // Use 'lax' instead of 'strict' to allow cross-site requests with cookies
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
-}));
+});
+
+app.use(sessionMiddleware);
 
 // Rate limiting middleware (skip for localhost development)
 const apiRateLimiter = (req, res, next) => {

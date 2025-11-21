@@ -35,19 +35,13 @@ router.post('/login', (req, res) => {
 
   // Check both username and password
   if (providedUsername === storedUsername && providedPassword === storedPassword) {
-    // Set session and explicitly save it
+    // Set session data - this marks the session as modified
     req.session.adminAuthenticated = true;
+    req.session.loginTime = new Date();
+    req.session.username = providedUsername;
 
-    // Save session before responding to ensure cookie is set
-    req.session.save((err) => {
-      if (err) {
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to save session',
-        });
-      }
-      res.json({ success: true, message: 'Authenticated' });
-    });
+    // Send response - middleware will add Set-Cookie header automatically
+    return res.json({ success: true, message: 'Authenticated' });
   } else {
     return res.status(401).json({
       success: false,

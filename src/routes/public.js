@@ -76,38 +76,33 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
 
     let startDateObj;
     let endDateObj = new Date();
-    let groupByTrunc;
     let intervalMinutes;
     let maxPoints;
 
-    // Determine grouping based on period
+    // Determine grouping based on period (matching admin route exactly)
     if (period === '1h') {
       // 1H: 60 data points (one per minute)
       startDateObj = new Date();
       startDateObj.setHours(startDateObj.getHours() - 1);
-      groupByTrunc = "date_trunc('minute', timestamp)";
       intervalMinutes = 1;
       maxPoints = 60;
     } else if (period === '24h') {
       // 24H: 48 data points (every 30 minutes)
       startDateObj = new Date();
       startDateObj.setHours(startDateObj.getHours() - 24);
-      groupByTrunc = "to_timestamp(FLOOR(EXTRACT(EPOCH FROM timestamp) / 1800) * 1800)";
       intervalMinutes = 30;
       maxPoints = 48;
     } else if (period === '7d') {
       // 7D: 56 data points (every 3 hours)
       startDateObj = new Date();
       startDateObj.setDate(startDateObj.getDate() - 7);
-      groupByTrunc = "to_timestamp(FLOOR(EXTRACT(EPOCH FROM timestamp) / 10800) * 10800)";
-      intervalMinutes = 180;
+      intervalMinutes = 180; // 3 hours
       maxPoints = 56;
     } else if (period === '30d') {
       // 30D: 60 data points (every 12 hours)
       startDateObj = new Date();
       startDateObj.setDate(startDateObj.getDate() - 30);
-      groupByTrunc = "to_timestamp(FLOOR(EXTRACT(EPOCH FROM timestamp) / 43200) * 43200)";
-      intervalMinutes = 720;
+      intervalMinutes = 720; // 12 hours
       maxPoints = 60;
     } else if (period === 'all') {
       // ALL: 60 data points spread evenly since monitor creation
@@ -132,19 +127,16 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
       startDateObj = new Date();
       startDateObj.setDate(startDateObj.getDate() - days);
       if (days <= 1) {
-        groupByTrunc = "date_trunc('hour', timestamp)";
         intervalMinutes = 60;
         maxPoints = 24;
       } else {
-        groupByTrunc = "date_trunc('day', timestamp)";
-        intervalMinutes = 1440;
+        intervalMinutes = 1440; // 1 day
         maxPoints = days;
       }
     } else {
       // Default to 24h
       startDateObj = new Date();
       startDateObj.setHours(startDateObj.getHours() - 24);
-      groupByTrunc = "date_trunc('minute', timestamp) - (EXTRACT(MINUTE FROM timestamp)::integer % 30 || ' minutes')::interval";
       intervalMinutes = 30;
       maxPoints = 48;
     }
@@ -154,6 +146,10 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
     const intervalSeconds = intervalMinutes * 60;
     const startEpoch = Math.floor(startDateObj.getTime() / 1000);
     const endEpoch = Math.floor(endDateObj.getTime() / 1000);
+    
+    // Convert dates to ISO strings for PostgreSQL (matching admin route)
+    const startDateStr = startDateObj.toISOString().replace('T', ' ').substring(0, 19);
+    const endDateStr = endDateObj.toISOString().replace('T', ' ').substring(0, 19);
     
     // Generate time buckets using generate_series
     // Use AT TIME ZONE 'UTC' to ensure bucket_time is in UTC before casting to timestamp
@@ -181,12 +177,12 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
       ORDER BY time_buckets.bucket_time ASC
     `, [targetId, startEpoch, endEpoch, maxPoints, intervalSeconds]);
     
-    // Get last response time separately
+    // Get last response time separately (matching admin route format)
     const lastResponseResult = await db.query(`
       SELECT "responseTime" FROM "pingResults" 
-      WHERE "targetId" = $1 AND timestamp >= $2 AND timestamp <= $3
+      WHERE "targetId" = $1 AND timestamp >= $2::timestamp AND timestamp <= $3::timestamp
       ORDER BY timestamp DESC LIMIT 1
-    `, [targetId, startDateObj, endDateObj]);
+    `, [targetId, startDateStr, endDateStr]);
 
     const results = result.rows; // Already in chronological order
     const lastResponse = lastResponseResult.rows[0] || null;

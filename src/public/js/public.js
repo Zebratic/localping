@@ -191,6 +191,43 @@ function displayApps(targets) {
   const pageHome = document.getElementById('page-home');
   const countEl = document.getElementById('app-count');
 
+  // Check if there are ANY targets at all
+  if (targets.length === 0) {
+    pageHome.innerHTML = `
+      <div class="mb-6">
+        <h2 class="text-2xl font-bold text-white mb-2">Welcome to LocalPing</h2>
+        <p class="text-slate-400 text-sm">Get started by adding monitors</p>
+      </div>
+      <div class="flex items-center justify-center min-h-[500px]">
+        <div class="max-w-md w-full bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 p-8 text-center">
+          <div class="mb-6">
+            <svg class="w-16 h-16 mx-auto text-cyan-400 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <h3 class="text-xl font-semibold text-white mb-3">No Monitors Yet</h3>
+          <p class="text-slate-400 text-sm mb-6">
+            Start monitoring your homelab services and applications. Add monitors to track the status, uptime, and performance of your infrastructure.
+          </p>
+          <div class="space-y-3">
+            <p class="text-slate-400 text-sm">
+              <span class="text-cyan-400 font-semibold">Step 1:</span> Go to the admin panel
+            </p>
+            <a href="/admin" class="inline-flex items-center justify-center w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors">
+              <i class="fas fa-cog mr-2"></i>
+              Open Admin Panel
+            </a>
+            <p class="text-slate-500 text-xs mt-4">
+              <i class="fas fa-info-circle mr-1"></i>
+              You'll be able to add monitors and configure their settings there.
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   // Separate targets into apps and services
   const apps = targets.filter(t => t.appUrl || t.appIcon);
   const appCount = apps.length;
@@ -201,7 +238,9 @@ function displayApps(targets) {
         <h2 class="text-2xl font-bold text-white mb-2">Your Applications</h2>
         <p id="app-count" class="text-slate-400 text-sm">(0 apps)</p>
       </div>
-      <div class="text-center text-slate-400 py-12 col-span-full">No applications configured</div>
+      <div class="text-center text-slate-400 py-12 col-span-full">
+        <p>No applications configured with icons. You have ${targets.length} monitor${targets.length !== 1 ? 's' : ''} on the <strong>Status & Uptime</strong> tab.</p>
+      </div>
     `;
     return;
   }

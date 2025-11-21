@@ -15,11 +15,31 @@ router.get('/targets', async (req, res) => {
     const db = getDB();
     const targets = await db.collection('targets').find({}).toArray();
 
-    // Add current status to each target
-    const targetsWithStatus = targets.map((target) => ({
-      ...target,
-      currentStatus: monitorService.getTargetStatus(target._id),
-    }));
+    // Add current status to each target and parse JSON fields
+    const targetsWithStatus = targets.map((target) => {
+      const parsedTarget = { ...target };
+
+      // Parse JSON fields stored as strings in SQLite
+      if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
+        try {
+          parsedTarget.auth = JSON.parse(parsedTarget.auth);
+        } catch (e) {
+          parsedTarget.auth = null;
+        }
+      }
+      if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
+        try {
+          parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
+        } catch (e) {
+          parsedTarget.quickCommands = [];
+        }
+      }
+
+      return {
+        ...parsedTarget,
+        currentStatus: monitorService.getTargetStatus(target._id),
+      };
+    });
 
     res.json({ success: true, targets: targetsWithStatus });
   } catch (error) {
@@ -38,10 +58,27 @@ router.get('/targets/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Target not found' });
     }
 
+    // Parse JSON fields stored as strings in SQLite
+    const parsedTarget = { ...target };
+    if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
+      try {
+        parsedTarget.auth = JSON.parse(parsedTarget.auth);
+      } catch (e) {
+        parsedTarget.auth = null;
+      }
+    }
+    if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
+      try {
+        parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
+      } catch (e) {
+        parsedTarget.quickCommands = [];
+      }
+    }
+
     res.json({
       success: true,
       target: {
-        ...target,
+        ...parsedTarget,
         currentStatus: monitorService.getTargetStatus(target._id),
       },
     });

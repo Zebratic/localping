@@ -146,6 +146,20 @@ router.get('/api/status', async (req, res) => {
         }
       }
 
+      // Parse quickCommands if it's a JSON string from SQLite
+      let quickCommands = [];
+      if (target.quickCommands) {
+        if (typeof target.quickCommands === 'string') {
+          try {
+            quickCommands = JSON.parse(target.quickCommands);
+          } catch (e) {
+            quickCommands = [];
+          }
+        } else if (Array.isArray(target.quickCommands)) {
+          quickCommands = target.quickCommands;
+        }
+      }
+
       return {
         _id: target._id,
         name: target.name,
@@ -158,7 +172,7 @@ router.get('/api/status', async (req, res) => {
         isUp: monitorService.getTargetStatus(target._id) === 'up',
         position: target.position || 0,
         group: target.group || null,
-        quickCommands: target.quickCommands || [],
+        quickCommands: quickCommands,
       };
     }));
 

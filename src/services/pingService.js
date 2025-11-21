@@ -187,20 +187,32 @@ class PingService {
       };
 
       // Handle SSL/TLS options
-      if (target.ignoreSsl === true) {
-        axiosConfig.httpsAgent = require('https').Agent({ rejectUnauthorized: false });
+      if (target.ignoreSsl === true || target.ignoreSsl === 1) {
+        const httpsAgent = require('https').Agent({ rejectUnauthorized: false });
+        const httpAgent = require('http').Agent({ rejectUnauthorized: false });
+        axiosConfig.httpsAgent = httpsAgent;
+        axiosConfig.httpAgent = httpAgent;
       }
 
       // Handle authentication
-      if (target.auth) {
-        if (target.auth.type === 'basic') {
+      let auth = target.auth;
+      if (auth && typeof auth === 'string') {
+        try {
+          auth = JSON.parse(auth);
+        } catch (e) {
+          auth = null;
+        }
+      }
+
+      if (auth) {
+        if (auth.type === 'basic') {
           axiosConfig.auth = {
-            username: target.auth.username,
-            password: target.auth.password,
+            username: auth.username,
+            password: auth.password,
           };
-        } else if (target.auth.type === 'bearer') {
+        } else if (auth.type === 'bearer') {
           axiosConfig.headers = {
-            'Authorization': `Bearer ${target.auth.token}`,
+            'Authorization': `Bearer ${auth.token}`,
           };
         }
       }

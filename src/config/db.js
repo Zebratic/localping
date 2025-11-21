@@ -81,8 +81,8 @@ const initializeTables = () => {
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         statusCode INTEGER,
         error TEXT,
-        FOREIGN KEY(targetId) REFERENCES targets(_id),
-        UNIQUE(targetId, timestamp)
+        protocol TEXT,
+        FOREIGN KEY(targetId) REFERENCES targets(_id)
       )
     `);
 
@@ -144,6 +144,16 @@ const initializeTables = () => {
       )
     `);
 
+    // Favicons table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS favicons (
+        _id TEXT PRIMARY KEY,
+        appUrl TEXT NOT NULL UNIQUE,
+        favicon TEXT,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create indices
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);
@@ -165,31 +175,68 @@ const initializeTables = () => {
 
 const createCollectionWrapper = (name) => {
   return {
-    find: (query = {}) => ({
-      toArray: async () => {
-        try {
-          const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
-          let sql = `SELECT * FROM ${name}`;
-          const params = [];
+    find: (query = {}) => {
+      // Store options for chaining
+      let sortOption = null;
+      let limitOption = null;
 
-          if (keys.length > 0) {
-            const whereClauses = keys.map(k => {
-              const val = query[k];
-              // Convert boolean to 0/1 for SQLite
-              params.push(typeof val === 'boolean' ? (val ? 1 : 0) : val);
-              return `"${k}" = ?`;
-            });
-            sql += ' WHERE ' + whereClauses.join(' AND ');
+      const chainable = {
+        sort: (sortObj) => {
+          sortOption = sortObj;
+          return chainable;
+        },
+        limit: (num) => {
+          limitOption = num;
+          return chainable;
+        },
+        toArray: async () => {
+          try {
+            const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
+            let sql = `SELECT * FROM ${name}`;
+            const params = [];
+
+            if (keys.length > 0) {
+              const whereClauses = keys.map(k => {
+                const val = query[k];
+                // Handle different types
+                if (typeof val === 'boolean') {
+                  params.push(val ? 1 : 0);
+                } else if (val instanceof Date) {
+                  // Convert Date to ISO date string (YYYY-MM-DD)
+                  params.push(val.toISOString().split('T')[0]);
+                } else if (typeof val === 'object' && val !== null) {
+                  params.push(JSON.stringify(val));
+                } else {
+                  params.push(val);
+                }
+                return `"${k}" = ?`;
+              });
+              sql += ' WHERE ' + whereClauses.join(' AND ');
+            }
+
+            // Add sorting
+            if (sortOption) {
+              const sortKey = Object.keys(sortOption)[0];
+              const sortDir = sortOption[sortKey] === 1 ? 'ASC' : 'DESC';
+              sql += ` ORDER BY "${sortKey}" ${sortDir}`;
+            }
+
+            // Add limit
+            if (limitOption) {
+              sql += ` LIMIT ${limitOption}`;
+            }
+
+            const stmt = db.prepare(sql);
+            return stmt.all(...params);
+          } catch (error) {
+            console.error(chalk.red(`Error finding ${name}:`), error.message);
+            return [];
           }
-
-          const stmt = db.prepare(sql);
-          return stmt.all(...params);
-        } catch (error) {
-          console.error(chalk.red(`Error finding ${name}:`), error.message);
-          return [];
         }
-      }
-    }),
+      };
+
+      return chainable;
+    },
     findOne: async (query = {}) => {
       try {
         const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
@@ -199,8 +246,17 @@ const createCollectionWrapper = (name) => {
         if (keys.length > 0) {
           const whereClauses = keys.map(k => {
             const val = query[k];
-            // Convert boolean to 0/1 for SQLite
-            params.push(typeof val === 'boolean' ? (val ? 1 : 0) : val);
+            // Handle different types
+            if (typeof val === 'boolean') {
+              params.push(val ? 1 : 0);
+            } else if (val instanceof Date) {
+              // Convert Date to ISO date string (YYYY-MM-DD)
+              params.push(val.toISOString().split('T')[0]);
+            } else if (typeof val === 'object' && val !== null) {
+              params.push(JSON.stringify(val));
+            } else {
+              params.push(val);
+            }
             return `"${k}" = ?`;
           });
           sql += ' WHERE ' + whereClauses.join(' AND ');
@@ -227,6 +283,10 @@ const createCollectionWrapper = (name) => {
           if (typeof val === 'boolean') {
             return val ? 1 : 0;
           }
+          // Convert Date to ISO date string (YYYY-MM-DD)
+          if (val instanceof Date) {
+            return val.toISOString().split('T')[0];
+          }
           // Convert arrays and objects to JSON strings
           if (typeof val === 'object' && val !== null) {
             return JSON.stringify(val);
@@ -251,6 +311,9 @@ const createCollectionWrapper = (name) => {
           if (typeof v === 'boolean') {
             return v ? 1 : 0;
           }
+          if (v instanceof Date) {
+            return v.toISOString().split('T')[0];
+          }
           if (typeof v === 'object' && v !== null) {
             return JSON.stringify(v);
           }
@@ -262,6 +325,9 @@ const createCollectionWrapper = (name) => {
         const whereValues = Object.values(query).map(v => {
           if (typeof v === 'boolean') {
             return v ? 1 : 0;
+          }
+          if (v instanceof Date) {
+            return v.toISOString().split('T')[0];
           }
           if (typeof v === 'object' && v !== null) {
             return JSON.stringify(v);
@@ -282,11 +348,48 @@ const createCollectionWrapper = (name) => {
       try {
         const keys = Object.keys(query);
         const whereClauses = keys.map(k => `"${k}" = ?`).join(' AND ');
-        const values = Object.values(query).map(v => typeof v === 'boolean' ? (v ? 1 : 0) : v);
+        const values = Object.values(query).map(v => {
+          if (typeof v === 'boolean') {
+            return v ? 1 : 0;
+          }
+          if (v instanceof Date) {
+            return v.toISOString().split('T')[0];
+          }
+          return v;
+        });
 
         const sql = `DELETE FROM ${name} WHERE ${whereClauses}`;
         const stmt = db.prepare(sql);
         const result = stmt.run(...values);
+        return { deletedCount: result.changes };
+      } catch (error) {
+        console.error(chalk.red(`Error deleting from ${name}:`), error.message);
+        throw error;
+      }
+    },
+    deleteMany: async (query = {}) => {
+      try {
+        const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
+        let sql = `DELETE FROM ${name}`;
+        const params = [];
+
+        if (keys.length > 0) {
+          const whereClauses = keys.map(k => {
+            const val = query[k];
+            if (typeof val === 'boolean') {
+              params.push(val ? 1 : 0);
+            } else if (val instanceof Date) {
+              params.push(val.toISOString().split('T')[0]);
+            } else {
+              params.push(val);
+            }
+            return `"${k}" = ?`;
+          });
+          sql += ' WHERE ' + whereClauses.join(' AND ');
+        }
+
+        const stmt = db.prepare(sql);
+        const result = stmt.run(...params);
         return { deletedCount: result.changes };
       } catch (error) {
         console.error(chalk.red(`Error deleting from ${name}:`), error.message);
@@ -316,11 +419,6 @@ const createCollectionWrapper = (name) => {
         return 0;
       }
     },
-    sort: (sortObj) => ({
-      limit: (num) => ({
-        toArray: async () => [] // Stub for compatibility
-      })
-    }),
     createIndex: async () => true
   };
 };

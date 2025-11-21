@@ -458,10 +458,13 @@ async function addTarget(event) {
   }
 
   try {
+    let savedTargetId;
     if (isEdit) {
       await axios.put(`/api/targets/${form.dataset.targetId}`, target);
+      savedTargetId = form.dataset.targetId;
     } else {
-      await axios.post('/api/targets', target);
+      const res = await axios.post('/api/targets', target);
+      savedTargetId = res.data.target._id;
     }
 
     // Close form and return to details
@@ -482,6 +485,12 @@ async function addTarget(event) {
       // If editing, refresh the details view
       displayMonitorDetail(allTargets.find(t => t._id === form.dataset.targetId));
     }
+
+    // Test the monitor immediately after saving
+    selectedTargetId = savedTargetId;
+    setTimeout(() => {
+      testTarget();
+    }, 500);
   } catch (error) {
     alert('Error saving target: ' + error.message);
   }

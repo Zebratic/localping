@@ -301,7 +301,7 @@ function displayApps(targets) {
           </div>
           <h3 class="text-xl font-semibold text-white mb-3">No Monitors Yet</h3>
           <p class="text-slate-400 text-sm mb-6">
-            Start monitoring your homelab services and applications. Add monitors to track the status, uptime, and performance of your infrastructure.
+            Start monitoring your homelab services and apps. Add monitors to track the status, uptime, and performance of your infrastructure.
           </p>
           <div class="space-y-3">
             <p class="text-slate-400 text-sm">
@@ -329,11 +329,11 @@ function displayApps(targets) {
   if (appCount === 0) {
     pageHome.innerHTML = `
       <div class="mb-6">
-        <h2 class="text-2xl font-bold text-white mb-2">Your Applications</h2>
+        <h2 class="text-2xl font-bold text-white mb-2">Apps</h2>
         <p id="app-count" class="text-slate-400 text-sm">(0 apps)</p>
       </div>
       <div class="text-center text-slate-400 py-12 col-span-full">
-        <p>No applications configured with icons. You have ${targets.length} monitor${targets.length !== 1 ? 's' : ''} on the <strong>Status & Uptime</strong> tab.</p>
+        <p>No apps configured with icons. You have ${targets.length} monitor${targets.length !== 1 ? 's' : ''} on the <strong>Status & Uptime</strong> tab.</p>
       </div>
     `;
     return;
@@ -365,7 +365,7 @@ function displayApps(targets) {
   // Build the UI with search bar and grouped apps
   let html = `
     <div class="mb-6">
-      <h2 class="text-2xl font-bold text-white mb-2">Your Applications</h2>
+      <h2 class="text-2xl font-bold text-white mb-2">Apps</h2>
       <p id="app-count" class="text-slate-400 text-sm">(${appCount} app${appCount !== 1 ? 's' : ''})</p>
     </div>
 

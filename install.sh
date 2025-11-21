@@ -131,6 +131,9 @@ SERVICE_NAME="localping"
 
 echo "🛠️  Creating systemd service..."
 
+# Get Node.js path
+NODE_BIN=$(which node)
+
 # Create systemd service file to run Node.js directly (production-optimized)
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << SYSTEMD_EOF
 [Unit]
@@ -146,7 +149,7 @@ Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="NODE_ENV=production"
 
 # Start Node.js app directly
-ExecStart=$(which node) src/app.js
+ExecStart=$NODE_BIN $INSTALL_DIR/src/app.js
 
 # Restart automatically on failure
 Restart=on-failure

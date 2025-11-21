@@ -3,6 +3,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const chalk = require('../utils/colors');
+const cacheService = require('../services/cacheService');
 
 let db = null;
 
@@ -243,6 +244,20 @@ const initializeTables = () => {
   }
 };
 
+// Get TTL for different collections
+const getTTL = (collectionName) => {
+  const ttlMap = {
+    'adminSettings': 300000,      // 5 minutes - rarely changes
+    'publicUISettings': 300000,   // 5 minutes - rarely changes
+    'targets': 30000,              // 30 seconds - may change more often
+    'statistics': 120000,          // 2 minutes - updated periodically
+    'favicons': 600000,            // 10 minutes - very rarely changes
+    'posts': 60000,                // 1 minute - may change occasionally
+    'incidents': 60000,            // 1 minute - may change occasionally
+  };
+  return ttlMap[collectionName] || 60000; // Default 1 minute
+};
+
 const createCollectionWrapper = (name) => {
   return {
     find: (query = {}) => {
@@ -261,6 +276,13 @@ const createCollectionWrapper = (name) => {
         },
         toArray: async () => {
           try {
+            // Check cache first
+            const cacheKey = cacheService.generateKey(name, query, { sort: sortOption, limit: limitOption });
+            const cached = cacheService.get(cacheKey);
+            if (cached !== null) {
+              return cached;
+            }
+
             const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
             let sql = `SELECT * FROM ${name}`;
             const params = [];
@@ -335,7 +357,12 @@ const createCollectionWrapper = (name) => {
             }
 
             const stmt = db.prepare(sql);
-            return stmt.all(...params);
+            const results = stmt.all(...params);
+            
+            // Cache the results
+            cacheService.set(cacheKey, results, getTTL(name));
+            
+            return results;
           } catch (error) {
             console.error(chalk.red(`Error finding ${name}:`), error.message);
             return [];
@@ -347,6 +374,13 @@ const createCollectionWrapper = (name) => {
     },
     findOne: async (query = {}) => {
       try {
+        // Check cache first
+        const cacheKey = cacheService.generateKey(name, query, { findOne: true });
+        const cached = cacheService.get(cacheKey);
+        if (cached !== null) {
+          return cached;
+        }
+
         const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
         let sql = `SELECT * FROM ${name}`;
         const params = [];
@@ -377,7 +411,12 @@ const createCollectionWrapper = (name) => {
 
         sql += ' LIMIT 1';
         const stmt = db.prepare(sql);
-        return stmt.get(...params);
+        const result = stmt.get(...params);
+        
+        // Cache the result
+        cacheService.set(cacheKey, result, getTTL(name));
+        
+        return result;
       } catch (error) {
         console.error(chalk.red(`Error finding one ${name}:`), error.message);
         return null;
@@ -415,6 +454,10 @@ const createCollectionWrapper = (name) => {
         const sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders})`;
         const stmt = db.prepare(sql);
         stmt.run(...values);
+        
+        // Invalidate cache for this collection
+        cacheService.invalidateCollection(name);
+        
         return { insertedId: id };
       } catch (error) {
         console.error(chalk.red(`Error inserting into ${name}:`), error.message);
@@ -456,6 +499,10 @@ const createCollectionWrapper = (name) => {
         const sql = `UPDATE ${name} SET ${setClauses} WHERE ${whereClauses}`;
         const stmt = db.prepare(sql);
         const result = stmt.run(...setValues, ...whereValues);
+        
+        // Invalidate cache for this collection
+        cacheService.invalidateCollection(name);
+        
         return { modifiedCount: result.changes };
       } catch (error) {
         console.error(chalk.red(`Error updating ${name}:`), error.message);
@@ -479,6 +526,10 @@ const createCollectionWrapper = (name) => {
         const sql = `DELETE FROM ${name} WHERE ${whereClauses}`;
         const stmt = db.prepare(sql);
         const result = stmt.run(...values);
+        
+        // Invalidate cache for this collection
+        cacheService.invalidateCollection(name);
+        
         return { deletedCount: result.changes };
       } catch (error) {
         console.error(chalk.red(`Error deleting from ${name}:`), error.message);
@@ -508,6 +559,10 @@ const createCollectionWrapper = (name) => {
 
         const stmt = db.prepare(sql);
         const result = stmt.run(...params);
+        
+        // Invalidate cache for this collection
+        cacheService.invalidateCollection(name);
+        
         return { deletedCount: result.changes };
       } catch (error) {
         console.error(chalk.red(`Error deleting from ${name}:`), error.message);
@@ -516,6 +571,13 @@ const createCollectionWrapper = (name) => {
     },
     countDocuments: async (query = {}) => {
       try {
+        // Check cache first
+        const cacheKey = cacheService.generateKey(name, query, { count: true });
+        const cached = cacheService.get(cacheKey);
+        if (cached !== null) {
+          return cached;
+        }
+
         const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
         let sql = `SELECT COUNT(*) as count FROM ${name}`;
         const params = [];
@@ -531,7 +593,12 @@ const createCollectionWrapper = (name) => {
 
         const stmt = db.prepare(sql);
         const result = stmt.get(...params);
-        return result ? result.count : 0;
+        const count = result ? result.count : 0;
+        
+        // Cache the count
+        cacheService.set(cacheKey, count, getTTL(name));
+        
+        return count;
       } catch (error) {
         console.error(chalk.red(`Error counting ${name}:`), error.message);
         return 0;

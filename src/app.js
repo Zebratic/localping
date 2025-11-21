@@ -64,7 +64,23 @@ app.set('views', path.join(__dirname, 'views'));
 // Static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Health check endpoint (must be before setup check middleware)
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date(),
+    uptime: process.uptime(),
+    mode: argv.mode,
+  });
+});
+
+// Setup routes - must be registered BEFORE setup check middleware
+const setupRoutes = require('./routes/setup');
+app.use('/setup', setupRoutes);
+console.log(chalk.cyan('✓ Setup routes loaded'));
+
 // Setup check middleware - redirect to setup if not configured
+// This checks after setup routes are registered
 app.use(setupCheckMiddleware);
 
 // Initialize database
@@ -86,21 +102,6 @@ const startServer = async () => {
     setInterval(() => {
       sqliteService.cleanupOldData();
     }, 24 * 60 * 60 * 1000); // Run daily
-
-    // Health check endpoint
-    app.get('/health', (req, res) => {
-      res.json({
-        status: 'ok',
-        timestamp: new Date(),
-        uptime: process.uptime(),
-        mode: argv.mode,
-      });
-    });
-
-    // Setup routes - available before setup is complete
-    const setupRoutes = require('./routes/setup');
-    app.use('/setup', setupRoutes);
-    console.log(chalk.cyan('✓ Setup routes loaded'));
 
     // Check if setup is needed
     if (!isSetupComplete()) {

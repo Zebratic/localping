@@ -37,9 +37,14 @@ function apiKeyAuth(req, res, next) {
 function adminPageAuth(req, res, next) {
   const adminPassword = process.env.ADMIN_PASSWORD;
 
-  // If no admin password is configured, skip authentication
-  if (!adminPassword) {
+  // If no admin password is configured, skip authentication (shouldn't happen after setup)
+  if (!adminPassword || !adminPassword.trim()) {
     console.warn(chalk.yellow('⚠ No ADMIN_PASSWORD configured - admin page authentication disabled'));
+    return next();
+  }
+
+  // Allow login page and login POST endpoint without authentication
+  if (req.path === '/login' || (req.method === 'POST' && req.path === '/login')) {
     return next();
   }
 
@@ -48,25 +53,7 @@ function adminPageAuth(req, res, next) {
     return next();
   }
 
-  // If trying to authenticate
-  if (req.method === 'POST' && req.path === '/admin/login') {
-    const { password } = req.body;
-
-    if (password === adminPassword) {
-      if (!req.session) {
-        req.session = {};
-      }
-      req.session.adminAuthenticated = true;
-      return res.json({ success: true, message: 'Authenticated' });
-    }
-
-    return res.status(401).json({
-      success: false,
-      error: 'Invalid password',
-    });
-  }
-
-  // Not authenticated and not trying to login - redirect to login
+  // Not authenticated - redirect to login
   if (req.headers.accept && req.headers.accept.includes('application/json')) {
     return res.status(401).json({
       success: false,
@@ -75,7 +62,7 @@ function adminPageAuth(req, res, next) {
   }
 
   // For page requests, redirect to login
-  res.redirect('/admin/login');
+  res.redirect('/login');
 }
 
 /**

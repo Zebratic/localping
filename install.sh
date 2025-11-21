@@ -204,10 +204,17 @@ systemctl status "$SERVICE_NAME" --no-pager 2>&1 | head -n 20 || true
 echo ""
 echo "✅ Installation complete!"
 echo ""
+
+# Get the IPv4 address
+IP_ADDR=$(hostname -I | awk '{print $1}')
+if [ -z "$IP_ADDR" ]; then
+    IP_ADDR="localhost"
+fi
+
 echo "📊 Access LocalPing:"
-echo "   Admin Panel:  http://localhost:8000/admin"
-echo "   Public Page:  http://localhost:8000"
-echo "   API:          http://localhost:8000/api"
+echo "   Admin Panel:  http://$IP_ADDR:8000/admin"
+echo "   Public Page:  http://$IP_ADDR:8000"
+echo "   API:          http://$IP_ADDR:8000/api"
 echo ""
 echo "📖 Useful Commands:"
 echo "   View logs:          journalctl -u $SERVICE_NAME -f"
@@ -215,8 +222,6 @@ echo "   Service status:     systemctl status $SERVICE_NAME"
 echo "   Start service:      systemctl start $SERVICE_NAME"
 echo "   Stop service:       systemctl stop $SERVICE_NAME"
 echo "   Restart service:    systemctl restart $SERVICE_NAME"
-echo "   View PM2 logs:      pm2 logs"
-echo "   Check PM2 status:   pm2 status"
 echo "   Install directory:  $INSTALL_DIR"
 echo ""
 echo "ℹ️  The service will auto-start on system boot."

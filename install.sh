@@ -23,17 +23,33 @@ echo "   Install Path: $INSTALL_DIR"
 echo ""
 
 # Detect if already installed
-if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/.env" ]; then
-    echo "⚠️  LocalPing already installed at $INSTALL_DIR"
-    read -p "Do you want to update it? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborting installation."
-        exit 0
+IS_UPDATE=false
+if [ -d "$INSTALL_DIR" ]; then
+    if [ -f "$INSTALL_DIR/.env" ] && [ -f "$INSTALL_DIR/package.json" ]; then
+        echo "✓ Existing LocalPing installation detected at $INSTALL_DIR"
+        echo ""
+        echo "What will be updated:"
+        echo "  • Source code (latest version from $BRANCH branch)"
+        echo "  • Dependencies (npm packages)"
+        echo "  • Systemd service configuration"
+        echo ""
+        echo "What will be preserved:"
+        echo "  • Database (data/localping.db)"
+        echo "  • Configuration (.env file)"
+        echo "  • Admin credentials"
+        echo ""
+        read -p "Continue with update? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "❌ Update cancelled."
+            exit 0
+        fi
+        IS_UPDATE=true
+    else
+        echo "⚠️  Directory exists at $INSTALL_DIR but is not a valid LocalPing installation"
+        echo "❌ Please remove the directory or use a different path"
+        exit 1
     fi
-    IS_UPDATE=true
-else
-    IS_UPDATE=false
 fi
 
 echo "📦 Installing system dependencies..."
@@ -125,7 +141,11 @@ ADMIN_API_KEY=$ADMIN_API_KEY
 EOF
     echo "✅ .env file created with secure values"
 else
-    echo "⚠️  .env already exists, skipping"
+    if [ "$IS_UPDATE" = true ]; then
+        echo "✓ Preserving existing .env file"
+    else
+        echo "⚠️  .env already exists, skipping creation"
+    fi
 fi
 
 echo "🔐 Setting ICMP capabilities for Node.js..."
@@ -198,7 +218,7 @@ systemctl restart "$SERVICE_NAME"
 # Wait for service to start
 sleep 3
 
-echo "✅ Systemd service created and enabled"
+echo "✅ Systemd service configured"
 echo ""
 
 # Show status
@@ -206,8 +226,22 @@ echo "📊 Service Status:"
 systemctl status "$SERVICE_NAME" --no-pager 2>&1 | head -n 20 || true
 
 echo ""
-echo "✅ Installation complete!"
-echo ""
+if [ "$IS_UPDATE" = true ]; then
+    echo "✅ Update complete!"
+    echo ""
+    echo "What was updated:"
+    echo "  ✓ Source code to latest version"
+    echo "  ✓ Dependencies (npm packages)"
+    echo "  ✓ Systemd service configuration"
+    echo ""
+    echo "What was preserved:"
+    echo "  ✓ Database (data/localping.db)"
+    echo "  ✓ Configuration (.env file)"
+    echo "  ✓ Admin credentials and monitors"
+else
+    echo "✅ Installation complete!"
+    echo ""
+fi
 
 # Get the IPv4 address
 IP_ADDR=$(hostname -I | awk '{print $1}')
@@ -216,15 +250,22 @@ if [ -z "$IP_ADDR" ]; then
 fi
 
 echo "📊 Access LocalPing:"
-echo "   Setup Wizard: http://$IP_ADDR:8000/setup"
 echo "   Public Page:  http://$IP_ADDR:8000"
 echo "   API:          http://$IP_ADDR:8000/api"
 echo ""
-echo "🔧 First Time Setup:"
-echo "   1. Visit http://$IP_ADDR:8000/setup to complete configuration"
-echo "   2. Create admin credentials and configure gateway IP"
-echo "   3. You'll be redirected to login at http://$IP_ADDR:8000/admin/login"
-echo "   4. Login to access the admin panel"
+
+if [ "$IS_UPDATE" = false ]; then
+    echo "🔧 First Time Setup:"
+    echo "   1. Visit http://$IP_ADDR:8000/setup to complete configuration"
+    echo "   2. Create admin credentials and configure gateway IP"
+    echo "   3. You'll be redirected to login at http://$IP_ADDR:8000/admin/login"
+    echo "   4. Login to access the admin panel"
+    echo ""
+else
+    echo "🔄 Service has been restarted with the latest code"
+    echo "   Login at http://$IP_ADDR:8000/admin/login"
+    echo ""
+fi
 echo ""
 echo "📖 Useful Commands:"
 echo "   View logs:          journalctl -u $SERVICE_NAME -f"

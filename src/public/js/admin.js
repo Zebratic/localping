@@ -2,14 +2,18 @@ let pingChart = null;
 let selectedTargetId = null;
 let allTargets = [];
 
-// API Key - stored in window for admin panel
-const ADMIN_API_KEY = 'localping-admin-key-12345';
-
-// Configure axios to include API key by default
-axios.interceptors.request.use((config) => {
-  config.headers['X-API-Key'] = ADMIN_API_KEY;
-  return config;
-});
+// Session-based authentication - no API key needed for admin panel
+// API calls use secure session cookies automatically
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // If 401, redirect to login
+    if (error.response?.status === 401) {
+      window.location.href = '/admin/login';
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Load on page load
 loadDashboard();

@@ -3,11 +3,56 @@ const router = express.Router();
 const { getDB } = require('../config/db');
 const monitorService = require('../services/monitorService');
 const IncidentService = require('../services/incidentService');
+const { adminPageAuth } = require('../middleware/auth');
 
-// Admin dashboard
-router.get('/', (req, res) => {
+// Admin login page (GET)
+router.get('/login', (req, res) => {
+  // If already authenticated, redirect to admin
+  if (req.session && req.session.adminAuthenticated) {
+    return res.redirect('/admin');
+  }
+  res.render('admin/login');
+});
+
+// Admin login (POST)
+router.post('/login', (req, res) => {
+  const { password } = req.body;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminPassword) {
+    return res.status(401).json({
+      success: false,
+      error: 'Admin authentication not configured',
+    });
+  }
+
+  if (password === adminPassword) {
+    if (!req.session) {
+      req.session = {};
+    }
+    req.session.adminAuthenticated = true;
+    return res.json({ success: true, message: 'Authenticated' });
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: 'Invalid password',
+  });
+});
+
+// Admin logout
+router.get('/logout', (req, res) => {
+  req.session.adminAuthenticated = false;
+  res.redirect('/admin/login');
+});
+
+// Admin dashboard - Protected by auth middleware
+router.get('/', adminPageAuth, (req, res) => {
   res.render('admin/index');
 });
+
+// Apply auth middleware to all admin API routes
+router.use('/api', adminPageAuth);
 
 // Admin API endpoints
 router.get('/api/dashboard', async (req, res) => {

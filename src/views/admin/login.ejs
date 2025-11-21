@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login - LocalPing</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+    .form-input {
+      background-color: #0f1419;
+      border-color: #2a2a4e;
+    }
+    .form-input:focus {
+      border-color: #4f46e5;
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+    }
+    .btn-primary:hover {
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+  <div class="min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md">
+      <!-- Header -->
+      <div class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-white mb-2">LocalPing</h1>
+        <p class="text-gray-400">Admin Panel</p>
+      </div>
+
+      <!-- Login Card -->
+      <div class="bg-[#0f1419] border border-[#2a2a4e] rounded-lg p-8">
+        <h2 class="text-2xl font-bold text-white mb-6">Admin Login</h2>
+
+        <div id="error-message" class="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg hidden">
+          <p class="text-red-400 text-sm" id="error-text"></p>
+        </div>
+
+        <form id="loginForm" class="space-y-6">
+          <div>
+            <label for="password" class="block text-sm font-medium text-gray-300 mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              class="form-input w-full px-4 py-2 border rounded-lg text-white placeholder-gray-500"
+              placeholder="Enter admin password"
+              required
+              autofocus
+            />
+          </div>
+
+          <button
+            type="submit"
+            class="btn-primary w-full py-3 rounded-lg font-semibold text-white transition"
+            id="submitBtn"
+          >
+            Login
+          </button>
+        </form>
+
+        <div class="mt-6 pt-6 border-t border-[#2a2a4e]">
+          <p class="text-gray-400 text-sm text-center">
+            Forgot your password? <a href="/setup" class="text-indigo-400 hover:text-indigo-300">Reset setup</a>
+          </p>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <p class="text-center text-gray-500 text-xs mt-8">
+        LocalPing • Homelab Dashboard & System Monitor
+      </p>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const password = document.getElementById('password').value;
+      const errorDiv = document.getElementById('error-message');
+      const errorText = document.getElementById('error-text');
+      const submitBtn = document.getElementById('submitBtn');
+
+      try {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Logging in...';
+
+        const response = await fetch('/admin/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ password }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          // Redirect to admin panel
+          window.location.href = '/admin';
+        } else {
+          // Show error
+          errorText.textContent = data.error || 'Invalid password';
+          errorDiv.classList.remove('hidden');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Login';
+          document.getElementById('password').focus();
+        }
+      } catch (err) {
+        errorText.textContent = 'An error occurred. Please try again.';
+        errorDiv.classList.remove('hidden');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Login';
+      }
+    });
+  </script>
+</body>
+</html>

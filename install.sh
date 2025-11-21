@@ -118,6 +118,10 @@ ALERT_COOLDOWN=300
 
 # API Authentication
 ADMIN_API_KEY=$ADMIN_API_KEY
+
+# Admin Credentials (set during first-time setup)
+# ADMIN_PASSWORD=
+# ADMIN_USERNAME=
 EOF
     echo "✅ .env file created with secure values"
 else
@@ -127,9 +131,6 @@ fi
 echo "🔐 Setting ICMP capabilities for Node.js..."
 NODE_PATH=$(which node)
 setcap cap_net_raw=ep "$NODE_PATH" 2>/dev/null || true
-
-echo "🧙 Running setup wizard..."
-npm run setup 2>/dev/null || node src/setup-wizard.js
 
 # Get the user who ran sudo
 SERVICE_USER="${SUDO_USER:-root}"

@@ -20,6 +20,14 @@ async function loadData() {
     const { status, targets } = statusRes.data;
     const { incidents } = incidentsRes.data;
 
+    // Check for status changes and send notifications
+    if (window.notificationManager && window.notificationManager.isEnabled()) {
+      targets.forEach((target) => {
+        const status = target.status === 'up' ? 'up' : 'down';
+        window.notificationManager.updateTargetStatus(target._id, target.name, status);
+      });
+    }
+
     allTargets = targets;
 
     // Update header status

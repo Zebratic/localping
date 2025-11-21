@@ -12,7 +12,6 @@
     "cli": "node src/cli/localping.js",
     "gui": "electron src/electron/main.js",
     "web": "node src/app.js --mode web",
-    "setup": "node src/setup-wizard.js",
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:stop": "pm2 stop all",
     "pm2:logs": "pm2 logs",

@@ -13,6 +13,7 @@ const monitorService = require('./services/monitorService');
 const gatewayService = require('./services/gatewayService');
 const sqliteService = require('./services/sqliteService');
 const { apiKeyAuth, createRateLimiter, validateTargetInput } = require('./middleware/auth');
+const { setupCheckMiddleware, isSetupComplete } = require('./middleware/setupCheck');
 
 // Parse command line arguments
 const argv = yargs(hideBin(process.argv))
@@ -63,6 +64,9 @@ app.set('views', path.join(__dirname, 'views'));
 // Static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Setup check middleware - redirect to setup if not configured
+app.use(setupCheckMiddleware);
+
 // Initialize database
 let db = null;
 
@@ -92,6 +96,17 @@ const startServer = async () => {
         mode: argv.mode,
       });
     });
+
+    // Setup routes - available before setup is complete
+    const setupRoutes = require('./routes/setup');
+    app.use('/setup', setupRoutes);
+    console.log(chalk.cyan('✓ Setup routes loaded'));
+
+    // Check if setup is needed
+    if (!isSetupComplete()) {
+      console.log(chalk.yellow('\n⚠️  LocalPing setup incomplete!'));
+      console.log(chalk.yellow('   Visit http://localhost:8000/setup to complete setup\n'));
+    }
 
     // Public routes - load FIRST so they don't get caught by authenticated API routes
     if (argv.mode === 'public' || argv.mode === 'all') {

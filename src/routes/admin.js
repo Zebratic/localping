@@ -16,10 +16,11 @@ router.get('/login', (req, res) => {
 
 // Admin login (POST)
 router.post('/login', (req, res) => {
-  const { password } = req.body;
+  const { username, password } = req.body;
+  const adminUsername = process.env.ADMIN_USERNAME;
   const adminPassword = process.env.ADMIN_PASSWORD;
 
-  if (!adminPassword) {
+  if (!adminUsername || !adminPassword) {
     return res.status(401).json({
       success: false,
       error: 'Admin authentication not configured',
@@ -27,10 +28,13 @@ router.post('/login', (req, res) => {
   }
 
   // Trim whitespace from both sides for comparison
+  const providedUsername = (username || '').trim();
   const providedPassword = (password || '').trim();
+  const storedUsername = (adminUsername || '').trim();
   const storedPassword = (adminPassword || '').trim();
 
-  if (providedPassword === storedPassword) {
+  // Check both username and password
+  if (providedUsername === storedUsername && providedPassword === storedPassword) {
     if (!req.session) {
       req.session = {};
     }
@@ -40,7 +44,7 @@ router.post('/login', (req, res) => {
 
   return res.status(401).json({
     success: false,
-    error: 'Invalid password',
+    error: 'Invalid username or password',
   });
 });
 

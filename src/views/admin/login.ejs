@@ -46,6 +46,21 @@
 
         <form id="loginForm" class="space-y-6">
           <div>
+            <label for="username" class="block text-sm font-medium text-gray-300 mb-2">
+              Username
+            </label>
+            <input
+              type="text"
+              id="username"
+              name="username"
+              class="form-input w-full px-4 py-2 border rounded-lg text-white placeholder-gray-500"
+              placeholder="Enter admin username"
+              required
+              autofocus
+            />
+          </div>
+
+          <div>
             <label for="password" class="block text-sm font-medium text-gray-300 mb-2">
               Password
             </label>
@@ -56,7 +71,6 @@
               class="form-input w-full px-4 py-2 border rounded-lg text-white placeholder-gray-500"
               placeholder="Enter admin password"
               required
-              autofocus
             />
           </div>
 
@@ -87,6 +101,7 @@
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
 
+      const username = document.getElementById('username').value;
       const password = document.getElementById('password').value;
       const errorDiv = document.getElementById('error-message');
       const errorText = document.getElementById('error-text');
@@ -101,7 +116,7 @@
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ password }),
+          body: JSON.stringify({ username, password }),
         });
 
         const data = await response.json();
@@ -111,11 +126,11 @@
           window.location.href = '/admin';
         } else {
           // Show error
-          errorText.textContent = data.error || 'Invalid password';
+          errorText.textContent = data.error || 'Invalid username or password';
           errorDiv.classList.remove('hidden');
           submitBtn.disabled = false;
           submitBtn.textContent = 'Login';
-          document.getElementById('password').focus();
+          document.getElementById('username').focus();
         }
       } catch (err) {
         errorText.textContent = 'An error occurred. Please try again.';

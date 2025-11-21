@@ -11,47 +11,141 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-echo "📦 Installing dependencies..."
-apt update
-apt install -y \
-    nodejs \
-    npm \
+INSTALL_DIR="${1:-.}"
+
+echo "📦 Installing system dependencies..."
+apt-get update -qq
+apt-get install -y -qq \
     curl \
+    git \
+    build-essential \
+    python3 \
     libnotify-bin
 
-echo "📁 Cloning LocalPing repository..."
-cd /opt || mkdir -p /opt && cd /opt
+# Check if Node.js/npm is installed
+if ! command -v node &> /dev/null; then
+    echo "📦 Installing Node.js and npm..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y -qq nodejs
+fi
 
-if [ -d "localping" ]; then
-    echo "⚠️  localping directory already exists, updating..."
-    cd localping
-    git pull origin main
-else
-    git clone https://github.com/yourusername/localping.git
-    cd localping
+echo "📁 Setting up LocalPing..."
+cd "$INSTALL_DIR"
+
+# Validate required files exist
+if [ ! -f ".env.example" ]; then
+    echo "❌ .env.example not found. Make sure you're in the LocalPing directory."
+    exit 1
 fi
 
 echo "📥 Installing npm dependencies..."
-npm install
+npm install --silent
 
-echo "🔧 Setting up environment..."
+echo "🔧 Creating .env file..."
 if [ ! -f ".env" ]; then
-    cp .env.example .env 2>/dev/null || cat > .env << 'EOF'
+    # Generate secure random strings
+    SESSION_SECRET=$(openssl rand -base64 32)
+    ADMIN_API_KEY=$(openssl rand -hex 16)
+
+    cat > .env << EOF
+# Server Configuration
 API_PORT=8000
 NODE_ENV=production
-SESSION_SECRET=$(openssl rand -base64 32)
+SESSION_SECRET=$SESSION_SECRET
+
+# Notification Settings
 NOTIFICATION_ENABLED=true
 NOTIFICATION_METHOD=dbus
+
+# Monitoring
 PING_INTERVAL=60
 ALERT_COOLDOWN=300
+
+# API Authentication
+ADMIN_API_KEY=$ADMIN_API_KEY
 EOF
+    echo "✅ .env file created with secure values"
+else
+    echo "⚠️  .env already exists, skipping"
 fi
 
-echo "🔐 Setting ICMP capabilities..."
-setcap cap_net_raw=ep $(which node) 2>/dev/null || true
+echo "🔐 Setting ICMP capabilities for Node.js..."
+setcap cap_net_raw=ep "$(which node)" 2>/dev/null || true
 
-echo "🎯 Starting with PM2..."
-npm run pm2:start
+echo "📥 Installing PM2 globally..."
+npm install -g pm2 --silent
+pm2 install pm2-auto-pull 2>/dev/null || true
+
+INSTALL_PATH=$(cd "$INSTALL_DIR" && pwd)
+SERVICE_USER="${SUDO_USER:-root}"
+SERVICE_NAME="localping"
+
+echo "🛠️  Creating systemd service..."
+
+# Create systemd service file
+cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
+[Unit]
+Description=LocalPing - System Uptime Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_PATH
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="NODE_ENV=production"
+
+# Start the service
+ExecStart=/usr/local/bin/pm2 start ecosystem.config.js --name $SERVICE_NAME
+
+# Restart automatically
+Restart=always
+RestartSec=10
+
+# Grant ICMP permissions
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# Security settings
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=$SERVICE_NAME
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create stop script that properly cleans up PM2
+cat > "/etc/systemd/system/${SERVICE_NAME}-stop.service" << EOF
+[Unit]
+Description=LocalPing Stop Handler
+Before=$SERVICE_NAME.service
+
+[Service]
+Type=oneshot
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_PATH
+ExecStart=/usr/local/bin/pm2 kill
+
+[Install]
+WantedBy=$SERVICE_NAME.service
+EOF
+
+# Reload systemd and enable the service
+systemctl daemon-reload
+systemctl enable "$SERVICE_NAME" --now
+
+echo "✅ Systemd service created and enabled"
+
+echo "📊 Service Status:"
+systemctl status "$SERVICE_NAME" --no-pager || true
 
 echo ""
 echo "✅ Installation complete!"
@@ -60,8 +154,14 @@ echo "📊 Access LocalPing:"
 echo "   Admin Panel:  http://localhost:8000/admin"
 echo "   Public Page:  http://localhost:8000"
 echo ""
-echo "📖 Commands:"
-echo "   View logs:    npm run pm2:logs"
-echo "   Stop:         npm run pm2:stop"
-echo "   Restart:      npm run pm2:restart"
+echo "📖 Available Commands:"
+echo "   View logs:        journalctl -u $SERVICE_NAME -f"
+echo "   Service status:   systemctl status $SERVICE_NAME"
+echo "   Start service:    systemctl start $SERVICE_NAME"
+echo "   Stop service:     systemctl stop $SERVICE_NAME"
+echo "   Restart service:  systemctl restart $SERVICE_NAME"
+echo "   PM2 logs:         pm2 logs"
+echo "   PM2 status:       pm2 status"
+echo ""
+echo "ℹ️  The service will auto-start on system boot."
 echo ""

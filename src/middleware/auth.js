@@ -49,6 +49,7 @@ function adminPageAuth(req, res, next) {
   }
 
   // Check if user has valid admin session
+  // Session expiration is handled automatically by the session store and cookie maxAge
   if (req.session && req.session.adminAuthenticated) {
     return next();
   }

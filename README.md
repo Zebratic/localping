@@ -1,363 +1,87 @@
-# LocalPing - Homelab Dashboard & System Monitor
+# LocalPing
+
+<img src="src/public/ms-icon-310x310.png" alt="LocalPing Logo" width="200" style="border-radius: 20px;">
 
 A simple, self-hosted uptime monitoring system for your homelab. Monitor TrueNAS, Jellyfin, qBittorrent, web services, and anything else with real-time dashboards and historical tracking.
 
-## Quick Start (Ubuntu 22.04+)
+## Quick Install
 
-### Automated Installation (Recommended)
-
-One-liner deployment - sets up everything automatically including systemd service:
+One-liner deployment (Ubuntu 22.04+):
 
 ```bash
 sudo apt update && sudo apt install -y curl && curl -fsSL https://raw.githubusercontent.com/zebratic/localping/main/install.sh | bash
 ```
 
-This will:
-- ✅ Install all dependencies (Node.js, npm, git, etc.)
-- ✅ Clone the repository to `/opt/localping`
-- ✅ Create and configure `.env` file with secure values
-- ✅ Install npm dependencies
-- ✅ Set up ICMP capabilities for ping functionality
-- ✅ Create a systemd service (runs Node.js directly for production)
-- ✅ Enable auto-start on system boot
-- ✅ Start the service immediately
+This automatically:
+- Installs Node.js, dependencies, and systemd service
+- Configures secure environment variables
+- Sets up ICMP capabilities for ping
+- Enables auto-start on boot
 
-**After installation:**
-- Visit `http://<your-ip>:8000/setup` for the interactive setup wizard
-- Create admin credentials and configure your first monitors
-- Login to the admin panel to manage your monitors
-
-**Custom installation path:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/zebratic/localping/main/install.sh | sudo bash -s - https://github.com/zebratic/localping.git main /custom/path
-```
-
-### First-Time Setup
-
-After installation, access the setup wizard:
+## First-Time Setup
 
 1. Visit `http://<your-ip>:8000/setup`
-2. The wizard will prompt you to:
-   - Create an admin username and password
-   - Configure your network gateway IP (auto-detected)
-   - Review default monitors:
-     - Gateway monitoring (ICMP ping)
-     - Cloudflare DNS at 1.1.1.1 (ICMP ping)
-3. Click "Complete Setup" to initialize your LocalPing instance
-4. You'll be redirected to the login page
-
-### Admin Panel Access
-
-After setup, login at `http://<your-ip>:8000/admin/login` with your credentials.
-
-### Manual Setup (for development)
-
-```bash
-# Install dependencies
-sudo apt update && sudo apt install -y nodejs npm curl git libnotify-bin build-essential
-
-# Clone and setup
-git clone https://github.com/zebratic/localping.git && cd localping
-npm install
-
-# Create .env file
-cp .env.example .env
-# Edit .env if needed
-
-# Set ICMP capabilities
-sudo setcap cap_net_raw=ep $(which node)
-
-# Start with PM2
-npm run pm2:start
-
-# Or run directly in development
-npm run dev
-```
+2. Create admin username and password
+3. Configure gateway IP (auto-detected)
+4. Complete setup and login at `http://<your-ip>:8000/admin/login`
 
 ## Features
 
-- **Multi-Protocol Monitoring**: ICMP, TCP, UDP, HTTP/HTTPS
-- **Real-Time Dashboards**: Admin panel + Public status page
-- **Historical Data**: 90+ days of ping history stored locally
-- **Local Database**: SQLite for offline access + MongoDB for advanced features
-- **Desktop Notifications**: KDE Plasma & GNOME support
-- **Service Groups**: Organize services by category
+- **Multi-Protocol**: ICMP, TCP, UDP, HTTP/HTTPS monitoring
+- **Real-Time Dashboards**: Admin panel + public status page
+- **Historical Data**: 90+ days stored locally in SQLite
+- **Desktop Notifications**: Browser notifications for status changes
+- **Service Groups**: Organize monitors by category
 - **Quick Commands**: `/jellyfin` style shortcuts on public UI
-- **PM2 Integration**: Auto-restart and process management
 
 ## Access Points
 
-- **Admin Panel**: http://localhost:8000/admin
-- **Public Dashboard**: http://localhost:8000
-- **API**: http://localhost:8000/api
-
-## Authentication
-
-LocalPing uses a layered authentication approach:
-
-### Web UI (Admin Panel)
-- **Session-based authentication** with secure cookies
-- Password stored in `.env` as `ADMIN_PASSWORD` (set during setup)
-- 24-hour session expiration
-- Protected admin routes require login
-
-### API Access
-- **External API calls:** Use `ADMIN_API_KEY` header
-- **Admin panel API:** Uses secure session cookies (no key needed)
-- API key is auto-generated and cannot be changed
-
-### Security Features
-- httpOnly cookies (immune to XSS attacks)
-- sameSite: strict (prevents CSRF)
-- HTTPS-only cookies in production
-- Rate limiting on API endpoints
-- Setup validation and password confirmation
-
-## Environment Variables
-
-The installation script automatically creates `.env` with secure defaults:
-
-```env
-# Server
-API_PORT=8000
-NODE_ENV=production
-SESSION_SECRET=<random-generated>
-
-# Admin Credentials (set by setup wizard)
-ADMIN_PASSWORD=<your-password>
-ADMIN_USERNAME=admin
-
-# Notifications
-NOTIFICATION_ENABLED=true
-NOTIFICATION_METHOD=dbus
-
-# Monitoring
-PING_INTERVAL=60
-ALERT_COOLDOWN=300
-
-# API Authentication (auto-generated)
-ADMIN_API_KEY=<random-generated>
-```
-
-**Notes:**
-- All data is stored in a local SQLite database at `data/localping.db` - no external dependencies needed!
-- Admin credentials are created during the setup wizard
-- SESSION_SECRET and ADMIN_API_KEY are auto-generated for security
-- Never commit `.env` to version control
+- **Public Dashboard**: `http://localhost:8000`
+- **Admin Panel**: `http://localhost:8000/admin`
+- **API**: `http://localhost:8000/api`
 
 ## Service Management
 
-### Production (Systemd)
-
-The automated installer sets up systemd to run Node.js directly. This is the recommended way to run LocalPing in production.
-
 ```bash
-# Check service status
+# Check status
 systemctl status localping
 
-# Start the service
-systemctl start localping
-
-# Stop the service
-systemctl stop localping
-
-# Restart the service
-systemctl restart localping
-
-# View real-time logs
+# View logs
 journalctl -u localping -f
 
-# View last 100 lines of logs
-journalctl -u localping -n 100
+# Restart
+sudo systemctl restart localping
 
-# View logs since last boot
-journalctl -u localping -b
+# Stop/Start
+sudo systemctl stop localping
+sudo systemctl start localping
 ```
-
-### Development (PM2)
-
-PM2 is installed for development purposes. It provides process management and auto-reload features.
-
-```bash
-# Start with PM2 (from project directory)
-npm run pm2:start
-
-# Stop all PM2 processes
-npm run pm2:stop
-
-# View PM2 logs
-npm run pm2:logs
-
-# Restart PM2 processes
-npm run pm2:restart
-
-# Check PM2 process status
-pm2 status
-```
-
-### Development Mode
-
-```bash
-# Run with auto-reload (requires ICMP capabilities)
-sudo npm run dev
-
-# Or set capabilities once, then run without sudo
-sudo setcap cap_net_raw=ep $(which node)
-npm run dev
-```
-
-## Browser Notifications
-
-LocalPing supports browser desktop and in-page notifications for status changes.
-
-### Enabling Notifications
-1. Visit the public dashboard at `http://<your-ip>:8000`
-2. Browser will request notification permission (first visit)
-3. Click "Allow" to enable desktop notifications
-4. Notifications will show when monitors go down/up
-
-### Features
-- **Desktop Notifications:** System-level alerts (Windows, macOS, Linux)
-- **In-Page Notifications:** Toast messages that appear on screen
-- **Smart Alerts:** Only notifies on status changes (not on every refresh)
-- **Persistent Settings:** Your preferences are saved in browser storage
-
-### Supported Browsers
-- Chrome/Chromium
-- Firefox
-- Safari (macOS 13+)
-- Edge
-- Opera
-
-### Fallback
-If browser notifications are unavailable, LocalPing falls back to in-page toast notifications.
 
 ## Configuration
 
-1. Open http://localhost:8000/admin
-2. Click "Add New Monitor"
-3. Enter host, protocol, port, interval
-4. (Optional) Add app URL and group name
-5. Save and monitor in real-time
+All settings are in `/opt/localping/.env`:
 
-## Project Structure
-
-```
-localping/
-├── src/
-│   ├── app.js                    # Main app entry
-│   ├── config/db.js              # Database config
-│   ├── routes/                   # API endpoints
-│   ├── services/                 # Monitoring logic
-│   ├── public/js/                # Frontend code
-│   └── views/                    # HTML templates
-├── ecosystem.config.js           # PM2 config
-├── package.json
-└── data/localping.db             # SQLite database
+```env
+API_PORT=8000
+PING_INTERVAL=60
+ALERT_COOLDOWN=300
 ```
 
-## Troubleshooting
-
-### Installation Issues
-
-**Installation script fails with permission error:**
-```bash
-# Make sure you're using sudo
-sudo bash install.sh
-```
-
-**Cloning repository fails:**
-Ensure git is installed and you have internet connectivity:
-```bash
-sudo apt install git
-```
-
-**Node.js installation fails:**
-Try manual installation:
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
-sudo apt install nodejs
-```
-
-### Runtime Issues
-
-**Service won't start:**
-```bash
-# Check systemd service status
-systemctl status localping
-
-# View systemd logs with details
-journalctl -u localping -n 50
-
-# View full error output
-journalctl -u localping -xe
-
-# Try starting manually to see errors
-cd /opt/localping && node src/app.js
-```
-
-**ICMP (ping) not working:**
-The installation script automatically sets ICMP capabilities. If it doesn't work:
-```bash
-# Check current capabilities
-getcap $(which node)
-
-# Manually set capabilities
-sudo setcap cap_net_raw=ep $(which node)
-```
-
-**Port already in use (8000):**
-Change `API_PORT` in `/opt/localping/.env`:
-```bash
-sudo nano /opt/localping/.env
-# Change API_PORT=8000 to API_PORT=8001 (or another port)
-sudo systemctl restart localping
-```
-
-**Notifications not working:**
-```bash
-# Ensure notification daemon is installed
-sudo apt install notification-daemon libnotify-bin
-
-# Restart the service
-sudo systemctl restart localping
-```
-
-**Database issues:**
-LocalPing uses SQLite stored at `data/localping.db`:
-```bash
-# Remove corrupted database to force recreate
-rm /opt/localping/data/localping.db
-sudo systemctl restart localping
-```
-
-### Database & Storage
-
-**No External Database Needed!**
-LocalPing uses SQLite for all storage - completely self-contained and offline-capable. The database file is stored at `data/localping.db`.
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/targets` | List all targets |
-| POST | `/api/targets` | Create target |
-| GET | `/api/targets/:id` | Get target details |
-| PUT | `/api/targets/:id` | Update target |
-| DELETE | `/api/targets/:id` | Delete target |
-| GET | `/api/targets/:id/uptime` | Get uptime stats |
-| POST | `/api/targets/:id/test` | Test ping target |
+Admin credentials are set during the setup wizard. The database is stored at `data/localping.db` (SQLite - no external database needed).
 
 ## Development
 
 ```bash
-# Run in dev mode with auto-reload
-npm run dev
+# Clone and install
+git clone https://github.com/zebratic/localping.git
+cd localping
+npm install
 
-# Run specific mode
-node src/app.js --mode api
-node src/app.js --mode admin
-node src/app.js --mode public
+# Set ICMP capabilities
+sudo setcap cap_net_raw=ep $(which node)
+
+# Run in dev mode
+npm run dev
 ```
 
 ## License

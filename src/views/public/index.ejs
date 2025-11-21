@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LocalPing - Homelab Dashboard</title>
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="/vendor/tailwindcss.js"></script>
+  <script src="/vendor/chart.js"></script>
+  <script src="/vendor/axios.min.js"></script>
+  <script src="/vendor/marked.min.js"></script>
+  <link rel="stylesheet" href="/vendor/font-awesome/all.min.css">
 
   <style>
     :root {
@@ -129,38 +130,33 @@
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
-      padding: 0.5rem 1rem;
-      border-radius: 0.25rem;
-      font-weight: 600;
+      padding: 0.375rem 0.75rem;
+      border-radius: 9999px;
+      font-weight: 500;
       font-size: 0.875rem;
     }
 
     .status-badge.up {
-      background-color: #10b981;
-      color: white;
+      background-color: rgba(16, 185, 129, 0.1);
+      color: #10b981;
     }
 
     .status-badge.down {
-      background-color: #ef4444;
-      color: white;
+      background-color: rgba(239, 68, 68, 0.1);
+      color: #ef4444;
     }
 
     .service-row {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 1rem;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 1rem 1.5rem;
       transition: all 0.3s;
       cursor: pointer;
-    }
-
-    .service-row:last-child {
-      border-bottom: none;
+      gap: 1rem;
     }
 
     .service-row:hover {
-      background-color: rgba(255, 255, 255, 0.02);
+      background-color: rgba(255, 255, 255, 0.05);
     }
 
     .service-row.expanded {
@@ -170,20 +166,19 @@
     .service-name {
       flex: 0 0 auto;
       min-width: 200px;
-      font-weight: 500;
     }
 
     .service-uptime {
-      flex: 0 0 80px;
+      flex: 0 0 auto;
       text-align: center;
-      color: #10b981;
+      color: #06b6d4;
       font-weight: 600;
+      min-width: 60px;
     }
 
     .service-bars {
       flex: 1;
-      min-width: 300px;
-      margin: 0 2rem;
+      min-width: 200px;
     }
 
     .overall-status-box {
@@ -236,7 +231,7 @@
     }
 
     .service-details-wrapper.open {
-      max-height: 600px;
+      max-height: 800px;
     }
 
     .service-details-content {
@@ -287,53 +282,172 @@
     .nav-tab:hover {
       color: #ffffff;
     }
+
+    /* Markdown styling for blog posts */
+    .prose h1,
+    .prose h2,
+    .prose h3,
+    .prose h4 {
+      color: #ffffff;
+      margin-top: 1.5rem;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+    }
+
+    .prose h1 {
+      font-size: 1.875rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 0.5rem;
+    }
+
+    .prose h2 {
+      font-size: 1.5rem;
+    }
+
+    .prose h3 {
+      font-size: 1.25rem;
+    }
+
+    .prose p {
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+
+    .prose code {
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+      font-family: 'Courier New', monospace;
+      font-size: 0.875em;
+      color: #06b6d4;
+    }
+
+    .prose pre {
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 1rem;
+      border-radius: 0.5rem;
+      overflow-x: auto;
+      margin-bottom: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .prose pre code {
+      background: none;
+      padding: 0;
+      color: #cbd5e1;
+    }
+
+    .prose ul,
+    .prose ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .prose li {
+      margin-bottom: 0.5rem;
+    }
+
+    .prose blockquote {
+      border-left: 4px solid #06b6d4;
+      padding-left: 1rem;
+      margin-left: 0;
+      margin-bottom: 1rem;
+      color: #94a3b8;
+      font-style: italic;
+    }
+
+    .prose a {
+      color: #06b6d4;
+      text-decoration: underline;
+    }
+
+    .prose a:hover {
+      color: #0891b2;
+    }
+
+    .prose strong {
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .prose em {
+      color: #cbd5e1;
+    }
+
+    /* Chart and Period Button Enhancements */
+    .period-btn {
+      transition: all 0.2s ease;
+    }
+
+    .period-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .period-btn:active {
+      transform: translateY(0);
+    }
   </style>
+  <% if (typeof customCSS !== 'undefined' && customCSS) { %>
+  <style>
+    <%= customCSS %>
+  </style>
+  <% } %>
 </head>
 <body>
   <div class="min-h-screen flex flex-col">
-    <!-- Header -->
-    <header class="border-b border-slate-700/30">
-      <div class="max-w-7xl mx-auto px-6 py-8">
-        <div class="flex justify-between items-start mb-6">
-          <div>
-            <div class="flex items-center gap-3 mb-2">
-              <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
-              </svg>
-              <h1 class="text-3xl font-bold text-white">Homelab</h1>
-            </div>
-            <p class="text-slate-400 text-sm">System Status & Application Dashboard</p>
+  <!-- Header -->
+  <header class="border-b border-slate-700/30">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+            </svg>
+            <h1 class="text-2xl sm:text-3xl font-bold text-white"><%= typeof title !== 'undefined' ? title : 'Homelab' %></h1>
           </div>
-          <div id="status-box" class="text-right">
-            <p id="status-text" class="text-lg font-semibold text-green-400 mb-1">✓ All Systems Operational</p>
+          <p class="text-slate-400 text-sm"><%= typeof subtitle !== 'undefined' ? subtitle : 'System Status & Application Dashboard' %></p>
+        </div>
+        <div class="flex flex-col sm:flex-row items-start sm:items-end gap-3">
+          <div id="status-box" class="text-left sm:text-right w-full sm:w-auto">
+            <p id="status-text" class="text-base sm:text-lg font-semibold text-green-400 mb-1">✓ All Systems Operational</p>
             <p id="status-time" class="text-slate-400 text-xs">Last updated: -</p>
           </div>
-        </div>
-
-        <!-- Navigation Tabs -->
-        <div class="nav-tabs">
-          <button onclick="switchPage('home')" class="nav-tab active" id="tab-home">
-            <i class="fas fa-th-large mr-2"></i>Applications
-          </button>
-          <button onclick="switchPage('status')" class="nav-tab" id="tab-status">
-            <i class="fas fa-chart-line mr-2"></i>Status & Uptime
+          <button id="notification-toggle" onclick="toggleBrowserNotifications()" 
+                  class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium transition-colors flex items-center gap-2">
+            <i class="fas fa-bell" id="notification-icon"></i>
+            <span id="notification-text">Enable Notifications</span>
           </button>
         </div>
       </div>
-    </header>
 
-    <!-- Main Content -->
-    <main class="flex-1">
-      <div class="max-w-7xl mx-auto px-6 py-8 w-full">
+      <!-- Navigation Tabs -->
+      <div class="nav-tabs">
+        <button onclick="switchPage('home')" class="nav-tab active" id="tab-home">
+          <i class="fas fa-th-large mr-2"></i>Applications
+        </button>
+        <button onclick="switchPage('status')" class="nav-tab" id="tab-status">
+          <i class="fas fa-chart-line mr-2"></i>Status & Uptime
+        </button>
+        <button onclick="switchPage('blog')" class="nav-tab" id="tab-blog">
+          <i class="fas fa-blog mr-2"></i>Blog
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 w-full">
         <!-- Home Page (Apps) -->
         <div id="page-home" class="page active">
           <div class="mb-6">
-            <h2 class="text-2xl font-bold text-white mb-2">Your Applications</h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-white mb-2">Your Applications</h2>
             <p id="app-count" class="text-slate-400 text-sm">Loading...</p>
           </div>
 
           <!-- Apps Grid -->
-          <div id="apps-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div id="apps-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5">
             <div class="text-center text-slate-400 py-12 col-span-full">Loading applications...</div>
           </div>
         </div>
@@ -352,12 +466,12 @@
           <div id="incidents-container" class="hidden mb-6"></div>
 
           <div class="mb-6">
-            <h2 class="text-2xl font-bold text-white mb-2">Services Status</h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-white mb-2">Services Status</h2>
             <span id="service-count" class="text-slate-400 text-sm">Loading...</span>
           </div>
 
           <!-- Services List -->
-          <div class="bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 p-6 mb-6">
+          <div class="mb-6">
             <div id="services-list">
               <div class="text-center text-slate-400 py-8">Loading services...</div>
             </div>
@@ -365,28 +479,101 @@
 
           <!-- Incident History -->
           <div class="mb-6">
-            <h2 class="text-2xl font-bold text-white mb-2">Incident History</h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-white mb-2">Incident History</h2>
             <p class="text-slate-400 text-sm mb-4">View all reported incidents and their status</p>
           </div>
 
-          <div class="bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 p-6">
+          <div class="bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 p-4 sm:p-6">
             <div id="incident-history">
               <div class="text-center text-slate-400 py-8">Loading incident history...</div>
             </div>
+          </div>
+        </div>
+
+        <!-- Blog Page -->
+        <div id="page-blog" class="page">
+          <div class="mb-6">
+            <h2 class="text-xl sm:text-2xl font-bold text-white mb-2">Homelab Updates & Changelog</h2>
+            <p class="text-slate-400 text-sm">Latest updates and changes to the homelab infrastructure</p>
+          </div>
+
+          <div id="blog-posts" class="space-y-6">
+            <div class="text-center text-slate-400 py-8">Loading posts...</div>
           </div>
         </div>
       </div>
     </main>
 
     <!-- Footer -->
-    <footer class="border-t border-slate-700/30 mt-12">
-      <div class="max-w-7xl mx-auto px-6 py-6 text-center text-slate-500 text-sm">
-        <p>LocalPing - Homelab Dashboard & System Monitoring</p>
+    <footer class="border-t border-slate-700/30 mt-8 sm:mt-12">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 text-center text-slate-500 text-xs sm:text-sm">
+        <p>LocalPing - Homelab Dashboard & System Monitoring | 
+          <a href="https://github.com/zebratic/localping" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline">
+            <i class="fab fa-github mr-1"></i>GitHub
+          </a>
+          <span class="text-slate-600 mx-2">|</span>
+          <a href="/admin/login" class="text-slate-500 hover:text-slate-400 text-xs">Admin</a>
+        </p>
       </div>
     </footer>
   </div>
 
   <script src="/js/notifications.js"></script>
   <script src="/js/public.js"></script>
+  <script>
+    // Update notification toggle button state
+    function updateNotificationToggle() {
+      const toggle = document.getElementById('notification-toggle');
+      const icon = document.getElementById('notification-icon');
+      const text = document.getElementById('notification-text');
+      
+      if (!toggle || !window.notificationManager) return;
+      
+      const isEnabled = window.notificationManager.isEnabled();
+      const permission = window.notificationManager.notificationPermission;
+      
+      if (permission === 'granted' && isEnabled) {
+        toggle.classList.remove('bg-slate-700', 'hover:bg-slate-600');
+        toggle.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+        icon.classList.remove('fa-bell');
+        icon.classList.add('fa-bell-slash');
+        text.textContent = 'Disable Notifications';
+      } else if (permission === 'denied') {
+        toggle.classList.remove('bg-slate-700', 'hover:bg-slate-600', 'bg-cyan-600', 'hover:bg-cyan-700');
+        toggle.classList.add('bg-red-700', 'hover:bg-red-800');
+        toggle.disabled = true;
+        icon.classList.remove('fa-bell-slash');
+        icon.classList.add('fa-bell-slash');
+        text.textContent = 'Notifications Blocked';
+      } else {
+        toggle.classList.remove('bg-cyan-600', 'hover:bg-cyan-700', 'bg-red-700', 'hover:bg-red-800');
+        toggle.classList.add('bg-slate-700', 'hover:bg-slate-600');
+        toggle.disabled = false;
+        icon.classList.remove('fa-bell-slash');
+        icon.classList.add('fa-bell');
+        text.textContent = 'Enable Notifications';
+      }
+    }
+
+    async function toggleBrowserNotifications() {
+      if (!window.notificationManager) return;
+      
+      const currentState = window.notificationManager.isEnabled();
+      const newState = !currentState;
+      
+      await window.notificationManager.toggleNotifications(newState);
+      updateNotificationToggle();
+      
+      if (newState && window.notificationManager.notificationPermission === 'granted') {
+        // Show a test notification
+        window.notificationManager.showToastNotification('✓ Browser notifications enabled', 'success');
+      }
+    }
+
+    // Update toggle on page load
+    window.addEventListener('load', () => {
+      setTimeout(updateNotificationToggle, 100);
+    });
+  </script>
 </body>
 </html>

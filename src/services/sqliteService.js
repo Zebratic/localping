@@ -30,6 +30,34 @@ function initializeDatabase() {
 
 // Create tables if they don't exist
 function createTables() {
+  // Check if ping_results table exists and has unique constraint
+  try {
+    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ping_results'").get();
+    if (tableInfo && tableInfo.sql && tableInfo.sql.includes('UNIQUE(targetId, timestamp)')) {
+      // Migration: Remove unique constraint by recreating table
+      console.log(chalk.yellow('⊘ Migrating ping_results table to remove unique constraint...'));
+      db.exec(`
+        CREATE TABLE ping_results_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          targetId TEXT NOT NULL,
+          success BOOLEAN NOT NULL,
+          responseTime INTEGER,
+          timestamp DATETIME NOT NULL,
+          statusCode INTEGER,
+          error TEXT
+        );
+        INSERT INTO ping_results_new SELECT * FROM ping_results;
+        DROP TABLE ping_results;
+        ALTER TABLE ping_results_new RENAME TO ping_results;
+        CREATE INDEX IF NOT EXISTS idx_ping_results_targetId ON ping_results(targetId);
+        CREATE INDEX IF NOT EXISTS idx_ping_results_timestamp ON ping_results(timestamp);
+      `);
+      console.log(chalk.green('✓ Migration complete'));
+    }
+  } catch (error) {
+    // Table doesn't exist or migration not needed, continue
+  }
+
   // Ping results table
   db.exec(`
     CREATE TABLE IF NOT EXISTS ping_results (
@@ -37,10 +65,9 @@ function createTables() {
       targetId TEXT NOT NULL,
       success BOOLEAN NOT NULL,
       responseTime INTEGER,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      timestamp DATETIME NOT NULL,
       statusCode INTEGER,
-      error TEXT,
-      UNIQUE(targetId, timestamp)
+      error TEXT
     )
   `);
 
@@ -77,13 +104,16 @@ function getDatabase() {
 }
 
 // Store ping result
-function storePingResult(targetId, result) {
+function storePingResult(targetId, result, timestamp = null) {
   const database = getDatabase();
 
   try {
+    // Use provided timestamp or current time with millisecond precision
+    const pingTimestamp = timestamp || new Date().toISOString();
+    
     const stmt = database.prepare(`
-      INSERT INTO ping_results (targetId, success, responseTime, statusCode, error)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO ping_results (targetId, success, responseTime, statusCode, error, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -91,7 +121,8 @@ function storePingResult(targetId, result) {
       result.success ? 1 : 0,
       result.responseTime || null,
       result.statusCode || null,
-      result.error || null
+      result.error || null,
+      pingTimestamp
     );
   } catch (error) {
     console.error(chalk.red('Error storing ping result:'), error.message);
@@ -244,6 +275,31 @@ function cleanupOldData() {
   }
 }
 
+// Clear all ping data
+function clearAllPingData() {
+  const database = getDatabase();
+
+  try {
+    // Clear ping_results table
+    const pingStmt = database.prepare('DELETE FROM ping_results');
+    const pingChanges = pingStmt.run().changes;
+
+    // Clear daily_stats table
+    const statsStmt = database.prepare('DELETE FROM daily_stats');
+    const statsChanges = statsStmt.run().changes;
+
+    console.log(chalk.yellow(`⊘ Cleared ${pingChanges} ping records and ${statsChanges} daily stats`));
+    
+    return {
+      pingRecordsDeleted: pingChanges,
+      dailyStatsDeleted: statsChanges
+    };
+  } catch (error) {
+    console.error(chalk.red('Error clearing ping data:'), error.message);
+    throw error;
+  }
+}
+
 // Close database connection
 function closeDatabase() {
   if (db) {
@@ -261,5 +317,6 @@ module.exports = {
   updateDailyStats,
   getUptimePercentage,
   cleanupOldData,
+  clearAllPingData,
   closeDatabase,
 };

@@ -5,18 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LocalPing - Admin Panel</title>
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {}
-      }
-    }
-  </script>
+  <script src="/vendor/tailwindcss.js"></script>
+  <script src="/vendor/chart.js"></script>
+  <script src="/vendor/axios.min.js"></script>
+  <script src="/vendor/marked.min.js"></script>
+  <link rel="stylesheet" href="/vendor/font-awesome/all.min.css">
 
   <style>
     :root {
@@ -33,24 +26,18 @@
       position: relative;
       padding: 0.75rem 1.5rem;
       font-weight: 500;
+      color: #94a3b8;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
     }
 
-    .tab-button:not(.active) {
-      color: #9ca3af;
+    .tab-button:hover {
+      color: #ffffff;
     }
 
     .tab-button.active {
-      color: #4f46e5;
-    }
-
-    .tab-button.active::after {
-      content: '';
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 3px;
-      background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+      color: #06b6d4;
+      border-bottom-color: #06b6d4;
     }
 
     .tab-content {
@@ -71,19 +58,19 @@
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 0.75rem;
-      padding: 1.5rem;
+      padding: 1rem;
       transition: all 0.3s ease;
       cursor: pointer;
     }
 
     .monitor-card:hover {
       background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(79, 70, 229, 0.3);
+      border-color: rgba(6, 182, 212, 0.3);
     }
 
     .monitor-card.selected {
-      background: rgba(79, 70, 229, 0.1);
-      border-color: #4f46e5;
+      background: rgba(6, 182, 212, 0.1);
+      border-color: #06b6d4;
     }
 
     .status-badge {
@@ -147,6 +134,24 @@
       margin-bottom: 1rem;
     }
 
+    .form-section {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .form-section-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: #06b6d4;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
     .form-input {
       background-color: rgba(0, 0, 0, 0.3);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -154,17 +159,56 @@
       padding: 0.75rem;
       color: white;
       transition: all 0.3s ease;
+      width: 100%;
     }
 
     .form-input:focus {
       outline: none;
-      border-color: #4f46e5;
-      background-color: rgba(79, 70, 229, 0.1);
-      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+      border-color: #06b6d4;
+      background-color: rgba(6, 182, 212, 0.1);
+      box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      color: #cbd5e1;
+    }
+
+    .form-help {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 0.25rem;
+    }
+
+    .btn-primary, .btn-secondary, .btn-danger {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 1023px) {
+      .btn-primary, .btn-secondary, .btn-danger {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        width: 100%;
+        text-align: center;
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .btn-primary, .btn-secondary, .btn-danger {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+      background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
       color: white;
       padding: 0.75rem 1.5rem;
       border-radius: 0.5rem;
@@ -176,7 +220,7 @@
 
     .btn-primary:hover {
       transform: translateY(-2px);
-      box-shadow: 0 10px 20px rgba(79, 70, 229, 0.3);
+      box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3);
     }
 
     .btn-primary:disabled {
@@ -200,6 +244,28 @@
       background: rgba(255, 255, 255, 0.15);
     }
 
+    .logout-btn {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      padding: 0.5rem;
+      border-radius: 0.5rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      min-width: auto;
+    }
+
+    .logout-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    @media (min-width: 640px) {
+      .logout-btn {
+        padding: 0.75rem 1.5rem;
+      }
+    }
+
     .btn-danger {
       background: rgba(239, 68, 68, 0.2);
       color: #fca5a5;
@@ -214,137 +280,719 @@
     .btn-danger:hover {
       background: rgba(239, 68, 68, 0.3);
     }
+
+    .uptime-blocks {
+      display: flex;
+      gap: 2px;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+
+    .uptime-block {
+      width: 12px;
+      height: 20px;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .uptime-block:hover {
+      transform: scale(1.3);
+      z-index: 10;
+    }
+
+    .uptime-block.up {
+      background-color: #10b981;
+    }
+
+    .uptime-block.down {
+      background-color: #ef4444;
+    }
+
+    .uptime-block.unknown {
+      background-color: #64748b;
+    }
+
+    .form-scroll {
+      max-height: calc(100vh - 250px);
+      overflow-y: auto;
+      padding-right: 0.5rem;
+    }
+
+    .settings-panel {
+      position: fixed;
+      top: 0;
+      right: -100%;
+      width: 100%;
+      max-width: 500px;
+      height: 100vh;
+      background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+      border-left: 1px solid rgba(255, 255, 255, 0.1);
+      z-index: 100;
+      transition: right 0.3s ease-in-out;
+      overflow-y: auto;
+      box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+    }
+
+    @media (max-width: 1023px) {
+      .settings-panel .form-scroll {
+        max-height: calc(100vh - 120px);
+        padding-bottom: 2rem;
+      }
+    }
+
+    .settings-panel.open {
+      right: 0;
+    }
+
+    .settings-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 99;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease-in-out;
+    }
+
+    .settings-overlay.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    @media (min-width: 1024px) {
+      .settings-panel {
+        position: relative;
+        right: 0;
+        max-width: none;
+        height: auto;
+        border-left: none;
+        box-shadow: none;
+        background: transparent;
+      }
+
+      .settings-overlay {
+        display: none;
+      }
+    }
+
+    .form-scroll::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .form-scroll::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+    }
+
+    .form-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+
+    .form-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .checkbox-input {
+      width: 1.25rem;
+      height: 1.25rem;
+      cursor: pointer;
+    }
+
+    .post-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .post-modal.active {
+      display: flex;
+    }
+
+    .post-modal-content {
+      background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.75rem;
+      width: 100%;
+      max-width: 1400px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .post-modal-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .post-modal-body {
+      padding: 1.5rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .markdown-editor-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      height: 500px;
+    }
+
+    .markdown-editor {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .markdown-editor textarea {
+      flex: 1;
+      background-color: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      color: white;
+      font-family: 'Courier New', monospace;
+      font-size: 0.875rem;
+      resize: none;
+      transition: all 0.3s ease;
+    }
+
+    .markdown-editor textarea:focus {
+      outline: none;
+      border-color: #06b6d4;
+      background-color: rgba(6, 182, 212, 0.1);
+      box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+    }
+
+    .markdown-preview {
+      background-color: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      overflow-y: auto;
+      color: #cbd5e1;
+    }
+
+    .markdown-preview h1,
+    .markdown-preview h2,
+    .markdown-preview h3 {
+      color: white;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .markdown-preview h1 {
+      font-size: 1.875rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 0.5rem;
+    }
+
+    .markdown-preview h2 {
+      font-size: 1.5rem;
+    }
+
+    .markdown-preview h3 {
+      font-size: 1.25rem;
+    }
+
+    .markdown-preview p {
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+
+    .markdown-preview code {
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+      font-family: 'Courier New', monospace;
+      font-size: 0.875em;
+    }
+
+    .markdown-preview pre {
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 1rem;
+      border-radius: 0.5rem;
+      overflow-x: auto;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-preview pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .markdown-preview ul,
+    .markdown-preview ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-preview blockquote {
+      border-left: 4px solid #06b6d4;
+      padding-left: 1rem;
+      margin-left: 0;
+      margin-bottom: 1rem;
+      color: #94a3b8;
+    }
+
+    .markdown-preview a {
+      color: #06b6d4;
+      text-decoration: underline;
+    }
+
+    @media (max-width: 1024px) {
+      .markdown-editor-container {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+
+      .markdown-editor textarea {
+        min-height: 300px;
+      }
+
+      .markdown-preview {
+        min-height: 300px;
+      }
+    }
   </style>
 </head>
-<body class="bg-gray-950 text-white">
+<body class="bg-slate-950 text-white">
   <!-- Header -->
-  <header class="border-b border-gray-800 bg-black/40 sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-      <h1 class="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-        LocalPing Admin
-      </h1>
-      <button onclick="logout()" class="btn-secondary">
-        Logout
-      </button>
+  <header class="border-b border-slate-700/30 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+    <div class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+      <div class="flex justify-between items-center">
+        <div class="flex items-center gap-3">
+          <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+          </svg>
+          <h1 class="text-xl sm:text-2xl font-bold text-white" id="adminHeaderTitle">LocalPing Admin</h1>
+        </div>
+        <button onclick="logout()" class="logout-btn text-xs sm:text-sm">
+          <i class="fas fa-sign-out-alt"></i><span class="hidden sm:inline sm:ml-2">Logout</span>
+        </button>
+      </div>
     </div>
   </header>
 
   <!-- Navigation Tabs -->
-  <div class="border-b border-gray-800 bg-black/20 sticky top-16 z-40">
-    <div class="max-w-7xl mx-auto px-4 flex gap-8">
-      <button class="tab-button active" onclick="switchTab('monitors')">
-        📊 Monitors
-      </button>
-      <button class="tab-button" onclick="switchTab('incidents')">
-        🚨 Incidents
-      </button>
-      <button class="tab-button" onclick="switchTab('settings')">
-        ⚙️ Settings
-      </button>
+  <div class="border-b border-slate-700/30 bg-slate-900/30 backdrop-blur sticky top-[65px] sm:top-[73px] z-40">
+    <div class="w-full px-4 sm:px-6 lg:px-8 overflow-x-auto">
+      <div class="flex gap-4 sm:gap-8">
+        <button class="tab-button active text-sm sm:text-base" onclick="switchTab('monitors')">
+          <i class="fas fa-chart-line mr-1 sm:mr-2"></i><span class="hidden xs:inline">Monitors</span>
+        </button>
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('incidents')">
+          <i class="fas fa-exclamation-triangle mr-1 sm:mr-2"></i><span class="hidden xs:inline">Incidents</span>
+        </button>
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('posts')">
+          <i class="fas fa-blog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Posts</span>
+        </button>
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('visibility')">
+          <i class="fas fa-eye mr-1 sm:mr-2"></i><span class="hidden xs:inline">Visibility</span>
+        </button>
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('settings')">
+          <i class="fas fa-cog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Settings</span>
+        </button>
+      </div>
     </div>
   </div>
 
-  <main class="max-w-7xl mx-auto px-4 py-8">
+  <main class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
     <!-- Monitors Tab -->
     <div id="monitors" class="tab-content active">
-      <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
         <!-- Monitor List -->
-        <div class="lg:col-span-1 min-h-[400px]">
-          <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-semibold">Monitors</h2>
-            <button onclick="addNewMonitor()" class="btn-primary text-sm">
-              + Add
-            </button>
+        <div class="lg:col-span-3">
+          <div class="flex flex-col gap-2 mb-4">
+            <div class="flex justify-between items-center">
+              <h2 class="text-lg sm:text-xl font-semibold">Monitors</h2>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="testAllMonitors()" class="btn-secondary text-xs sm:text-sm px-2 py-1.5 flex-1" id="testAllBtn">
+                <i class="fas fa-play"></i><span class="hidden sm:inline ml-1">Test All</span>
+              </button>
+              <button onclick="addNewMonitor()" class="btn-primary text-xs sm:text-sm px-2 py-1.5 flex-1">
+                <i class="fas fa-plus"></i><span class="hidden sm:inline ml-1">Add</span>
+              </button>
+            </div>
           </div>
-          <div id="monitorList" class="space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
+          <div id="monitorList" class="space-y-2 max-h-[calc(100vh-200px)] sm:max-h-[calc(100vh-250px)] overflow-y-auto">
             <!-- Monitor items will be populated here -->
           </div>
         </div>
 
         <!-- Monitor Details / Edit View -->
-        <div class="lg:col-span-3">
+        <div class="lg:col-span-9">
           <div id="monitorDetails" class="hidden">
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-              <!-- Charts on the left -->
+            <div class="grid grid-cols-1 gap-4 lg:gap-6">
+              <!-- Charts section - full width -->
               <div>
                 <h3 class="text-lg font-semibold mb-4" id="monitorName">Select a monitor</h3>
-                <div class="chart-container">
-                  <canvas id="statusChart"></canvas>
+                
+
+                <!-- 24-hour block indicator -->
+                <div class="bg-slate-900/50 backdrop-blur rounded-lg p-4 border border-slate-700/30 mb-4">
+                  <div class="flex justify-between items-center mb-2">
+                    <p class="text-slate-400 text-sm font-medium" id="uptimeBlocksTitle">Uptime Overview</p>
+                    <p class="text-slate-400 text-xs" id="uptimeBlocksLabel">Loading...</p>
+                  </div>
+                  <div id="uptimeBlocks" class="uptime-blocks">
+                    <!-- Blocks will be populated here -->
+                  </div>
                 </div>
-                <div class="bg-gray-800/50 rounded-lg p-4">
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+                    <p class="text-slate-400 text-xs mb-1">Current Status</p>
+                    <p class="text-lg font-bold text-green-400 mt-1" id="currentStatusDisplay">✓ UP</p>
+                  </div>
+                  <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+                    <p class="text-slate-400 text-xs mb-1">Uptime (24h)</p>
+                    <p class="text-lg font-bold text-green-400 mt-1" id="uptime24hDisplay">--</p>
+                  </div>
+                  <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+                    <p class="text-slate-400 text-xs mb-1">Uptime (30d)</p>
+                    <p class="text-lg font-bold text-green-400 mt-1" id="uptime30dDisplay">--</p>
+                  </div>
+                  <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+                    <p class="text-slate-400 text-xs mb-1">Protocol</p>
+                    <p class="text-lg font-bold text-cyan-400 mt-1" id="protocolDisplay">--</p>
+                  </div>
+                </div>
+
+                <!-- Additional Stats Row -->
+                <div class="grid grid-cols-3 gap-3 mb-4">
+                  <div class="bg-gradient-to-br from-blue-900/30 to-blue-800/20 rounded-lg p-3 border border-blue-700/30 backdrop-blur-sm">
+                    <p class="text-slate-400 text-xs mb-1">Total Pings</p>
+                    <p class="text-lg font-bold text-blue-400 mt-1" id="totalPingsDisplay">--</p>
+                  </div>
+                  <div class="bg-gradient-to-br from-green-900/30 to-green-800/20 rounded-lg p-3 border border-green-700/30 backdrop-blur-sm">
+                    <p class="text-slate-400 text-xs mb-1">Successful</p>
+                    <p class="text-lg font-bold text-green-400 mt-1" id="successfulPingsDisplay">--</p>
+                  </div>
+                  <div class="bg-gradient-to-br from-red-900/30 to-red-800/20 rounded-lg p-3 border border-red-700/30 backdrop-blur-sm">
+                    <p class="text-slate-400 text-xs mb-1">Failed</p>
+                    <p class="text-lg font-bold text-red-400 mt-1" id="failedPingsDisplay">--</p>
+                  </div>
+                </div>
+
+                <!-- Time Period Selector -->
+                <div class="flex gap-2 flex-wrap mb-4">
+                  <button onclick="switchChartPeriod('1h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="1h">1H</button>
+                  <button onclick="switchChartPeriod('24h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg shadow-cyan-500/30 transition-all duration-200 border border-cyan-500/50" data-period="24h">24H</button>
+                  <button onclick="switchChartPeriod('7d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="7d">7D</button>
+                  <button onclick="switchChartPeriod('30d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="30d">30D</button>
+                  <button onclick="switchChartPeriod('all')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="all">ALL</button>
+                </div>
+
+                <!-- Chart Container -->
+                <div class="bg-gradient-to-br from-slate-900/60 to-slate-800/40 backdrop-blur rounded-xl p-6 border border-slate-700/50 shadow-2xl mb-4">
+                  <div class="mb-4 flex items-center justify-between">
+                    <h3 class="text-sm font-semibold text-slate-300">Response Time & Status</h3>
+                    <div class="flex gap-3 text-xs">
+                      <div class="flex items-center gap-1.5">
+                        <div class="w-2 h-2 rounded-full bg-green-400"></div>
+                        <span class="text-slate-400">Response Time</span>
+                      </div>
+                      <div class="flex items-center gap-1.5">
+                        <div class="w-2 h-2 rounded-full bg-red-400"></div>
+                        <span class="text-slate-400">Downtime</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="position: relative; height: 350px;">
+                    <canvas id="statusChart"></canvas>
+                  </div>
+                </div>
+                <div class="bg-slate-900/50 backdrop-blur rounded-lg p-4 border border-slate-700/30 mt-4">
                   <div class="grid grid-cols-2 gap-4">
                     <div>
-                      <p class="text-gray-400 text-sm">Status</p>
+                      <p class="text-slate-400 text-sm">Status</p>
                       <p class="text-xl font-bold"><span id="monitorStatus" class="text-green-400">Up</span></p>
                     </div>
                     <div>
-                      <p class="text-gray-400 text-sm">Uptime</p>
-                      <p class="text-xl font-bold"><span id="monitorUptime">99.9%</span></p>
+                      <p class="text-slate-400 text-sm">Uptime (24h)</p>
+                      <p class="text-xl font-bold"><span id="monitorUptime">--</span></p>
+                    </div>
+                    <div>
+                      <p class="text-slate-400 text-sm">Current Ping</p>
+                      <p class="text-xl font-bold"><span id="monitorPing">--</span></p>
+                    </div>
+                    <div>
+                      <p class="text-slate-400 text-sm">Avg Ping</p>
+                      <p class="text-xl font-bold"><span id="monitorAvgPing">--</span></p>
                     </div>
                   </div>
                 </div>
+                
+                <!-- Edit Button at Bottom -->
+                <div class="mt-6">
+                  <button onclick="handleEditClick()" class="btn-primary w-full">
+                    <i class="fas fa-edit mr-2"></i>Edit Monitor Settings
+                  </button>
+                </div>
               </div>
 
-              <!-- Edit form on the right -->
-              <div>
-                <h3 class="text-lg font-semibold mb-4">Edit Monitor</h3>
-                <form id="editForm" class="space-y-4">
-                  <div>
-                    <label class="block text-sm font-medium mb-1">Monitor Name</label>
-                    <input type="text" id="editName" class="form-input w-full" placeholder="e.g., Web Server">
-                  </div>
-
-                  <div>
-                    <label class="block text-sm font-medium mb-1">Host</label>
-                    <input type="text" id="editHost" class="form-input w-full" placeholder="192.168.1.1 or example.com">
-                  </div>
-
-                  <div>
-                    <label class="block text-sm font-medium mb-1">Protocol</label>
-                    <select id="editProtocol" class="form-input w-full">
-                      <option value="ICMP">ICMP (Ping)</option>
-                      <option value="TCP">TCP</option>
-                      <option value="UDP">UDP</option>
-                      <option value="HTTP">HTTP</option>
-                      <option value="HTTPS">HTTPS</option>
-                    </select>
-                  </div>
-
-                  <div class="grid grid-cols-2 gap-4">
-                    <div>
-                      <label class="block text-sm font-medium mb-1">Port</label>
-                      <input type="number" id="editPort" class="form-input w-full" placeholder="Optional">
+              <!-- Edit form on the right - Desktop: hidden by default, Mobile: slide-out panel -->
+              <div class="lg:col-span-1 hidden">
+                <div class="lg:hidden mb-4">
+                  <button onclick="toggleEditPanel()" class="btn-primary w-full">
+                    <i class="fas fa-edit mr-2"></i>Edit Settings
+                  </button>
+                </div>
+                <div id="editFormContainer" class="hidden">
+                  <div class="form-scroll">
+                    <h3 class="text-lg font-semibold mb-4">Monitor Settings</h3>
+                    <form id="editForm">
+                  <!-- General Settings -->
+                  <div class="form-section">
+                    <div class="form-section-title">
+                      <i class="fas fa-cog"></i>General
                     </div>
-                    <div>
-                      <label class="block text-sm font-medium mb-1">Interval (sec)</label>
-                      <input type="number" id="editInterval" class="form-input w-full" min="5" max="3600">
+                    <div class="space-y-4">
+                      <div>
+                        <label class="form-label">Monitor Name *</label>
+                        <input type="text" id="editName" class="form-input" placeholder="e.g., Web Server" required>
+                      </div>
+                      <div>
+                        <label class="form-label">Host *</label>
+                        <input type="text" id="editHost" class="form-input" placeholder="192.168.1.1 or example.com" required>
+                      </div>
+                      <div class="grid grid-cols-2 gap-4">
+                        <div>
+                          <label class="form-label">Protocol *</label>
+                          <select id="editProtocol" class="form-input" onchange="updateProtocolSettings()">
+                            <option value="ICMP">ICMP (Ping)</option>
+                            <option value="TCP">TCP</option>
+                            <option value="UDP">UDP</option>
+                            <option value="HTTP">HTTP</option>
+                            <option value="HTTPS">HTTPS</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label">Port</label>
+                          <input type="number" id="editPort" class="form-input" placeholder="Optional">
+                        </div>
+                      </div>
+                      <div class="grid grid-cols-2 gap-4">
+                        <div>
+                          <label class="form-label">Interval (seconds) *</label>
+                          <input type="number" id="editInterval" class="form-input" min="5" max="3600" value="60" required>
+                          <p class="form-help">Time between checks</p>
+                        </div>
+                        <div>
+                          <label class="form-label">Group</label>
+                          <input type="text" id="editGroup" class="form-input" placeholder="e.g., Network">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" id="editEnabled" class="checkbox-input" checked>
+                          <span class="form-label mb-0">Enabled</span>
+                        </label>
+                      </div>
+                      <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" id="editPublicVisible" class="checkbox-input" checked>
+                          <span class="form-label mb-0">Publicly Visible</span>
+                        </label>
+                        <p class="form-help">Show this monitor on the public status page</p>
+                      </div>
                     </div>
                   </div>
 
-                  <div>
-                    <label class="block text-sm font-medium mb-1">Group</label>
-                    <input type="text" id="editGroup" class="form-input w-full" placeholder="e.g., Network">
+                  <!-- Application Settings -->
+                  <div class="form-section">
+                    <div class="form-section-title">
+                      <i class="fas fa-window-maximize"></i>Application
+                    </div>
+                    <div class="space-y-4">
+                      <div>
+                        <label class="form-label">Application URL</label>
+                        <input type="url" id="editAppUrl" class="form-input" placeholder="https://example.com">
+                        <p class="form-help">URL to open when clicking the monitor in public UI</p>
+                      </div>
+                      <div>
+                        <label class="form-label">Application Icon</label>
+                        <input type="url" id="editAppIcon" class="form-input" placeholder="https://example.com/icon.png">
+                        <p class="form-help">Icon URL for public UI display</p>
+                      </div>
+                    </div>
                   </div>
 
-                  <div class="flex gap-2 pt-4">
-                    <button type="button" onclick="saveMonitor()" class="btn-primary flex-1">
-                      Save Changes
+                  <!-- Retry Settings -->
+                  <div class="form-section">
+                    <div class="form-section-title">
+                      <i class="fas fa-redo"></i>Retry Settings
+                    </div>
+                    <div class="space-y-4">
+                      <div class="grid grid-cols-2 gap-4">
+                        <div>
+                          <label class="form-label">Retries</label>
+                          <input type="number" id="editRetries" class="form-input" min="0" value="0">
+                          <p class="form-help">Number of retry attempts</p>
+                        </div>
+                        <div>
+                          <label class="form-label">Retry Interval (seconds)</label>
+                          <input type="number" id="editRetryInterval" class="form-input" min="1" value="5">
+                          <p class="form-help">Time between retries</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- HTTP Options (shown only for HTTP/HTTPS) -->
+                  <div class="form-section hidden" id="httpOptionsSection">
+                    <div class="form-section-title">
+                      <i class="fas fa-globe"></i>HTTP Options
+                    </div>
+                    <div class="space-y-4">
+                      <div>
+                        <label class="form-label">HTTP Method</label>
+                        <select id="editHttpMethod" class="form-input">
+                          <option value="GET">GET</option>
+                          <option value="POST">POST</option>
+                          <option value="PUT">PUT</option>
+                          <option value="DELETE">DELETE</option>
+                          <option value="HEAD">HEAD</option>
+                        </select>
+                      </div>
+                      <div class="grid grid-cols-2 gap-4">
+                        <div>
+                          <label class="form-label">Timeout (seconds)</label>
+                          <input type="number" id="editTimeout" class="form-input" min="1" value="30">
+                        </div>
+                        <div>
+                          <label class="form-label">Status Codes</label>
+                          <input type="text" id="editStatusCodes" class="form-input" value="200-299" placeholder="200-299">
+                          <p class="form-help">Acceptable status code range</p>
+                        </div>
+                      </div>
+                      <div>
+                        <label class="form-label">Max Redirects</label>
+                        <input type="number" id="editMaxRedirects" class="form-input" min="0" value="5">
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Authentication (shown only for HTTP/HTTPS) -->
+                  <div class="form-section hidden" id="authSection">
+                    <div class="form-section-title">
+                      <i class="fas fa-lock"></i>Authentication
+                    </div>
+                    <div class="space-y-4">
+                      <div>
+                        <label class="form-label">Auth Method</label>
+                        <select id="editAuthMethod" class="form-input" onchange="updateAuthFields()">
+                          <option value="none">None</option>
+                          <option value="basic">Basic Auth</option>
+                          <option value="bearer">Bearer Token</option>
+                        </select>
+                      </div>
+                      <div id="basicAuthFields" class="hidden space-y-4">
+                        <div>
+                          <label class="form-label">Username</label>
+                          <input type="text" id="editAuthUsername" class="form-input">
+                        </div>
+                        <div>
+                          <label class="form-label">Password</label>
+                          <input type="password" id="editAuthPassword" class="form-input">
+                        </div>
+                      </div>
+                      <div id="bearerAuthFields" class="hidden space-y-4">
+                        <div>
+                          <label class="form-label">Bearer Token</label>
+                          <input type="text" id="editAuthToken" class="form-input">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Advanced Settings -->
+                  <div class="form-section">
+                    <div class="form-section-title">
+                      <i class="fas fa-sliders-h"></i>Advanced
+                    </div>
+                    <div class="space-y-4">
+                      <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" id="editIgnoreSsl" class="checkbox-input">
+                          <span class="form-label mb-0">Ignore SSL Certificate Errors</span>
+                        </label>
+                      </div>
+                      <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" id="editUpsideDown" class="checkbox-input">
+                          <span class="form-label mb-0">Upside Down (invert status)</span>
+                        </label>
+                      </div>
+                      <div>
+                        <label class="form-label">Position</label>
+                        <input type="number" id="editPosition" class="form-input" min="0" value="0">
+                        <p class="form-help">Display order in public UI</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Public UI Settings -->
+                  <div class="form-section">
+                    <div class="form-section-title">
+                      <i class="fas fa-desktop"></i>Public UI Settings
+                    </div>
+                    <div class="space-y-4">
+                      <div>
+                        <label class="form-label">Quick Commands</label>
+                        <input type="text" id="editQuickCommands" class="form-input" placeholder="command1, command2">
+                        <p class="form-help">Comma-separated list of quick commands</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Action Buttons -->
+                  <div class="grid grid-cols-2 lg:grid-cols-2 gap-2 pt-4">
+                    <button type="button" onclick="saveMonitor()" class="btn-primary">
+                      <i class="fas fa-save mr-2"></i>Save Changes
                     </button>
-                    <button type="button" onclick="deleteMonitor()" class="btn-danger flex-1">
-                      Delete
+                    <button type="button" onclick="testMonitor()" class="btn-secondary">
+                      <i class="fas fa-play mr-2"></i>Test
+                    </button>
+                    <button type="button" onclick="deleteMonitor()" class="btn-danger">
+                      <i class="fas fa-trash mr-2"></i>Delete
                     </button>
                     <button type="button" onclick="cancelEdit()" class="btn-secondary">
                       Cancel
                     </button>
                   </div>
-                </form>
+                    </form>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- Empty state -->
-          <div id="emptyState" class="text-center py-12">
-            <p class="text-gray-400 text-lg">Select a monitor to view details and edit settings</p>
+          <div id="emptyState" class="text-center py-12 bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30">
+            <i class="fas fa-mouse-pointer text-4xl text-slate-400 mb-4"></i>
+            <p class="text-slate-400 text-lg">Select a monitor to view details and edit settings</p>
           </div>
         </div>
       </div>
@@ -353,9 +1001,46 @@
     <!-- Incidents Tab -->
     <div id="incidents" class="tab-content">
       <div>
-        <h2 class="text-2xl font-bold mb-6">Incidents</h2>
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Incidents</h2>
+          <button onclick="showCreateIncidentModal()" class="btn-primary">
+            <i class="fas fa-plus mr-2"></i>Create Incident
+          </button>
+        </div>
         <div id="incidentsList" class="space-y-4">
           <!-- Incidents will be populated here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Posts Tab -->
+    <div id="posts" class="tab-content">
+      <div>
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Blog Posts</h2>
+          <button onclick="showCreatePostModal()" class="btn-primary">
+            <i class="fas fa-plus mr-2"></i>Create Post
+          </button>
+        </div>
+        <div id="postsList" class="space-y-4">
+          <!-- Posts will be populated here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Visibility Tab -->
+    <div id="visibility" class="tab-content">
+      <div>
+        <h2 class="text-2xl font-bold mb-6">Public Visibility</h2>
+        <p class="text-slate-400 mb-6">Configure which monitors and application links should be visible on the public status page. Private monitors will only be visible in the admin dashboard.</p>
+        
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700/30">
+          <h3 class="text-xl font-semibold mb-4">
+            <i class="fas fa-list mr-2"></i>Monitor Visibility
+          </h3>
+          <div id="visibilityList" class="space-y-3">
+            <!-- Visibility items will be populated here -->
+          </div>
         </div>
       </div>
     </div>
@@ -364,45 +1049,233 @@
     <div id="settings" class="tab-content">
       <div>
         <h2 class="text-2xl font-bold mb-6">Settings</h2>
-        <div class="bg-gray-800/50 rounded-lg p-6 max-w-2xl">
-          <div class="space-y-4">
+        
+        <!-- Public UI Customization -->
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700/30">
+          <h3 class="text-xl font-semibold mb-4">
+            <i class="fas fa-paint-brush mr-2"></i>Public UI Customization
+          </h3>
+          <form id="publicUISettingsForm" class="space-y-4">
             <div>
-              <label class="block text-sm font-medium mb-2">Admin Password</label>
-              <button onclick="changePassword()" class="btn-primary">
-                Change Password
+              <label class="form-label">Page Title</label>
+              <input type="text" id="publicUITitle" class="form-input" placeholder="Homelab">
+              <p class="form-help">Main heading displayed on the public status page</p>
+            </div>
+            <div>
+              <label class="form-label">Subtitle</label>
+              <input type="text" id="publicUISubtitle" class="form-input" placeholder="System Status & Application Dashboard">
+              <p class="form-help">Subtitle text displayed below the title</p>
+            </div>
+            <div>
+              <label class="form-label">Custom CSS</label>
+              <textarea id="publicUICustomCSS" class="form-input" rows="10" placeholder="/* Add your custom CSS here */&#10;/* This CSS will only apply to the public UI */"></textarea>
+              <p class="form-help">Custom CSS rules that will be applied only to the public status page</p>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2">
+              <button type="button" onclick="savePublicUISettings()" class="btn-primary flex-1">
+                <i class="fas fa-save mr-2"></i>Save Settings
+              </button>
+              <button type="button" onclick="previewPublicUI()" class="btn-secondary flex-1">
+                <i class="fas fa-eye mr-2"></i>Preview
               </button>
             </div>
+          </form>
+        </div>
 
-            <div class="border-t border-gray-700 pt-4">
-              <label class="block text-sm font-medium mb-2">Monitoring Settings</label>
-              <p class="text-gray-400 text-sm mb-4">Configure default monitoring behavior</p>
-              <div class="space-y-3">
-                <div>
-                  <label class="block text-sm font-medium mb-1">Default Check Interval</label>
-                  <input type="number" id="defaultInterval" class="form-input w-full" placeholder="60">
-                  <p class="text-gray-500 text-xs mt-1">Seconds between checks</p>
-                </div>
-                <div>
-                  <label class="block text-sm font-medium mb-1">Alert Cooldown</label>
-                  <input type="number" id="alertCooldown" class="form-input w-full" placeholder="300">
-                  <p class="text-gray-500 text-xs mt-1">Seconds to wait before alerting again</p>
-                </div>
+        <!-- Admin Settings -->
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700/30">
+          <h3 class="text-xl font-semibold mb-4">
+            <i class="fas fa-cog mr-2"></i>Admin Settings
+          </h3>
+          <div class="space-y-4">
+            <div>
+              <label class="form-label">Admin Password</label>
+              <button onclick="changePassword()" class="btn-primary">
+                <i class="fas fa-key mr-2"></i>Change Password
+              </button>
+            </div>
+            <div class="border-t border-slate-700/30 pt-4">
+              <label class="form-label">Session Duration</label>
+              <div class="flex items-center gap-3">
+                <input type="number" id="sessionDurationDays" class="form-input w-24" min="1" max="365" step="1">
+                <span class="text-sm text-slate-400">days</span>
+                <button onclick="saveAdminSettings()" class="btn-primary">
+                  <i class="fas fa-save mr-2"></i>Save
+                </button>
               </div>
+              <p class="form-help mt-2">How long admin sessions remain active before requiring login again. Default: 30 days.</p>
             </div>
+            <div class="border-t border-slate-700/30 pt-4">
+              <label class="form-label">Data Retention Period</label>
+              <div class="flex items-center gap-3">
+                <input type="number" id="dataRetentionDays" class="form-input w-24" min="1" max="3650" step="1">
+                <span class="text-sm text-slate-400">days</span>
+                <button onclick="saveAdminSettings()" class="btn-primary">
+                  <i class="fas fa-save mr-2"></i>Save
+                </button>
+              </div>
+              <p class="form-help mt-2">How long to keep full historic data. Data older than this will be minimized (keeping only important data points). Default: 30 days.</p>
+            </div>
+            <div class="border-t border-slate-700/30 pt-4">
+              <label class="form-label">Data Management</label>
+              <p class="form-help mb-3">Clear all historic ping data. This will not affect incidents or blog posts.</p>
+              <button onclick="showClearPingDataWarning()" class="btn-danger">
+                <i class="fas fa-trash-alt mr-2"></i>Clear All Ping Data
+              </button>
+            </div>
+          </div>
+        </div>
 
-            <div class="border-t border-gray-700 pt-4">
-              <h3 class="font-semibold mb-3">About</h3>
-              <p class="text-gray-400 text-sm">LocalPing - Homelab Dashboard & System Monitor</p>
-              <p class="text-gray-500 text-xs mt-1">Version 1.0.0</p>
-            </div>
+        <!-- About -->
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 max-w-2xl border border-slate-700/30">
+          <div class="border-t border-slate-700 pt-4">
+            <h3 class="font-semibold mb-3">About</h3>
+            <p class="text-slate-400 text-sm">LocalPing - Homelab Dashboard & System Monitor</p>
+            <p class="text-slate-500 text-xs mt-1">Version 1.0.0</p>
+            <p class="text-slate-400 text-sm mt-2">
+              <a href="https://github.com/zebratic/localping" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline">
+                <i class="fab fa-github mr-1"></i>GitHub Project
+              </a>
+            </p>
           </div>
         </div>
       </div>
     </div>
   </main>
 
+  <!-- Settings Overlay (Mobile) -->
+  <div id="settingsOverlay" class="settings-overlay" onclick="toggleEditPanel()"></div>
+
+  <!-- Settings Panel (Mobile Slide-out) -->
+  <div id="settingsPanel" class="settings-panel lg:!relative lg:!right-0">
+    <div class="p-4 lg:p-0 flex flex-col h-full">
+      <div class="flex justify-between items-center mb-4 lg:hidden flex-shrink-0 pb-4 border-b border-slate-700/30">
+        <h3 class="text-lg font-semibold">Monitor Settings</h3>
+        <button onclick="toggleEditPanel()" class="text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-slate-700/50">
+          <i class="fas fa-times text-xl"></i>
+        </button>
+      </div>
+      <div class="form-scroll flex-1 overflow-y-auto" id="editFormMobileContainer">
+        <!-- Form will be cloned here for mobile -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Monitor Modal -->
+  <div id="editMonitorModal" class="post-modal">
+    <div class="post-modal-content">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold" id="editMonitorModalTitle">Edit Monitor</h3>
+        <button onclick="closeEditMonitorModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <div id="editFormModal">
+          <!-- Form content will be cloned from editForm -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Post Editor Modal -->
+  <div id="postModal" class="post-modal">
+    <div class="post-modal-content">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold" id="postModalTitle">Create New Post</h3>
+        <button onclick="closePostModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <form id="postForm">
+          <div class="space-y-4 mb-4">
+            <div>
+              <label class="form-label">Title *</label>
+              <input type="text" id="postTitle" class="form-input" placeholder="Enter post title" required>
+            </div>
+            <div>
+              <label class="form-label">Content (Markdown) *</label>
+              <div class="markdown-editor-container">
+                <div class="markdown-editor">
+                  <label class="text-xs text-slate-400 mb-2">Raw Markdown</label>
+                  <textarea id="postContent" placeholder="Write your post content in Markdown here..." required></textarea>
+                </div>
+                <div class="markdown-preview-container">
+                  <label class="text-xs text-slate-400 mb-2">Preview</label>
+                  <div id="markdownPreview" class="markdown-preview">
+                    <p class="text-slate-500 text-sm">Preview will appear here...</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="postPublished" class="checkbox-input" checked>
+                <span class="form-label mb-0">Publish immediately</span>
+              </label>
+            </div>
+          </div>
+          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+            <button type="submit" class="btn-primary flex-1">
+              <i class="fas fa-save mr-2"></i>Save Post
+            </button>
+            <button type="button" onclick="closePostModal()" class="btn-secondary flex-1">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <!-- Notifications -->
   <div id="notificationContainer"></div>
+
+  <!-- Clear Ping Data Warning Modal -->
+  <div id="clearPingDataModal" class="post-modal">
+    <div class="post-modal-content" style="max-width: 500px;">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold text-red-400">
+          <i class="fas fa-exclamation-triangle mr-2"></i>Clear All Ping Data
+        </h3>
+        <button onclick="closeClearPingDataModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <div class="space-y-4">
+          <div class="bg-red-900/20 border border-red-500/30 rounded-lg p-4">
+            <p class="text-red-200 font-semibold mb-2">
+              <i class="fas fa-exclamation-circle mr-2"></i>Warning
+            </p>
+            <p class="text-red-100 text-sm">
+              This action will permanently delete all historic ping data. This includes:
+            </p>
+            <ul class="text-red-100 text-sm mt-2 ml-4 list-disc">
+              <li>All ping results and response times</li>
+              <li>All statistics and uptime history</li>
+              <li>All daily statistics</li>
+            </ul>
+            <p class="text-red-100 text-sm mt-3 font-semibold">
+              Incidents and blog posts will NOT be affected.
+            </p>
+          </div>
+          <p class="text-slate-300 text-sm">
+            Are you sure you want to proceed? This action cannot be undone.
+          </p>
+          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+            <button onclick="confirmClearPingData()" class="btn-danger flex-1">
+              <i class="fas fa-trash-alt mr-2"></i>Yes, Clear All Data
+            </button>
+            <button onclick="closeClearPingDataModal()" class="btn-secondary flex-1">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="/js/admin-new.js"></script>
 </body>

@@ -1,14 +1,78 @@
 let allTargets = [];
 let expandedServiceId = null;
 let charts = {};
+let chartPeriods = {}; // Track current period for each chart
 let targetUptimeCache = {};
 let faviconCache = {}; // Cache for favicons in localStorage
+let previousIncidents = new Map(); // Track previous incidents for change detection
 
 // Load on page load
 loadData();
 
 // Auto-refresh every 10 seconds
 setInterval(loadData, 10000);
+
+async function loadBlogPosts() {
+  try {
+    const response = await axios.get('/api/posts');
+    const { posts } = response.data;
+
+    const blogContainer = document.getElementById('blog-posts');
+    if (!blogContainer) return;
+
+    if (posts.length === 0) {
+      blogContainer.innerHTML = '<div class="text-center text-slate-400 py-12">No posts yet. Check back soon!</div>';
+      return;
+    }
+
+    // Configure marked.js if available
+    if (typeof marked !== 'undefined') {
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+      });
+    }
+
+    blogContainer.innerHTML = posts.map(post => {
+      const date = new Date(post.createdAt);
+      const formattedDate = date.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+
+      // Render markdown if available, otherwise fallback to simple conversion
+      let contentHtml;
+      if (typeof marked !== 'undefined') {
+        contentHtml = marked.parse(post.content);
+      } else {
+        // Fallback: simple line break conversion
+        contentHtml = post.content
+          .replace(/\n\n/g, '</p><p class="text-slate-300 mb-3">')
+          .replace(/\n/g, '<br>');
+        contentHtml = `<p class="text-slate-300 mb-3">${contentHtml}</p>`;
+      }
+
+      return `
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 p-6 hover:border-cyan-500/50 transition-colors">
+          <div class="flex justify-between items-start mb-3">
+            <h3 class="text-xl font-bold text-white">${post.title}</h3>
+            <span class="text-slate-500 text-sm whitespace-nowrap ml-4">${formattedDate}</span>
+          </div>
+          <div class="prose prose-invert max-w-none text-slate-300">
+            ${contentHtml}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (error) {
+    console.error('Error loading blog posts:', error);
+    const blogContainer = document.getElementById('blog-posts');
+    if (blogContainer) {
+      blogContainer.innerHTML = '<div class="text-center text-red-400 py-12">Error loading posts</div>';
+    }
+  }
+}
 
 async function loadData() {
   try {
@@ -23,7 +87,7 @@ async function loadData() {
     // Check for status changes and send notifications
     if (window.notificationManager && window.notificationManager.isEnabled()) {
       targets.forEach((target) => {
-        const status = target.status === 'up' ? 'up' : 'down';
+        const status = target.isUp ? 'up' : 'down';
         window.notificationManager.updateTargetStatus(target._id, target.name, status);
       });
     }
@@ -32,6 +96,24 @@ async function loadData() {
 
     // Update header status
     updateHeaderStatus(status);
+
+    // Check for new/updated incidents and send notifications
+    if (window.notificationManager && window.notificationManager.isEnabled()) {
+      incidents.forEach((incident) => {
+        const prevIncident = previousIncidents.get(incident._id);
+        
+        if (!prevIncident) {
+          // New incident
+          window.notificationManager.notifyIncident(incident);
+        } else if (prevIncident.status !== incident.status) {
+          // Status changed
+          window.notificationManager.notifyIncidentUpdate(incident);
+        }
+        
+        // Update stored incident
+        previousIncidents.set(incident._id, { ...incident });
+      });
+    }
 
     // Display incidents
     displayIncidents(incidents);
@@ -191,20 +273,24 @@ function switchPage(page) {
   // Show selected page
   document.getElementById(`page-${page}`).classList.add('active');
   document.getElementById(`tab-${page}`).classList.add('active');
+
+  // Load blog posts if switching to blog page
+  if (page === 'blog') {
+    loadBlogPosts();
+  }
 }
 
 // ==================== APPS PAGE ====================
 
 function displayApps(targets) {
   const pageHome = document.getElementById('page-home');
-  const countEl = document.getElementById('app-count');
 
   // Check if there are ANY targets at all
   if (targets.length === 0) {
     pageHome.innerHTML = `
       <div class="mb-6">
         <h2 class="text-2xl font-bold text-white mb-2">Welcome to LocalPing</h2>
-        <p class="text-slate-400 text-sm">Get started by adding monitors</p>
+        <p id="app-count" class="text-slate-400 text-sm">Get started by adding monitors</p>
       </div>
       <div class="flex items-center justify-center min-h-[500px]">
         <div class="max-w-md w-full bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 p-8 text-center">
@@ -253,8 +339,6 @@ function displayApps(targets) {
     return;
   }
 
-  countEl.textContent = `(${appCount} app${appCount !== 1 ? 's' : ''})`;
-
   // Sort apps by position, then by name
   const sortedApps = [...apps].sort((a, b) => {
     const posA = a.position || 0;
@@ -282,7 +366,7 @@ function displayApps(targets) {
   let html = `
     <div class="mb-6">
       <h2 class="text-2xl font-bold text-white mb-2">Your Applications</h2>
-      <p class="text-slate-400 text-sm">(${appCount} app${appCount !== 1 ? 's' : ''})</p>
+      <p id="app-count" class="text-slate-400 text-sm">(${appCount} app${appCount !== 1 ? 's' : ''})</p>
     </div>
 
     <!-- Search Bar -->
@@ -326,15 +410,38 @@ function buildAppCard(app) {
   const statusClass = isDown ? 'down' : 'up';
   const statusText = isDown ? 'Down' : 'Up';
 
-  // Determine icon - prefer cached favicon, then API favicon
+  // Determine icon - prioritize appIcon (manually configured), then cached favicon, then API favicon, then fallback icon
   let iconHTML = '';
-  const cachedFavicon = faviconCache[app.appUrl];
-
-  if (cachedFavicon) {
-    iconHTML = `<img src="${cachedFavicon}" alt="${app.name}" class="app-favicon" onerror="this.remove()" />`;
-  } else if (app.favicon) {
-    faviconCache[app.appUrl] = app.favicon;
-    iconHTML = `<img src="${app.favicon}" alt="${app.name}" class="app-favicon" onerror="this.remove()" />`;
+  
+  if (app.appIcon) {
+    // Use manually configured app icon - proxy it
+    const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(app.appIcon)}`;
+    iconHTML = `<img src="${proxyUrl}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+  } else {
+    const cachedFavicon = faviconCache[app.appUrl];
+    
+    if (cachedFavicon) {
+      // If favicon is a data URL (base64), use it directly, otherwise proxy it
+      if (cachedFavicon.startsWith('data:')) {
+        iconHTML = `<img src="${cachedFavicon}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+      } else {
+        const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(cachedFavicon)}`;
+        iconHTML = `<img src="${proxyUrl}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+      }
+    } else if (app.favicon) {
+      faviconCache[app.appUrl] = app.favicon;
+      // If favicon is a data URL (base64), use it directly, otherwise proxy it
+      if (app.favicon.startsWith('data:')) {
+        iconHTML = `<img src="${app.favicon}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+      } else {
+        const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(app.favicon)}`;
+        iconHTML = `<img src="${proxyUrl}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+      }
+    } else {
+      // Fallback to Font Awesome icon
+      const fallbackIcon = getIconForApp(app.name);
+      iconHTML = `<i class="fas ${fallbackIcon}"></i>`;
+    }
   }
 
   return `
@@ -346,6 +453,13 @@ function buildAppCard(app) {
       <div class="app-status ${statusClass}">${statusText}</div>
     </div>
   `;
+}
+
+// Handle icon loading errors
+function handleIconError(img, appName) {
+  // Replace failed image with fallback icon
+  const fallbackIcon = getIconForApp(appName);
+  img.outerHTML = `<i class="fas ${fallbackIcon}"></i>`;
 }
 
 function setupAppCardListeners() {
@@ -644,80 +758,189 @@ async function getTargetUptime(targetId) {
   }
 }
 
+async function getTargetCurrentPing(targetId) {
+  try {
+    const res = await axios.get(`/api/targets/${targetId}/statistics?days=1`);
+    const stats = res.data.statistics || [];
+    if (stats.length > 0) {
+      const latestStat = stats[stats.length - 1];
+      return latestStat.lastResponseTime || 0;
+    }
+    return 0;
+  } catch (error) {
+    console.error('Error fetching current ping:', error);
+    return 0;
+  }
+}
+
+async function loadAndDisplayPing(targetId) {
+  const ping = await getTargetCurrentPing(targetId);
+  const el = document.querySelector(`.ping-${targetId}`);
+  if (el) {
+    if (ping > 0) {
+      el.textContent = ping.toFixed(0) + 'ms';
+    } else {
+      el.textContent = '-';
+    }
+  }
+}
+
 function updateServicesList(targets) {
   const list = document.getElementById('services-list');
   const countEl = document.getElementById('service-count');
 
+  if (!list) return;
+
   // Show all targets in status page
   if (targets.length === 0) {
-    list.innerHTML = '<div class="text-center text-slate-400 py-8">No services found</div>';
+    // Only clear if we're not on the status page or if there are no existing services
+    const existingServices = list.querySelectorAll('.service-item');
+    if (existingServices.length === 0) {
+      list.innerHTML = '<div class="text-center text-slate-400 py-8">No services found</div>';
+    }
     countEl.textContent = '(0)';
     return;
   }
 
   countEl.textContent = `(${targets.length})`;
 
-  // Check if services list is still showing loading message
+  // Check if services list is still showing loading message (only clear if it's the ONLY content)
   const loadingMsg = list.querySelector('.text-center.text-slate-400');
-  if (loadingMsg) {
-    list.innerHTML = ''; // Clear loading message
+  if (loadingMsg && list.children.length === 1) {
+    // Only clear if this is the only child (the loading message)
+    list.innerHTML = '';
   }
+
+  // Get list of existing service IDs to track what needs to be removed
+  const existingServiceIds = new Set();
+  list.querySelectorAll('.service-item').forEach(el => {
+    const id = el.id.replace('service-', '');
+    if (id) existingServiceIds.add(id);
+  });
 
   // Update each service row dynamically without re-rendering
   targets.forEach(target => {
+    existingServiceIds.delete(target._id); // Mark as still existing
     const serviceEl = document.getElementById(`service-${target._id}`);
 
     if (!serviceEl) {
-      // If service doesn't exist, add it
-      list.innerHTML += createServiceElement(target);
+      // If service doesn't exist, add it using appendChild to preserve DOM state
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = createServiceElement(target);
+      const newServiceEl = tempDiv.firstElementChild;
+      list.appendChild(newServiceEl);
+      
       loadAndDisplayUptime(target._id);
       loadAndDisplayUptimeBars(target._id);
+      loadAndDisplayPing(target._id);
+      
+      // If this service should be expanded, restore its expanded state
+      if (expandedServiceId === target._id) {
+        const wrapper = document.getElementById(`details-wrapper-${target._id}`);
+        const row = newServiceEl.querySelector('.service-row');
+        const icon = row ? row.querySelector('.expand-icon') : null;
+        
+        if (wrapper) wrapper.classList.add('open');
+        if (row) row.classList.add('expanded');
+        if (icon) icon.textContent = '▼';
+        
+        // Load details if not already loaded
+        const contentEl = document.getElementById(`service-content-${target._id}`);
+        if (contentEl && contentEl.innerHTML.includes('Loading details...')) {
+          loadServiceDetails(target._id);
+        }
+      }
     } else {
-      // Update existing service
+      // Update existing service - preserve expanded state at all costs
       const isUp = target.isUp;
       const statusBadgeClass = isUp ? 'up' : 'down';
-      const statusText = isUp ? '● Up' : '● Down';
+      const statusText = isUp ? 'Up' : 'Down';
 
       const row = serviceEl.querySelector('.service-row');
+      if (!row) return; // Safety check
+      
       const badgeEl = row.querySelector('.status-badge');
+      const wrapper = document.getElementById(`details-wrapper-${target._id}`);
+      const icon = row.querySelector('.expand-icon');
 
-      // Update status badge
-      badgeEl.className = `status-badge ${statusBadgeClass}`;
-      badgeEl.textContent = statusText;
+      // Update status badge only
+      if (badgeEl) {
+        badgeEl.className = `status-badge ${statusBadgeClass}`;
+        badgeEl.innerHTML = `<span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block mr-1"></span>${statusText}`;
+      }
+
+      // CRITICAL: Always preserve expanded state - never close if it's expanded
+      const isExpanded = expandedServiceId === target._id;
+      if (isExpanded) {
+        // Force open state - don't check, just ensure it's open
+        if (wrapper) wrapper.classList.add('open');
+        if (row) row.classList.add('expanded');
+        if (icon) icon.textContent = '▼';
+      } else {
+        // Only close if it's not supposed to be expanded
+        if (wrapper && wrapper.classList.contains('open')) {
+          wrapper.classList.remove('open');
+        }
+        if (row && row.classList.contains('expanded')) {
+          row.classList.remove('expanded');
+        }
+        if (icon && icon.textContent !== '▶') {
+          icon.textContent = '▶';
+        }
+      }
 
       // Reload uptime data
       loadAndDisplayUptime(target._id);
       loadAndDisplayUptimeBars(target._id);
+      loadAndDisplayPing(target._id);
     }
   });
 
-  // Update expanded service details if one is open
+  // Remove services that no longer exist (but preserve expanded state if it's the expanded one)
+  existingServiceIds.forEach(serviceId => {
+    // Don't remove if it's the currently expanded service
+    if (serviceId === expandedServiceId) {
+      return; // Keep it even if it's not in the targets list
+    }
+    const serviceEl = document.getElementById(`service-${serviceId}`);
+    if (serviceEl) {
+      serviceEl.remove();
+    }
+  });
+
+  // Update expanded service details if one is open - do this AFTER all DOM updates
   if (expandedServiceId) {
-    loadServiceDetailsUpdate(expandedServiceId);
+    // Use setTimeout to ensure DOM is stable
+    setTimeout(() => {
+      loadServiceDetailsUpdate(expandedServiceId);
+    }, 0);
   }
 }
 
 function createServiceElement(target) {
   const isUp = target.isUp;
   const statusBadgeClass = isUp ? 'up' : 'down';
-  const statusText = isUp ? '● Up' : '● Down';
+  const statusText = isUp ? 'Up' : 'Down';
   const isExpanded = expandedServiceId === target._id;
+  const showDetails = target.publicShowDetails === true;
 
   return `
-    <div class="service-item" id="service-${target._id}">
+    <div class="service-item bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 mb-3 overflow-hidden" id="service-${target._id}">
       <div class="service-row ${isExpanded ? 'expanded' : ''}" onclick="toggleServiceExpand('${target._id}')">
-        <div class="service-name">
-          <div class="font-medium text-white">${target.name}</div>
-          <div class="text-xs text-slate-400 mt-1">${target.host}</div>
+        <div class="service-name flex-1 min-w-0">
+          <div class="font-semibold text-white">${target.name}</div>
+          ${showDetails ? `<div class="text-xs text-slate-400 mt-1">${target.host}${target.port ? ':' + target.port : ''} (${target.protocol})</div>` : ''}
         </div>
-        <div class="service-uptime uptime-${target._id}">-</div>
-        <div class="service-bars">
+        <div class="ping-${target._id} text-yellow-400 font-semibold text-sm mx-2">-</div>
+        <div class="service-uptime uptime-${target._id} text-cyan-400 font-semibold text-sm mx-4">-</div>
+        <div class="service-bars flex-1 min-w-0 mx-4">
           ${generateUptimeBars(target._id)}
         </div>
-        <div class="status-badge ${statusBadgeClass}">
+        <div class="status-badge ${statusBadgeClass} flex-shrink-0 mx-2">
+          <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block mr-1"></span>
           ${statusText}
         </div>
-        <div class="expand-icon">${isExpanded ? '▼' : '▶'}</div>
+        <div class="expand-icon text-slate-400 flex-shrink-0 ml-2">${isExpanded ? '▼' : '▶'}</div>
       </div>
 
       <div class="service-details-wrapper" id="details-wrapper-${target._id}">
@@ -856,53 +1079,68 @@ async function loadServiceDetails(serviceId) {
     contentEl.innerHTML = `
       <div class="space-y-4 p-4 border-t border-slate-700">
         <!-- Stats Grid -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Current Status</p>
+        <div class="grid ${target.publicShowDetails ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2 md:grid-cols-3'} gap-3">
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <p class="text-slate-400 text-xs mb-1">Current Status</p>
             <p class="text-lg font-bold ${target.isUp ? 'text-green-400' : 'text-red-400'} mt-1">${target.isUp ? '✓ UP' : '✗ DOWN'}</p>
           </div>
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Uptime (24h)</p>
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <p class="text-slate-400 text-xs mb-1">Uptime (24h)</p>
             <p class="text-lg font-bold text-green-400 mt-1 uptime-24h-${serviceId}">${uptime24h.toFixed(2)}%</p>
           </div>
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Uptime (30d)</p>
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <p class="text-slate-400 text-xs mb-1">Uptime (30d)</p>
             <p class="text-lg font-bold text-green-400 mt-1 uptime-30d-${serviceId}">${uptime30d.toFixed(2)}%</p>
           </div>
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Protocol</p>
+          ${target.publicShowDetails ? `
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <p class="text-slate-400 text-xs mb-1">Protocol</p>
             <p class="text-lg font-bold text-cyan-400 mt-1">${target.protocol}</p>
           </div>
+          ` : ''}
         </div>
 
         <!-- Additional Stats Row -->
         <div class="grid grid-cols-3 gap-3">
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Total Pings</p>
+          <div class="bg-gradient-to-br from-blue-900/30 to-blue-800/20 rounded-lg p-3 border border-blue-700/30 backdrop-blur-sm">
+            <p class="text-slate-400 text-xs mb-1">Total Pings</p>
             <p class="text-lg font-bold text-blue-400 mt-1">${totalPings}</p>
           </div>
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Successful</p>
+          <div class="bg-gradient-to-br from-green-900/30 to-green-800/20 rounded-lg p-3 border border-green-700/30 backdrop-blur-sm">
+            <p class="text-slate-400 text-xs mb-1">Successful</p>
             <p class="text-lg font-bold text-green-400 mt-1">${successfulPings}</p>
           </div>
-          <div class="bg-slate-700/30 rounded p-3 border border-slate-600">
-            <p class="text-slate-400 text-xs">Failed</p>
+          <div class="bg-gradient-to-br from-red-900/30 to-red-800/20 rounded-lg p-3 border border-red-700/30 backdrop-blur-sm">
+            <p class="text-slate-400 text-xs mb-1">Failed</p>
             <p class="text-lg font-bold text-red-400 mt-1">${totalPings - successfulPings}</p>
           </div>
         </div>
 
         <!-- Time Period Selector -->
-        <div class="flex gap-2">
-          <button onclick="switchChartPeriod('${serviceId}', '1h')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="1h">1H</button>
-          <button onclick="switchChartPeriod('${serviceId}', '24h')" class="period-btn px-3 py-1 rounded text-xs bg-cyan-600 text-white" data-period="24h">24H</button>
-          <button onclick="switchChartPeriod('${serviceId}', '7d')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="7d">7D</button>
-          <button onclick="switchChartPeriod('${serviceId}', '30d')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="30d">30D</button>
-          <button onclick="switchChartPeriod('${serviceId}', 'all')" class="period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600" data-period="all">ALL</button>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="switchChartPeriod('${serviceId}', '1h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="1h">1H</button>
+          <button onclick="switchChartPeriod('${serviceId}', '24h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg shadow-cyan-500/30 transition-all duration-200 border border-cyan-500/50" data-period="24h">24H</button>
+          <button onclick="switchChartPeriod('${serviceId}', '7d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="7d">7D</button>
+          <button onclick="switchChartPeriod('${serviceId}', '30d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="30d">30D</button>
+          <button onclick="switchChartPeriod('${serviceId}', 'all')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="all">ALL</button>
         </div>
 
-        <!-- Chart -->
-        <div class="bg-slate-700/30 rounded p-4 border border-slate-600">
-          <div style="position: relative; height: 280px;">
+        <!-- Chart Container -->
+        <div class="bg-gradient-to-br from-slate-900/60 to-slate-800/40 backdrop-blur rounded-xl p-6 border border-slate-700/50 shadow-2xl">
+          <div class="mb-4 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-slate-300">Response Time & Status</h3>
+            <div class="flex gap-3 text-xs">
+              <div class="flex items-center gap-1.5">
+                <div class="w-2 h-2 rounded-full bg-green-400"></div>
+                <span class="text-slate-400">Response Time</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <div class="w-2 h-2 rounded-full bg-red-400"></div>
+                <span class="text-slate-400">Downtime</span>
+              </div>
+            </div>
+          </div>
+          <div style="position: relative; height: 350px;">
             <canvas id="chart-${serviceId}"></canvas>
           </div>
         </div>
@@ -924,9 +1162,21 @@ async function loadServiceDetailsUpdate(serviceId) {
   if (!target) return;
 
   try {
+    // Ensure wrapper stays open if this is the expanded service
+    const wrapper = document.getElementById(`details-wrapper-${serviceId}`);
+    if (expandedServiceId === serviceId && wrapper) {
+      wrapper.classList.add('open');
+    }
+
     // Only update the values if the details panel exists
     const contentEl = document.getElementById(`service-content-${serviceId}`);
-    if (!contentEl) return;
+    if (!contentEl) {
+      // If content doesn't exist but service is expanded, load it
+      if (expandedServiceId === serviceId) {
+        loadServiceDetails(serviceId);
+      }
+      return;
+    }
 
     // Load uptime data for 24h and 30d
     const uptime24hRes = await axios.get(`/api/targets/${serviceId}/uptime?days=1`);
@@ -934,13 +1184,46 @@ async function loadServiceDetailsUpdate(serviceId) {
 
     const uptime24h = parseFloat(uptime24hRes.data.uptime).toFixed(2);
     const uptime30d = parseFloat(uptime30dRes.data.uptime).toFixed(2);
+    const totalPings = uptime30dRes.data.totalPings;
+    const successfulPings = uptime30dRes.data.successfulPings;
 
     // Update values dynamically
-    const uptime24hEl = document.querySelector(`.uptime-24h-${serviceId}`);
-    const uptime30dEl = document.querySelector(`.uptime-30d-${serviceId}`);
+    const uptime24hEl = contentEl.querySelector(`.uptime-24h-${serviceId}`);
+    const uptime30dEl = contentEl.querySelector(`.uptime-30d-${serviceId}`);
+    
+    // Find status element - it's in the first stat card
+    const statusCard = contentEl.querySelector('.grid.grid-cols-2');
+    const statusEl = statusCard ? statusCard.querySelector('.text-lg.font-bold') : null;
+    
+    // Find ping count elements - they're in the second stat grid
+    const pingGrid = contentEl.querySelectorAll('.grid.grid-cols-3')[0];
+    const totalPingsEl = pingGrid ? pingGrid.querySelectorAll('.text-lg.font-bold')[0] : null;
+    const successfulPingsEl = pingGrid ? pingGrid.querySelectorAll('.text-lg.font-bold')[1] : null;
+    const failedPingsEl = pingGrid ? pingGrid.querySelectorAll('.text-lg.font-bold')[2] : null;
 
     if (uptime24hEl) uptime24hEl.textContent = uptime24h + '%';
     if (uptime30dEl) uptime30dEl.textContent = uptime30d + '%';
+    
+    // Update status if changed
+    if (statusEl) {
+      const isUp = target.isUp;
+      statusEl.className = `text-lg font-bold ${isUp ? 'text-green-400' : 'text-red-400'} mt-1`;
+      statusEl.textContent = isUp ? '✓ UP' : '✗ DOWN';
+    }
+    
+    // Update ping counts
+    if (totalPingsEl) totalPingsEl.textContent = totalPings;
+    if (successfulPingsEl) successfulPingsEl.textContent = successfulPings;
+    if (failedPingsEl) failedPingsEl.textContent = totalPings - successfulPings;
+
+    // Update chart data dynamically if chart exists
+    if (charts[serviceId] && chartPeriods[serviceId]) {
+      await updateChartData(serviceId, chartPeriods[serviceId]);
+    } else if (contentEl.querySelector(`#chart-${serviceId}`)) {
+      // Chart canvas exists but chart wasn't created yet, create it now
+      const currentPeriod = chartPeriods[serviceId] || '24h';
+      await loadServiceChart(serviceId, currentPeriod);
+    }
   } catch (error) {
     console.error('Error updating service details:', error);
   }
@@ -951,19 +1234,80 @@ async function switchChartPeriod(serviceId, period) {
   const buttons = document.querySelectorAll(`#service-content-${serviceId} .period-btn`);
   buttons.forEach(btn => {
     if (btn.dataset.period === period) {
-      btn.className = 'period-btn px-3 py-1 rounded text-xs bg-cyan-600 text-white';
+      btn.className = 'period-btn px-4 py-2 rounded-lg text-xs font-medium bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg shadow-cyan-500/30 transition-all duration-200 border border-cyan-500/50';
     } else {
-      btn.className = 'period-btn px-3 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600';
+      btn.className = 'period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50';
     }
   });
 
   await loadServiceChart(serviceId, period);
 }
 
+async function updateChartData(serviceId, period) {
+  try {
+    const chart = charts[serviceId];
+    if (!chart) return;
+
+    let days = 1;
+    if (period === '1h') {
+      days = 0.04;
+    } else if (period === '7d') {
+      days = 7;
+    } else if (period === '30d') {
+      days = 30;
+    } else if (period === 'all') {
+      days = 90;
+    }
+
+    // Fetch real statistics from the API
+    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?days=${days}`);
+    const statistics = statsRes.data.statistics || [];
+
+    const labels = [];
+    const responseTimeData = [];
+    const downData = [];
+
+    statistics.forEach(stat => {
+      const date = new Date(stat.date);
+      if (period === '1h' || period === '24h') {
+        labels.push(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      } else {
+        labels.push(date.toLocaleDateString([], { month: 'short', day: 'numeric' }));
+      }
+
+      // Add response time data
+      const avgResponseTime = stat.avgResponseTime || 0;
+      responseTimeData.push(avgResponseTime);
+
+      // Add downtime indicator
+      const isDown = stat.successfulPings === 0;
+      downData.push(isDown ? 100 : null);
+    });
+
+    // Update chart data dynamically
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = responseTimeData;
+    chart.data.datasets[1].data = downData;
+    
+    // Update point radius based on period
+    chart.data.datasets[0].pointRadius = period === '1h' || period === '24h' ? 4 : 0;
+    
+    chart.update('none'); // Update without animation for smooth refresh
+  } catch (error) {
+    console.error('Error updating chart data:', error);
+  }
+}
+
 async function loadServiceChart(serviceId, period) {
   try {
     const canvas = document.getElementById(`chart-${serviceId}`);
     if (!canvas) return;
+
+    // If chart already exists and period hasn't changed, just update the data
+    if (charts[serviceId] && chartPeriods[serviceId] === period) {
+      await updateChartData(serviceId, period);
+      return;
+    }
 
     let days = 1;
     if (period === '1h') {
@@ -1007,6 +1351,15 @@ async function loadServiceChart(serviceId, period) {
     }
 
     const ctx = canvas.getContext('2d');
+    
+    // Calculate min/max for better scaling
+    const validResponseTimes = responseTimeData.filter(v => v > 0);
+    const minResponseTime = validResponseTimes.length > 0 ? Math.min(...validResponseTimes) : 0;
+    const maxResponseTime = validResponseTimes.length > 0 ? Math.max(...validResponseTimes) : 100;
+    
+    // Store the period for this chart
+    chartPeriods[serviceId] = period;
+    
     charts[serviceId] = new Chart(ctx, {
       type: 'line',
       data: {
@@ -1016,26 +1369,31 @@ async function loadServiceChart(serviceId, period) {
             label: 'Response Time (ms)',
             data: responseTimeData,
             borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            backgroundColor: 'rgba(16, 185, 129, 0.15)',
             fill: true,
-            tension: 0.4,
-            pointRadius: period === '24h' ? 2 : 0,
+            tension: 0.5,
+            pointRadius: period === '1h' || period === '24h' ? 4 : 0,
+            pointHoverRadius: 8,
             pointBackgroundColor: '#10b981',
-            pointBorderColor: '#fff',
-            pointHoverRadius: 5,
-            borderWidth: 2,
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 2,
+            pointHoverBackgroundColor: '#34d399',
+            pointHoverBorderColor: '#ffffff',
+            pointHoverBorderWidth: 3,
+            borderWidth: 3,
             spanGaps: false,
           },
           {
             label: 'Downtime',
             data: downData,
             borderColor: '#ef4444',
-            backgroundColor: 'rgba(239, 68, 68, 0.3)',
+            backgroundColor: 'rgba(239, 68, 68, 0.25)',
             fill: true,
-            tension: 0.4,
+            tension: 0.3,
             pointRadius: 0,
             borderWidth: 0,
             spanGaps: false,
+            order: 0,
           },
         ],
       },
@@ -1048,29 +1406,45 @@ async function loadServiceChart(serviceId, period) {
         },
         plugins: {
           legend: {
-            display: true,
-            labels: {
-              color: '#cbd5e1',
-              font: { size: 11 },
-              usePointStyle: true,
-              padding: 15,
-            },
+            display: false,
           },
           tooltip: {
-            backgroundColor: 'rgba(15, 23, 42, 0.95)',
-            titleColor: '#fff',
+            backgroundColor: 'rgba(15, 23, 42, 0.98)',
+            titleColor: '#ffffff',
             bodyColor: '#cbd5e1',
-            borderColor: '#475569',
-            borderWidth: 1,
-            padding: 12,
+            borderColor: '#06b6d4',
+            borderWidth: 2,
+            padding: 14,
             displayColors: true,
+            cornerRadius: 8,
+            titleFont: { size: 13, weight: 'bold' },
+            bodyFont: { size: 12 },
+            boxPadding: 8,
             callbacks: {
+              title: function(context) {
+                return context[0].label;
+              },
               label: function(context) {
                 if (context.datasetIndex === 0) {
-                  return context.raw ? `${context.raw.toFixed(2)} ms` : 'Offline';
+                  const value = context.raw;
+                  if (!value || value === 0) {
+                    return '🔴 Offline';
+                  }
+                  const pingTag = value < 50 ? '🟢 Excellent' : value < 100 ? '🟡 Good' : value < 200 ? '🟠 Fair' : '🔴 Poor';
+                  return `${pingTag} ${value.toFixed(2)} ms`;
                 } else {
-                  return context.raw ? 'Service Down' : '';
+                  return context.raw ? '🔴 Service Down' : '';
                 }
+              },
+              afterBody: function(context) {
+                if (context[0].datasetIndex === 0 && context[0].raw > 0) {
+                  const value = context[0].raw;
+                  if (value < 50) return '⚡ Excellent response time';
+                  if (value < 100) return '✓ Good response time';
+                  if (value < 200) return '⚠ Acceptable response time';
+                  return '⚠ Slow response time';
+                }
+                return '';
               }
             }
           }
@@ -1078,16 +1452,51 @@ async function loadServiceChart(serviceId, period) {
         scales: {
           y: {
             beginAtZero: true,
-            max: 100,
-            grid: { color: '#475569', drawBorder: false },
-            ticks: { color: '#cbd5e1', font: { size: 10 } },
-            title: { display: true, text: 'Response Time (ms)', color: '#cbd5e1' }
+            grid: { 
+              color: 'rgba(255, 255, 255, 0.08)', 
+              drawBorder: false,
+              lineWidth: 1
+            },
+            ticks: { 
+              color: '#94a3b8', 
+              font: { size: 11, weight: '500' },
+              padding: 8,
+              callback: function(value) {
+                return value + ' ms';
+              }
+            },
+            title: { 
+              display: true, 
+              text: 'Response Time (ms)', 
+              color: '#cbd5e1',
+              font: { size: 12, weight: '600' },
+              padding: { bottom: 10 }
+            }
           },
           x: {
-            grid: { color: '#475569', drawBorder: false },
-            ticks: { color: '#cbd5e1', maxRotation: 45, minRotation: 0, font: { size: 10 } },
+            grid: { 
+              color: 'rgba(255, 255, 255, 0.05)', 
+              drawBorder: false 
+            },
+            ticks: { 
+              color: '#94a3b8', 
+              maxRotation: 45, 
+              minRotation: 0, 
+              font: { size: 10, weight: '500' },
+              padding: 8
+            },
           },
         },
+        elements: {
+          point: {
+            hoverRadius: 8,
+            hoverBorderWidth: 3,
+          }
+        },
+        animation: {
+          duration: 1000,
+          easing: 'easeInOutQuart'
+        }
       },
     });
   } catch (error) {

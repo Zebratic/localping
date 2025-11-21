@@ -51,6 +51,8 @@ const initializeTables = () => {
         port INTEGER,
         path TEXT,
         enabled BOOLEAN DEFAULT 1,
+        publicVisible BOOLEAN DEFAULT 1,
+        publicShowDetails BOOLEAN DEFAULT 0,
         interval INTEGER DEFAULT 60,
         retries INTEGER DEFAULT 0,
         retryInterval INTEGER DEFAULT 5,
@@ -70,6 +72,20 @@ const initializeTables = () => {
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Migration: Add publicVisible column if it doesn't exist
+    try {
+      db.exec(`ALTER TABLE targets ADD COLUMN publicVisible BOOLEAN DEFAULT 1`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Migration: Add publicShowDetails column if it doesn't exist
+    try {
+      db.exec(`ALTER TABLE targets ADD COLUMN publicShowDetails BOOLEAN DEFAULT 0`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
 
     // Ping results table
     db.exec(`
@@ -154,6 +170,58 @@ const initializeTables = () => {
       )
     `);
 
+    // Public UI Settings table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS publicUISettings (
+        _id TEXT PRIMARY KEY DEFAULT 'settings',
+        title TEXT DEFAULT 'Homelab',
+        subtitle TEXT DEFAULT 'System Status & Application Dashboard',
+        customCSS TEXT,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Initialize default settings if not exists
+    db.exec(`
+      INSERT OR IGNORE INTO publicUISettings (_id, title, subtitle, customCSS)
+      VALUES ('settings', 'Homelab', 'System Status & Application Dashboard', NULL)
+    `);
+
+    // Posts table (for blog/changelog)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS posts (
+        _id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        published BOOLEAN DEFAULT 1,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Admin Settings table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS adminSettings (
+        _id TEXT PRIMARY KEY DEFAULT 'settings',
+        sessionDurationDays INTEGER DEFAULT 30,
+        dataRetentionDays INTEGER DEFAULT 30,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Migration: Add dataRetentionDays column if it doesn't exist
+    try {
+      db.exec(`ALTER TABLE adminSettings ADD COLUMN dataRetentionDays INTEGER DEFAULT 30`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Initialize default admin settings if not exists
+    db.exec(`
+      INSERT OR IGNORE INTO adminSettings (_id, sessionDurationDays, dataRetentionDays)
+      VALUES ('settings', 30, 30)
+    `);
+
     // Create indices
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);
@@ -165,6 +233,8 @@ const initializeTables = () => {
       CREATE INDEX IF NOT EXISTS idx_statistics_date ON statistics(date);
       CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
       CREATE INDEX IF NOT EXISTS idx_actions_targetId ON actions(targetId);
+      CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published);
+      CREATE INDEX IF NOT EXISTS idx_posts_createdAt ON posts(createdAt);
     `);
 
     console.log(chalk.green('✓ SQLite tables initialized'));
@@ -198,14 +268,52 @@ const createCollectionWrapper = (name) => {
             if (keys.length > 0) {
               const whereClauses = keys.map(k => {
                 const val = query[k];
+                // Handle MongoDB-style operators
+                if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
+                  if ('$gte' in val) {
+                    const gteVal = val.$gte;
+                    if (gteVal instanceof Date) {
+                      params.push(gteVal.toISOString().split('T')[0]);
+                    } else {
+                      params.push(gteVal);
+                    }
+                    return `"${k}" >= ?`;
+                  } else if ('$lte' in val) {
+                    const lteVal = val.$lte;
+                    if (lteVal instanceof Date) {
+                      params.push(lteVal.toISOString().split('T')[0]);
+                    } else {
+                      params.push(lteVal);
+                    }
+                    return `"${k}" <= ?`;
+                  } else if ('$gt' in val) {
+                    const gtVal = val.$gt;
+                    if (gtVal instanceof Date) {
+                      params.push(gtVal.toISOString().split('T')[0]);
+                    } else {
+                      params.push(gtVal);
+                    }
+                    return `"${k}" > ?`;
+                  } else if ('$lt' in val) {
+                    const ltVal = val.$lt;
+                    if (ltVal instanceof Date) {
+                      params.push(ltVal.toISOString().split('T')[0]);
+                    } else {
+                      params.push(ltVal);
+                    }
+                    return `"${k}" < ?`;
+                  } else {
+                    // Fallback to JSON stringify for other objects
+                    params.push(JSON.stringify(val));
+                    return `"${k}" = ?`;
+                  }
+                }
                 // Handle different types
                 if (typeof val === 'boolean') {
                   params.push(val ? 1 : 0);
                 } else if (val instanceof Date) {
                   // Convert Date to ISO date string (YYYY-MM-DD)
                   params.push(val.toISOString().split('T')[0]);
-                } else if (typeof val === 'object' && val !== null) {
-                  params.push(JSON.stringify(val));
                 } else {
                   params.push(val);
                 }
@@ -250,8 +358,13 @@ const createCollectionWrapper = (name) => {
             if (typeof val === 'boolean') {
               params.push(val ? 1 : 0);
             } else if (val instanceof Date) {
-              // Convert Date to ISO date string (YYYY-MM-DD)
-              params.push(val.toISOString().split('T')[0]);
+              // Convert Date to ISO date string (YYYY-MM-DD) for DATE columns
+              // For statistics table date column, use date format
+              if (name === 'statistics' && k === 'date') {
+                params.push(val.toISOString().split('T')[0]);
+              } else {
+                params.push(val.toISOString().split('T')[0]);
+              }
             } else if (typeof val === 'object' && val !== null) {
               params.push(JSON.stringify(val));
             } else {
@@ -283,9 +396,13 @@ const createCollectionWrapper = (name) => {
           if (typeof val === 'boolean') {
             return val ? 1 : 0;
           }
-          // Convert Date to ISO date string (YYYY-MM-DD)
+          // Convert Date to ISO timestamp string (YYYY-MM-DD HH:MM:SS) or date string for DATE columns
           if (val instanceof Date) {
-            return val.toISOString().split('T')[0];
+            // For statistics table date column, use date format
+            if (name === 'statistics' && f === 'date') {
+              return val.toISOString().split('T')[0];
+            }
+            return val.toISOString().replace('T', ' ').substring(0, 19);
           }
           // Convert arrays and objects to JSON strings
           if (typeof val === 'object' && val !== null) {
@@ -294,6 +411,7 @@ const createCollectionWrapper = (name) => {
           return val;
         });
 
+        // Standard INSERT - let the application handle conflicts
         const sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders})`;
         const stmt = db.prepare(sql);
         stmt.run(...values);
@@ -312,7 +430,7 @@ const createCollectionWrapper = (name) => {
             return v ? 1 : 0;
           }
           if (v instanceof Date) {
-            return v.toISOString().split('T')[0];
+            return v.toISOString().replace('T', ' ').substring(0, 19);
           }
           if (typeof v === 'object' && v !== null) {
             return JSON.stringify(v);
@@ -327,7 +445,7 @@ const createCollectionWrapper = (name) => {
             return v ? 1 : 0;
           }
           if (v instanceof Date) {
-            return v.toISOString().split('T')[0];
+            return v.toISOString().replace('T', ' ').substring(0, 19);
           }
           if (typeof v === 'object' && v !== null) {
             return JSON.stringify(v);
@@ -353,7 +471,7 @@ const createCollectionWrapper = (name) => {
             return v ? 1 : 0;
           }
           if (v instanceof Date) {
-            return v.toISOString().split('T')[0];
+            return v.toISOString().replace('T', ' ').substring(0, 19);
           }
           return v;
         });

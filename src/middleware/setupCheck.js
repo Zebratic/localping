@@ -16,7 +16,7 @@ function setupCheckMiddleware(req, res, next) {
   }
 
   // Allow static assets
-  if (req.path.startsWith('/public') || req.path.match(/\.(css|js|png|jpg|gif|svg|ico)$/)) {
+  if (req.path.startsWith('/public') || req.path.startsWith('/vendor') || req.path.startsWith('/js') || req.path.startsWith('/css') || req.path.match(/\.(css|js|png|jpg|gif|svg|ico|woff|woff2|ttf|eot)$/)) {
     return next();
   }
 

@@ -1,6 +1,5 @@
 const { getDB } = require('../config/db');
 const pingService = require('./pingService');
-const notificationService = require('./notificationService');
 const sqliteService = require('./sqliteService');
 const chalk = require('../utils/colors');
 const { v4: uuidv4 } = require('uuid');
@@ -23,6 +22,15 @@ class MonitorService {
 
       console.log(chalk.green(`✓ Starting monitor for ${targets.length} targets`));
 
+      // Ping all targets immediately to get current status
+      if (targets.length > 0) {
+        console.log(chalk.blue('↪ Pinging all monitors to get current status...'));
+        const pingPromises = targets.map(target => this.pingTarget(target));
+        await Promise.allSettled(pingPromises);
+        console.log(chalk.green('✓ Initial ping complete, status updated'));
+      }
+
+      // Set up monitoring intervals for all targets
       for (const target of targets) {
         this.startTargetMonitor(target);
       }
@@ -42,13 +50,13 @@ class MonitorService {
       clearInterval(this.intervals.get(targetIdStr));
     }
 
-    // Initialize status to 'unknown' - will be updated by first ping
-    this.targetStatus.set(targetIdStr, 'unknown');
+    // Status should already be set from initial ping in startMonitoring()
+    // If not, initialize to 'unknown'
+    if (!this.targetStatus.has(targetIdStr)) {
+      this.targetStatus.set(targetIdStr, 'unknown');
+    }
 
-    // Initial ping
-    this.pingTarget(target);
-
-    // Set up interval
+    // Set up interval (initial ping already done in startMonitoring())
     const interval = setInterval(() => {
       this.pingTarget(target);
     }, (target.interval || 60) * 1000);
@@ -80,7 +88,7 @@ class MonitorService {
         responseTime: result.responseTime,
         statusCode: result.statusCode,
         error: result.error,
-      });
+      }, timestamp.toISOString());
 
       // Get current in-memory status
       const currentStatus = this.targetStatus.get(targetIdStr);
@@ -149,9 +157,8 @@ class MonitorService {
       message: `${target.name} is DOWN (${target.host} - ${target.protocol})`,
     });
 
-    // Send notification if cooldown passed
+    // Log alert if cooldown passed
     if (now - lastAlertTime > alertCooldown) {
-      await notificationService.alertTargetDown(target);
       this.lastAlertTime.set(target._id.toString(), now);
       console.log(chalk.red(`✗ ${target.name} is DOWN`));
     }
@@ -171,8 +178,7 @@ class MonitorService {
       message: `${target.name} is UP (${target.host} - ${target.protocol})`,
     });
 
-    // Send notification
-    await notificationService.alertTargetUp(target);
+    // Log recovery
     console.log(chalk.green(`✓ ${target.name} is UP`));
   }
 
@@ -185,6 +191,7 @@ class MonitorService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      // Try to update first (most common case)
       const stats = await db.collection('statistics').findOne({
         targetId: target._id,
         date: today,
@@ -203,25 +210,92 @@ class MonitorService {
             (stats.totalPings + 1),
         };
 
-        await db.collection('statistics').updateOne(
+        const result = await db.collection('statistics').updateOne(
           { targetId: target._id, date: today },
           { $set: updateData }
         );
+
+        // If update didn't modify any rows, try insert (race condition)
+        if (result.modifiedCount === 0) {
+          try {
+            await db.collection('statistics').insertOne({
+              targetId: target._id,
+              date: today,
+              totalPings: 1,
+              successfulPings: pingResult.success ? 1 : 0,
+              failedPings: pingResult.success ? 0 : 1,
+              uptime: pingResult.success ? 100 : 0,
+              lastResponseTime: pingResult.responseTime || 0,
+              avgResponseTime: pingResult.responseTime || 0,
+            });
+          } catch (insertError) {
+            // If insert also fails, another process inserted - retry update
+            if (insertError.message && insertError.message.includes('UNIQUE constraint')) {
+              const retryStats = await db.collection('statistics').findOne({
+                targetId: target._id,
+                date: today,
+              });
+              if (retryStats) {
+                const retryUpdateData = {
+                  totalPings: retryStats.totalPings + 1,
+                  successfulPings: pingResult.success ? retryStats.successfulPings + 1 : retryStats.successfulPings,
+                  failedPings: !pingResult.success ? retryStats.failedPings + 1 : retryStats.failedPings,
+                  uptime: ((pingResult.success ? retryStats.successfulPings + 1 : retryStats.successfulPings) / (retryStats.totalPings + 1)) * 100,
+                  lastResponseTime: pingResult.responseTime || 0,
+                  avgResponseTime:
+                    (retryStats.avgResponseTime * retryStats.totalPings + (pingResult.responseTime || 0)) /
+                    (retryStats.totalPings + 1),
+                };
+                await db.collection('statistics').updateOne(
+                  { targetId: target._id, date: today },
+                  { $set: retryUpdateData }
+                );
+              }
+            }
+          }
+        }
       } else {
-        // Create new stats
-        await db.collection('statistics').insertOne({
-          targetId: target._id,
-          date: today,
-          totalPings: 1,
-          successfulPings: pingResult.success ? 1 : 0,
-          failedPings: pingResult.success ? 0 : 1,
-          uptime: pingResult.success ? 100 : 0,
-          lastResponseTime: pingResult.responseTime || 0,
-          avgResponseTime: pingResult.responseTime || 0,
-        });
+        // No stats exist, try to insert
+        try {
+          await db.collection('statistics').insertOne({
+            targetId: target._id,
+            date: today,
+            totalPings: 1,
+            successfulPings: pingResult.success ? 1 : 0,
+            failedPings: pingResult.success ? 0 : 1,
+            uptime: pingResult.success ? 100 : 0,
+            lastResponseTime: pingResult.responseTime || 0,
+            avgResponseTime: pingResult.responseTime || 0,
+          });
+        } catch (insertError) {
+          // If insert failed due to race condition, retry with update
+          if (insertError.message && insertError.message.includes('UNIQUE constraint')) {
+            const existingStats = await db.collection('statistics').findOne({
+              targetId: target._id,
+              date: today,
+            });
+            if (existingStats) {
+              const updateData = {
+                totalPings: existingStats.totalPings + 1,
+                successfulPings: pingResult.success ? existingStats.successfulPings + 1 : existingStats.successfulPings,
+                failedPings: !pingResult.success ? existingStats.failedPings + 1 : existingStats.failedPings,
+                uptime: ((pingResult.success ? existingStats.successfulPings + 1 : existingStats.successfulPings) / (existingStats.totalPings + 1)) * 100,
+                lastResponseTime: pingResult.responseTime || 0,
+                avgResponseTime:
+                  (existingStats.avgResponseTime * existingStats.totalPings + (pingResult.responseTime || 0)) /
+                  (existingStats.totalPings + 1),
+              };
+              await db.collection('statistics').updateOne(
+                { targetId: target._id, date: today },
+                { $set: updateData }
+              );
+            }
+          }
+        }
       }
     } catch (error) {
-      console.error(chalk.yellow('Warning updating statistics:'), error.message);
+      // Silently ignore statistics errors to avoid log spam
+      // They're not critical for core functionality
     }
   }
 

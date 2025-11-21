@@ -320,8 +320,61 @@ router.get('/targets/:id/statistics', async (req, res) => {
   try {
     const db = getDB();
     const targetId = req.params.id;
-    const days = parseInt(req.query.days) || 30;
+    const days = parseFloat(req.query.days) || 30;
 
+    // For short time periods (<= 1 day), query pingResults directly and aggregate
+    if (days <= 1) {
+      const Database = require('better-sqlite3');
+      const path = require('path');
+      const dbPath = path.join(process.cwd(), 'data', 'localping.db');
+      const sqliteDb = new Database(dbPath);
+
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startDateStr = startDate.toISOString();
+
+      // Aggregate by hour for periods <= 1 day
+      const stmt = sqliteDb.prepare(`
+        SELECT 
+          strftime('%Y-%m-%d %H:00:00', timestamp) as date,
+          COUNT(*) as totalPings,
+          SUM(CASE WHEN success = 1 OR success = 'true' THEN 1 ELSE 0 END) as successfulPings,
+          AVG(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS REAL) ELSE NULL END) as avgResponseTime,
+          MIN(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS INTEGER) ELSE NULL END) as minResponseTime,
+          MAX(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS INTEGER) ELSE NULL END) as maxResponseTime
+        FROM pingResults
+        WHERE targetId = ? AND timestamp >= ?
+        GROUP BY strftime('%Y-%m-%d %H:00:00', timestamp)
+        ORDER BY date ASC
+      `);
+      
+      // Get last response time separately
+      const lastResponseStmt = sqliteDb.prepare(`
+        SELECT responseTime FROM pingResults 
+        WHERE targetId = ? AND timestamp >= ? 
+        ORDER BY timestamp DESC LIMIT 1
+      `);
+
+      const results = stmt.all(targetId, startDateStr);
+      const lastResponse = lastResponseStmt.get(targetId, startDateStr);
+      sqliteDb.close();
+
+      const stats = results.map(r => ({
+        date: r.date,
+        totalPings: r.totalPings || 0,
+        successfulPings: r.successfulPings || 0,
+        failedPings: (r.totalPings || 0) - (r.successfulPings || 0),
+        uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
+        avgResponseTime: r.avgResponseTime || 0,
+        minResponseTime: r.minResponseTime || null,
+        maxResponseTime: r.maxResponseTime || null,
+        lastResponseTime: lastResponse?.responseTime || 0,
+      }));
+
+      return res.json({ success: true, statistics: stats });
+    }
+
+    // For longer periods, use daily statistics table
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 

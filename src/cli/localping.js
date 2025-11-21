@@ -7,7 +7,6 @@ const { hideBin } = require('yargs/helpers');
 const inquirer = require('inquirer');
 const { connectDB, getDB, closeDB } = require('../config/db');
 const pingService = require('../services/pingService');
-const notificationService = require('../services/notificationService');
 const gatewayService = require('../services/gatewayService');
 
 const argv = yargs(hideBin(process.argv))
@@ -177,9 +176,9 @@ async function listTargets() {
 }
 
 async function sendTestNotification() {
-  console.log(chalk.cyan('\n📢 Sending test notification...\n'));
-  await notificationService.sendTest();
-  console.log(chalk.green('✓ Notification sent!'));
+  console.log(chalk.cyan('\n📢 Browser notifications are available in the public UI\n'));
+  console.log(chalk.yellow('Desktop notifications have been removed for containerized environments.'));
+  console.log(chalk.green('Visit the public dashboard to enable browser notifications.'));
   console.log();
 }
 

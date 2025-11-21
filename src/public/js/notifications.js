@@ -66,8 +66,8 @@ class NotificationManager {
 
     try {
       const notification = new Notification(title, {
-        icon: '/favicon.ico',
-        badge: '/favicon.ico',
+        icon: '/android-icon-192x192.png',
+        badge: '/favicon-32x32.png',
         ...options,
       });
 
@@ -251,18 +251,71 @@ class NotificationManager {
    * Check if notifications are enabled
    */
   isEnabled() {
-    return this.notificationPermission === 'granted' && this.getPreference('enabled', true);
+    return this.getPreference('enabled', true) && this.notificationPermission === 'granted';
   }
 
   /**
    * Toggle notifications
    */
-  toggleNotifications(enabled) {
+  async toggleNotifications(enabled) {
     this.setPreference('enabled', enabled);
     if (enabled && this.notificationPermission === 'default') {
-      this.requestPermission();
+      await this.requestPermission();
     }
     return this.isEnabled();
+  }
+
+  /**
+   * Notify about new incident
+   */
+  notifyIncident(incident) {
+    if (!this.isEnabled()) return;
+
+    const severityEmojis = {
+      'minor': '⚠️',
+      'major': '🔶',
+      'critical': '🔴'
+    };
+
+    const emoji = severityEmojis[incident.severity] || '📢';
+    const message = `${emoji} ${incident.title}`;
+
+    // Browser notification
+    this.showBrowserNotification('New Incident', {
+      body: `${incident.severity.toUpperCase()}: ${incident.description}`,
+      tag: `incident-${incident._id}`,
+      requireInteraction: incident.severity === 'critical',
+    });
+
+    // In-page notification
+    this.showToastNotification(message, incident.severity === 'critical' ? 'error' : incident.severity === 'major' ? 'warning' : 'info', incident.severity === 'critical' ? 0 : 5000);
+  }
+
+  /**
+   * Notify about incident update
+   */
+  notifyIncidentUpdate(incident) {
+    if (!this.isEnabled()) return;
+
+    const statusMessages = {
+      'investigating': '🔍 Investigating',
+      'identified': '⚠️ Issue Identified',
+      'monitoring': '👁️ Monitoring',
+      'resolved': '✅ Resolved'
+    };
+
+    const message = `${statusMessages[incident.status] || '📢'} ${incident.title}`;
+
+    // Browser notification
+    this.showBrowserNotification('Incident Update', {
+      body: `${incident.status.toUpperCase()}: ${incident.description}`,
+      tag: `incident-update-${incident._id}`,
+      requireInteraction: false,
+    });
+
+    // In-page notification
+    const type = incident.status === 'resolved' ? 'success' : 'info';
+    this.showToastNotification(message, type);
   }
 }
 

@@ -8,10 +8,12 @@ const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
 const chalk = require('./utils/colors');
 
-const { connectDB, closeDB } = require('./config/db');
+const { connectDB, closeDB, getDB } = require('./config/db');
+const SQLiteSessionStore = require('./config/sessionStore');
 const monitorService = require('./services/monitorService');
 const gatewayService = require('./services/gatewayService');
 const sqliteService = require('./services/sqliteService');
+const dataRetentionService = require('./services/dataRetentionService');
 const { apiKeyAuth, createRateLimiter, validateTargetInput } = require('./middleware/auth');
 const { setupCheckMiddleware, isSetupComplete } = require('./middleware/setupCheck');
 
@@ -32,16 +34,34 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
+// Initialize persistent session store
+const sessionStore = new SQLiteSessionStore();
+
+// Helper function to get session duration from database (defaults to 30 days)
+const getSessionDuration = async () => {
+  try {
+    const db = getDB();
+    const settings = await db.collection('adminSettings').findOne({ _id: 'settings' });
+    const days = settings?.sessionDurationDays || 30;
+    return days * 24 * 60 * 60 * 1000; // Convert days to milliseconds
+  } catch (error) {
+    // If DB not ready, return default
+    return 30 * 24 * 60 * 60 * 1000; // 30 days default
+  }
+};
+
 // Session middleware for admin authentication
+// Note: maxAge will be updated dynamically in login route based on settings
 const sessionMiddleware = session({
+  store: sessionStore,
   secret: process.env.SESSION_SECRET || 'localping-dev-secret',
   resave: false,
-  saveUninitialized: true,
+  saveUninitialized: false, // Don't save uninitialized sessions
   cookie: {
     secure: false, // Allow HTTP cookies for development - can be set via SECURE_COOKIES env var
     httpOnly: true,
     sameSite: 'lax', // Use 'lax' instead of 'strict' to allow cross-site requests with cookies
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 30 * 24 * 60 * 60 * 1000 // Default 30 days, will be updated on login
   }
 });
 
@@ -65,6 +85,11 @@ app.set('views', path.join(__dirname, 'views'));
 
 // Static files
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve favicon.ico (browser default)
+app.get('/favicon.ico', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.ico'));
+});
 
 // Health check endpoint (must be before setup check middleware)
 app.get('/health', (req, res) => {
@@ -104,6 +129,15 @@ const startServer = async () => {
     setInterval(() => {
       sqliteService.cleanupOldData();
     }, 24 * 60 * 60 * 1000); // Run daily
+
+    // Set up periodic data retention processing
+    setInterval(async () => {
+      try {
+        await dataRetentionService.processRetentionForAllTargets();
+      } catch (error) {
+        console.error(chalk.red('Error processing data retention:'), error.message);
+      }
+    }, 6 * 60 * 60 * 1000); // Run every 6 hours
 
     // Check if setup is needed
     if (!isSetupComplete()) {

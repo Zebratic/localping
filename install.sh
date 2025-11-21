@@ -183,9 +183,6 @@ SYSTEMD_EOF
 chown root:root "/etc/systemd/system/${SERVICE_NAME}.service"
 chmod 644 "/etc/systemd/system/${SERVICE_NAME}.service"
 
-echo "📥 Installing PM2 globally (optional, for development)..."
-npm install -g pm2 --silent 2>/dev/null || npm install -g pm2 || true
-
 # Reload systemd
 systemctl daemon-reload
 

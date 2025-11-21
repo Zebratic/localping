@@ -2010,8 +2010,13 @@ window.importBackup = async function importBackup() {
       if (results.imported) {
         Object.keys(results.imported).forEach(key => {
           const data = results.imported[key];
-          if (data.imported) message += `\n${key}: ${data.imported} imported`;
-          if (data.updated) message += `, ${data.updated} updated`;
+          const parts = [];
+          if (data.imported) parts.push(`${data.imported} imported`);
+          if (data.updated) parts.push(`${data.updated} updated`);
+          if (data.skipped) parts.push(`${data.skipped} skipped`);
+          if (parts.length > 0) {
+            message += `\n${key}: ${parts.join(', ')}`;
+          }
         });
       }
       

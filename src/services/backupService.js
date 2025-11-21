@@ -145,35 +145,69 @@ async function importData(importData, options = {}) {
       try {
         let imported = 0;
         let updated = 0;
+        let skipped = 0;
         for (const target of importData.data.targets) {
-          const existing = await db.collection('targets').findOne({ _id: target._id });
-          if (existing) {
-            if (options.overwrite) {
-              // Convert auth and quickCommands back to JSON strings if needed
-              const updateData = { ...target };
-              if (updateData.auth && typeof updateData.auth === 'object') {
-                updateData.auth = JSON.stringify(updateData.auth);
+          try {
+            // Check if target exists by _id
+            const existingById = await db.collection('targets').findOne({ _id: target._id });
+            if (existingById) {
+              if (options.overwrite) {
+                // Convert auth and quickCommands back to JSON strings if needed
+                const updateData = { ...target };
+                if (updateData.auth && typeof updateData.auth === 'object') {
+                  updateData.auth = JSON.stringify(updateData.auth);
+                }
+                if (updateData.quickCommands && Array.isArray(updateData.quickCommands)) {
+                  updateData.quickCommands = JSON.stringify(updateData.quickCommands);
+                }
+                await db.collection('targets').updateOne({ _id: target._id }, { $set: updateData });
+                updated++;
+              } else {
+                skipped++;
               }
-              if (updateData.quickCommands && Array.isArray(updateData.quickCommands)) {
-                updateData.quickCommands = JSON.stringify(updateData.quickCommands);
+            } else {
+              // Check if target with same name exists (UNIQUE constraint on name)
+              const existingByName = await db.collection('targets').findOne({ name: target.name });
+              if (existingByName) {
+                if (options.overwrite) {
+                  // Update the existing target with the same name
+                  const updateData = { ...target };
+                  if (updateData.auth && typeof updateData.auth === 'object') {
+                    updateData.auth = JSON.stringify(updateData.auth);
+                  }
+                  if (updateData.quickCommands && Array.isArray(updateData.quickCommands)) {
+                    updateData.quickCommands = JSON.stringify(updateData.quickCommands);
+                  }
+                  // Keep the existing _id to avoid conflicts
+                  updateData._id = existingByName._id;
+                  await db.collection('targets').updateOne({ _id: existingByName._id }, { $set: updateData });
+                  updated++;
+                } else {
+                  skipped++;
+                }
+              } else {
+                // Convert auth and quickCommands to JSON strings if needed
+                const insertData = { ...target };
+                if (insertData.auth && typeof insertData.auth === 'object') {
+                  insertData.auth = JSON.stringify(insertData.auth);
+                }
+                if (insertData.quickCommands && Array.isArray(insertData.quickCommands)) {
+                  insertData.quickCommands = JSON.stringify(insertData.quickCommands);
+                }
+                await db.collection('targets').insertOne(insertData);
+                imported++;
               }
-              await db.collection('targets').updateOne({ _id: target._id }, { $set: updateData });
-              updated++;
             }
-          } else {
-            // Convert auth and quickCommands to JSON strings if needed
-            const insertData = { ...target };
-            if (insertData.auth && typeof insertData.auth === 'object') {
-              insertData.auth = JSON.stringify(insertData.auth);
+          } catch (error) {
+            // Handle individual target errors (e.g., UNIQUE constraint)
+            if (error.message.includes('UNIQUE constraint')) {
+              skipped++;
+            } else {
+              throw error;
             }
-            if (insertData.quickCommands && Array.isArray(insertData.quickCommands)) {
-              insertData.quickCommands = JSON.stringify(insertData.quickCommands);
-            }
-            await db.collection('targets').insertOne(insertData);
-            imported++;
           }
         }
-        results.imported.targets = { imported, updated };
+        results.imported.targets = { imported, updated, skipped };
       } catch (error) {
         results.errors.push({ type: 'targets', error: error.message });
       }

@@ -17,6 +17,10 @@ This will:
 - ✅ Clone the repository to `/opt/localping`
 - ✅ Create and configure `.env` file with secure values
 - ✅ Install npm dependencies
+- ✅ Run interactive setup wizard to:
+  - Create admin username and password
+  - Auto-detect and add gateway monitor
+  - Add Cloudflare DNS (1.1.1.1) monitor
 - ✅ Set up ICMP capabilities for ping functionality
 - ✅ Create a systemd service (runs Node.js directly for production)
 - ✅ Enable auto-start on system boot
@@ -25,6 +29,22 @@ This will:
 **Custom installation path:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zebratic/localping/main/install.sh | sudo bash -s - https://github.com/zebratic/localping.git main /custom/path
+```
+
+### Setup Wizard
+
+After installation, the setup wizard will run automatically and prompt you to:
+
+1. **Set admin credentials** - Create an admin username and password
+2. **Configure network monitoring** - Auto-detects your gateway IP
+3. **Add default monitors** - Pre-configures:
+   - Gateway monitoring (ICMP ping)
+   - Cloudflare DNS monitoring at 1.1.1.1 (ICMP ping)
+
+You can re-run the wizard anytime with:
+```bash
+cd /opt/localping
+npm run setup
 ```
 
 ### Manual Setup (for development)
@@ -70,13 +90,17 @@ npm run dev
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+The installation script automatically creates `.env` with secure defaults. Key variables:
 
 ```env
 # Server
 API_PORT=8000
 NODE_ENV=production
-SESSION_SECRET=your_random_secret_here
+SESSION_SECRET=<random-generated>
+
+# Admin Credentials (set by setup wizard)
+ADMIN_PASSWORD=<your-password>
+ADMIN_USERNAME=admin
 
 # Notifications
 NOTIFICATION_ENABLED=true
@@ -87,10 +111,13 @@ PING_INTERVAL=60
 ALERT_COOLDOWN=300
 
 # API Authentication
-ADMIN_API_KEY=localping-admin-key-12345
+ADMIN_API_KEY=<random-generated>
 ```
 
-All data is stored in a local SQLite database at `data/localping.db` - no external dependencies needed!
+**Notes:**
+- All data is stored in a local SQLite database at `data/localping.db` - no external dependencies needed!
+- Admin credentials are created during the setup wizard
+- SESSION_SECRET and ADMIN_API_KEY are auto-generated for security
 
 ## Service Management
 

@@ -21,8 +21,16 @@ async function detectGateway() {
   try {
     const { getDefaultGateway } = require('default-gateway');
     const gateway = await getDefaultGateway();
-    return gateway.gateway;
+
+    if (gateway && gateway.gateway) {
+      console.log(chalk.cyan(`Detected gateway: ${gateway.gateway}`));
+      return gateway.gateway;
+    }
+
+    console.warn(chalk.yellow('Could not detect gateway, no gateway found'));
+    return null;
   } catch (err) {
+    console.warn(chalk.yellow(`Gateway detection error: ${err.message}`));
     return null;
   }
 }
@@ -37,13 +45,13 @@ router.get('/', async (req, res) => {
   try {
     const detectedGateway = await detectGateway();
     res.render('setup/wizard', {
-      detectedGateway: detectedGateway || '192.168.1.1',
+      detectedGateway: detectedGateway || null,
       error: null,
     });
   } catch (err) {
     console.error(chalk.red('Setup page error:'), err.message);
     res.render('setup/wizard', {
-      detectedGateway: '192.168.1.1',
+      detectedGateway: null,
       error: 'Failed to load setup page',
     });
   }
@@ -184,13 +192,16 @@ router.post('/', async (req, res) => {
     console.log(chalk.green('✓ Setup completed successfully'));
 
     // Automatically log the user in after setup
-    if (!req.session) {
-      req.session = {};
-    }
     req.session.adminAuthenticated = true;
 
-    // Redirect to admin dashboard (user is now authenticated)
-    res.redirect('/admin');
+    // Save session before redirecting to ensure cookie is set
+    req.session.save((err) => {
+      if (err) {
+        console.error(chalk.red('Failed to save session during setup:'), err.message);
+      }
+      // Redirect to admin dashboard (user is now authenticated)
+      res.redirect('/admin');
+    });
   } catch (err) {
     console.error(chalk.red('Setup error:'), err.message);
     const detectedGateway = await detectGateway();

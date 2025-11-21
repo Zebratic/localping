@@ -35,17 +35,25 @@ router.post('/login', (req, res) => {
 
   // Check both username and password
   if (providedUsername === storedUsername && providedPassword === storedPassword) {
-    if (!req.session) {
-      req.session = {};
-    }
+    // Set session and explicitly save it
     req.session.adminAuthenticated = true;
-    return res.json({ success: true, message: 'Authenticated' });
-  }
 
-  return res.status(401).json({
-    success: false,
-    error: 'Invalid username or password',
-  });
+    // Save session before responding to ensure cookie is set
+    req.session.save((err) => {
+      if (err) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to save session',
+        });
+      }
+      res.json({ success: true, message: 'Authenticated' });
+    });
+  } else {
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid username or password',
+    });
+  }
 });
 
 // Admin logout

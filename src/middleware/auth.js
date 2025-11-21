@@ -43,22 +43,17 @@ function adminPageAuth(req, res, next) {
     return next();
   }
 
-  console.log(chalk.cyan(`[AUTH] Path: ${req.path}, Method: ${req.method}, Authenticated: ${!!(req.session?.adminAuthenticated)}`));
-
   // Allow login page and login POST endpoint without authentication
   if (req.path === '/login' || (req.method === 'POST' && req.path === '/login')) {
-    console.log(chalk.cyan('[AUTH] Allowing login page access'));
     return next();
   }
 
   // Check if user has valid admin session
   if (req.session && req.session.adminAuthenticated) {
-    console.log(chalk.cyan('[AUTH] User authenticated, allowing access'));
     return next();
   }
 
   // Not authenticated - redirect to login
-  console.log(chalk.yellow(`[AUTH] User not authenticated, denying access to ${req.path}`));
   if (req.headers.accept && req.headers.accept.includes('application/json')) {
     return res.status(401).json({
       success: false,

@@ -190,13 +190,13 @@ chmod 644 "/etc/systemd/system/${SERVICE_NAME}.service"
 # Reload systemd
 systemctl daemon-reload
 
-# Enable and start the service
+# Enable and start/restart the service
 echo "🚀 Starting LocalPing service..."
 systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
+systemctl restart "$SERVICE_NAME"
 
 # Wait for service to start
-sleep 2
+sleep 3
 
 echo "✅ Systemd service created and enabled"
 echo ""
@@ -216,9 +216,15 @@ if [ -z "$IP_ADDR" ]; then
 fi
 
 echo "📊 Access LocalPing:"
-echo "   Admin Panel:  http://$IP_ADDR:8000/admin"
+echo "   Setup Wizard: http://$IP_ADDR:8000/setup"
 echo "   Public Page:  http://$IP_ADDR:8000"
 echo "   API:          http://$IP_ADDR:8000/api"
+echo ""
+echo "🔧 First Time Setup:"
+echo "   1. Visit http://$IP_ADDR:8000/setup to complete configuration"
+echo "   2. Create admin credentials and configure gateway IP"
+echo "   3. You'll be redirected to login at http://$IP_ADDR:8000/admin/login"
+echo "   4. Login to access the admin panel"
 echo ""
 echo "📖 Useful Commands:"
 echo "   View logs:          journalctl -u $SERVICE_NAME -f"

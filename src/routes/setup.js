@@ -101,11 +101,19 @@ router.post('/', async (req, res) => {
       envContent = fs.readFileSync(envPath, 'utf8');
     }
 
-    // Add admin credentials
-    if (!envContent.includes('ADMIN_PASSWORD=')) {
-      envContent += `\n# Admin Credentials (set during setup)\nADMIN_PASSWORD=${adminPassword}\nADMIN_USERNAME=${adminUsername}\n`;
+    // Add admin credentials - handle both commented and uncommented lines
+    if (!envContent.includes('ADMIN_PASSWORD') || envContent.includes('# ADMIN_PASSWORD')) {
+      // Either no ADMIN_PASSWORD at all, or it's commented out - replace commented line or add new line
+      if (envContent.includes('# ADMIN_PASSWORD')) {
+        // Replace commented line with uncommented one
+        envContent = envContent.replace(/# ADMIN_PASSWORD=.*/g, `ADMIN_PASSWORD=${adminPassword}`);
+        envContent = envContent.replace(/# ADMIN_USERNAME=.*/g, `ADMIN_USERNAME=${adminUsername}`);
+      } else {
+        // Add new lines
+        envContent += `\n# Admin Credentials (set during setup)\nADMIN_PASSWORD=${adminPassword}\nADMIN_USERNAME=${adminUsername}\n`;
+      }
     } else {
-      // Update existing
+      // Update existing uncommented lines
       envContent = envContent.replace(/ADMIN_PASSWORD=.*/g, `ADMIN_PASSWORD=${adminPassword}`);
       envContent = envContent.replace(/ADMIN_USERNAME=.*/g, `ADMIN_USERNAME=${adminUsername}`);
     }

@@ -17,8 +17,9 @@ This will:
 - ✅ Clone the repository to `/opt/localping`
 - ✅ Create and configure `.env` file with secure values
 - ✅ Install npm dependencies
-- ✅ Set up ICMP capabilities
-- ✅ Create a systemd service for auto-start on boot
+- ✅ Set up ICMP capabilities for ping functionality
+- ✅ Create a systemd service (runs Node.js directly for production)
+- ✅ Enable auto-start on system boot
 - ✅ Start the service immediately
 
 **Custom installation path:**
@@ -93,7 +94,9 @@ All data is stored in a local SQLite database at `data/localping.db` - no extern
 
 ## Service Management
 
-### Using Systemd (After Automated Install)
+### Production (Systemd)
+
+The automated installer sets up systemd to run Node.js directly. This is the recommended way to run LocalPing in production.
 
 ```bash
 # Check service status
@@ -111,11 +114,16 @@ systemctl restart localping
 # View real-time logs
 journalctl -u localping -f
 
-# View recent logs
+# View last 100 lines of logs
 journalctl -u localping -n 100
+
+# View logs since last boot
+journalctl -u localping -b
 ```
 
-### Using PM2 (Direct)
+### Development (PM2)
+
+PM2 is installed for development purposes. It provides process management and auto-reload features.
 
 ```bash
 # Start with PM2 (from project directory)
@@ -199,11 +207,14 @@ sudo apt install nodejs
 # Check systemd service status
 systemctl status localping
 
-# View systemd logs
+# View systemd logs with details
 journalctl -u localping -n 50
 
+# View full error output
+journalctl -u localping -xe
+
 # Try starting manually to see errors
-cd /opt/localping && npm run pm2:start
+cd /opt/localping && node src/app.js
 ```
 
 **ICMP (ping) not working:**

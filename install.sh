@@ -125,37 +125,34 @@ echo "🔐 Setting ICMP capabilities for Node.js..."
 NODE_PATH=$(which node)
 setcap cap_net_raw=ep "$NODE_PATH" 2>/dev/null || true
 
-echo "📥 Installing PM2 globally..."
-npm install -g pm2 --silent 2>/dev/null || npm install -g pm2
-
 # Get the user who ran sudo
 SERVICE_USER="${SUDO_USER:-root}"
 SERVICE_NAME="localping"
 
 echo "🛠️  Creating systemd service..."
 
-# Create systemd service file
-cat > "/etc/systemd/system/${SERVICE_NAME}.service" << 'SYSTEMD_EOF'
+# Create systemd service file to run Node.js directly (production-optimized)
+cat > "/etc/systemd/system/${SERVICE_NAME}.service" << SYSTEMD_EOF
 [Unit]
 Description=LocalPing - System Uptime Monitor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=forking
-User=SERVICE_USER_PLACEHOLDER
-WorkingDirectory=INSTALL_DIR_PLACEHOLDER
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_DIR
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="NODE_ENV=production"
 
-# Start the service
-ExecStart=/usr/local/bin/pm2 start ecosystem.config.js --name localping
+# Start Node.js app directly
+ExecStart=$(which node) src/app.js
 
-# Restart automatically
-Restart=always
+# Restart automatically on failure
+Restart=on-failure
 RestartSec=10
 
-# Grant ICMP permissions
+# Grant ICMP permissions for ping functionality
 AmbientCapabilities=CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_RAW
 
@@ -168,23 +165,23 @@ ProtectRuntimeDirectory=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
+ReadWritePaths=$INSTALL_DIR/data
 
-# Logs
+# Process management
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=localping
+SyslogIdentifier=$SERVICE_NAME
 
 [Install]
 WantedBy=multi-user.target
 SYSTEMD_EOF
 
-# Replace placeholders
-sed -i "s|SERVICE_USER_PLACEHOLDER|$SERVICE_USER|g" "/etc/systemd/system/${SERVICE_NAME}.service"
-sed -i "s|INSTALL_DIR_PLACEHOLDER|$INSTALL_DIR|g" "/etc/systemd/system/${SERVICE_NAME}.service"
-
 # Set permissions
 chown root:root "/etc/systemd/system/${SERVICE_NAME}.service"
 chmod 644 "/etc/systemd/system/${SERVICE_NAME}.service"
+
+echo "📥 Installing PM2 globally (optional, for development)..."
+npm install -g pm2 --silent 2>/dev/null || npm install -g pm2 || true
 
 # Reload systemd
 systemctl daemon-reload

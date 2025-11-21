@@ -62,7 +62,7 @@ function adminPageAuth(req, res, next) {
   }
 
   // For page requests, redirect to login
-  res.redirect('/login');
+  res.redirect('/admin/login');
 }
 
 /**

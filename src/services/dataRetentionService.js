@@ -1,4 +1,3 @@
-const sqliteService = require('./sqliteService');
 const { getDB } = require('../config/db');
 const chalk = require('../utils/colors');
 
@@ -32,21 +31,16 @@ class DataRetentionService {
   async processRetentionForTarget(targetId) {
     try {
       const retentionDays = await this.getRetentionSettings();
-      const database = sqliteService.getDatabase();
+      const db = getDB();
       
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
-      const cutoffDateStr = cutoffDate.toISOString();
 
       // Get all data points older than retention period
-      const oldDataStmt = database.prepare(`
-        SELECT id, timestamp, success, responseTime
-        FROM ping_results
-        WHERE targetId = ? AND timestamp < ?
-        ORDER BY timestamp ASC
-      `);
-
-      const oldData = oldDataStmt.all(targetId, cutoffDateStr);
+      const oldData = await db.collection('pingResults').find({
+        targetId: targetId,
+        timestamp: { $lt: cutoffDate }
+      }).sort({ timestamp: 1 }).toArray();
 
       if (oldData.length === 0) {
         return { processed: 0, deleted: 0 };
@@ -64,7 +58,6 @@ class DataRetentionService {
       });
 
       let totalDeleted = 0;
-      const deleteStmt = database.prepare('DELETE FROM ping_results WHERE id = ?');
 
       // Process each day
       for (const [dayKey, dayData] of Object.entries(dataByDay)) {
@@ -84,8 +77,8 @@ class DataRetentionService {
         const importantIds = new Set();
         
         // First and last
-        importantIds.add(dayData[0].id);
-        importantIds.add(dayData[dayData.length - 1].id);
+        importantIds.add(dayData[0]._id);
+        importantIds.add(dayData[dayData.length - 1]._id);
 
         // Find min and max response times
         const withResponseTime = dayData.filter(d => d.responseTime !== null);
@@ -96,15 +89,15 @@ class DataRetentionService {
           const maxPoint = withResponseTime.reduce((max, d) => 
             d.responseTime > max.responseTime ? d : max
           );
-          importantIds.add(minPoint.id);
-          importantIds.add(maxPoint.id);
+          importantIds.add(minPoint._id);
+          importantIds.add(maxPoint._id);
         }
 
         // Find status change points (transitions from success to failure or vice versa)
         for (let i = 1; i < dayData.length; i++) {
           if (dayData[i].success !== dayData[i - 1].success) {
-            importantIds.add(dayData[i - 1].id);
-            importantIds.add(dayData[i].id);
+            importantIds.add(dayData[i - 1]._id);
+            importantIds.add(dayData[i]._id);
           }
         }
 
@@ -112,13 +105,13 @@ class DataRetentionService {
         // Calculate sample rate: keep roughly 10-20 points per day
         const sampleRate = Math.max(1, Math.floor(dayData.length / 15));
         for (let i = 0; i < dayData.length; i += sampleRate) {
-          importantIds.add(dayData[i].id);
+          importantIds.add(dayData[i]._id);
         }
 
         // Delete all points not in important set
         for (const row of dayData) {
-          if (!importantIds.has(row.id)) {
-            deleteStmt.run(row.id);
+          if (!importantIds.has(row._id)) {
+            await db.collection('pingResults').deleteOne({ _id: row._id });
             totalDeleted++;
           }
         }
@@ -170,25 +163,21 @@ class DataRetentionService {
   async cleanupOldData() {
     try {
       const retentionDays = await this.getRetentionSettings();
-      const database = sqliteService.getDatabase();
+      const db = getDB();
       
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
-      const cutoffDateStr = cutoffDate.toISOString();
 
       // Delete all data older than retention period
-      const deleteStmt = database.prepare(`
-        DELETE FROM ping_results
-        WHERE timestamp < ?
-      `);
-
-      const result = deleteStmt.run(cutoffDateStr);
+      const result = await db.collection('pingResults').deleteMany({
+        timestamp: { $lt: cutoffDate }
+      });
       
-      if (result.changes > 0) {
-        console.log(chalk.yellow(`⊘ Cleaned up ${result.changes} data points older than ${retentionDays} days`));
+      if (result.deletedCount > 0) {
+        console.log(chalk.yellow(`⊘ Cleaned up ${result.deletedCount} data points older than ${retentionDays} days`));
       }
 
-      return { deleted: result.changes };
+      return { deleted: result.deletedCount };
     } catch (error) {
       console.error(chalk.red('Error cleaning up old data:'), error.message);
       throw error;

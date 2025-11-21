@@ -1,6 +1,6 @@
 const { getDB } = require('../config/db');
 const pingService = require('./pingService');
-const sqliteService = require('./sqliteService');
+// sqliteService removed - using PostgreSQL via db.js now
 const chalk = require('../utils/colors');
 const { v4: uuidv4 } = require('uuid');
 
@@ -8,6 +8,8 @@ class MonitorService {
   constructor() {
     this.intervals = new Map();
     this.targetStatus = new Map(); // Track current status of targets
+    this.debugLogging = false; // Cache debug logging setting
+    this.debugLoggingChecked = false; // Track if we've checked the setting
     this.lastAlertTime = new Map(); // Prevent alert spam
     this.failureCount = new Map(); // Track consecutive failures for retry logic
   }
@@ -78,9 +80,38 @@ class MonitorService {
    */
   async pingTarget(target) {
     try {
+      // Check debug logging setting (cache it, check every 60 seconds)
+      if (!this.debugLoggingChecked || Date.now() - (this.debugLoggingLastCheck || 0) > 60000) {
+        try {
+          const db = getDB();
+          const settings = await db.collection('adminSettings').findOne({ _id: 'settings' });
+          this.debugLogging = settings?.debugLogging === true;
+          this.debugLoggingChecked = true;
+          this.debugLoggingLastCheck = Date.now();
+        } catch (err) {
+          // If we can't check, default to false
+          this.debugLogging = false;
+        }
+      }
+
       // Ping is now non-blocking via worker threads
       const result = await pingService.ping(target);
       const targetIdStr = target._id.toString();
+
+      // Debug logging
+      if (this.debugLogging) {
+        const timestamp = new Date().toISOString();
+        const status = result.success ? chalk.green('✓ UP') : chalk.red('✗ DOWN');
+        const responseTime = result.responseTime ? `${Math.round(result.responseTime)}ms` : 'N/A';
+        const protocol = result.protocol || target.protocol || 'UNKNOWN';
+        console.log(chalk.cyan(`[${timestamp}]`) + ` ${status} ${chalk.yellow(target.name)} (${target.host}:${target.port || 'default'}) - ${protocol} - ${responseTime}`);
+        if (result.error) {
+          console.log(chalk.gray(`  Error: ${result.error}`));
+        }
+        if (result.statusCode) {
+          console.log(chalk.gray(`  Status Code: ${result.statusCode}`));
+        }
+      }
 
       // Get current in-memory status (synchronous, fast)
       const currentStatus = this.targetStatus.get(targetIdStr);
@@ -122,29 +153,34 @@ class MonitorService {
           const db = getDB();
           const timestamp = new Date();
 
-          // Store ping result in MongoDB (non-blocking)
+          // Store ping result in database (non-blocking)
           db.collection('pingResults').insertOne({
             targetId: target._id,
             ...result,
             timestamp,
-          }).catch(err => {
-            // Silently handle DB errors to avoid log spam
-            if (process.env.NODE_ENV === 'development') {
-              console.error(chalk.yellow(`DB write error for ${target.name}:`), err.message);
+          }).then(() => {
+            // Debug logging for successful DB write
+            if (this.debugLogging) {
+              console.log(chalk.gray(`  → Ping result saved to database`));
             }
+          }).catch(err => {
+            // Log DB errors to help diagnose issues
+            console.error(chalk.red(`✗ DB write error for ${target.name}:`), err.message);
+            console.error(chalk.gray('  Error details:'), err);
           });
 
-          // Also store in SQLite for local persistence (non-blocking)
-          sqliteService.storePingResult(targetIdStr, {
-            success: result.success,
-            responseTime: result.responseTime,
-            statusCode: result.statusCode,
-            error: result.error,
-          }, timestamp.toISOString());
+          // Ping results are stored via db.collection('pingResults').insertOne() above
 
           // Update statistics (non-blocking)
-          this.updateStatistics(target, result).catch(() => {
-            // Silently ignore statistics errors
+          this.updateStatistics(target, result).then(() => {
+            // Debug logging for successful statistics update
+            if (this.debugLogging) {
+              console.log(chalk.gray(`  → Statistics updated`));
+            }
+          }).catch((err) => {
+            // Log statistics errors to help diagnose issues
+            console.error(chalk.red(`✗ Statistics update error for ${target.name}:`), err.message);
+            console.error(chalk.gray('  Error details:'), err);
           });
 
           // Handle alerts (non-blocking)

@@ -14,7 +14,10 @@
     "pm2:restart": "pm2 restart all",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "test:backup": "jest __tests__/services/backupService.test.js",
+    "test:backup:watch": "jest __tests__/services/backupService.test.js --watch",
+    "verify:ping": "node scripts/verify-ping-data.js"
   },
   "keywords": [
     "uptime",
@@ -30,7 +33,7 @@
   },
   "dependencies": {
     "axios": "^1.13.2",
-    "better-sqlite3": "^12.4.1",
+    "better-sqlite3": "^12.4.5",
     "chalk": "^5.6.2",
     "cors": "^2.8.5",
     "default-gateway": "^7.2.2",
@@ -43,6 +46,7 @@
     "inquirer": "^13.0.1",
     "isomorphic-form-data": "^2.0.0",
     "nodemon": "^3.1.11",
+    "pg": "^8.13.1",
     "pm2": "^6.0.13",
     "shell-escape": "^0.2.0",
     "tcp-ping": "^0.1.1",

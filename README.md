@@ -84,6 +84,33 @@ sudo setcap cap_net_raw=ep $(which node)
 npm run dev
 ```
 
+## Testing
+
+Unit tests are available to ensure export/import functionality and core services work correctly:
+
+```bash
+# Run all tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with coverage
+npm run test:coverage
+
+# Run backup service tests only
+npm run test:backup
+
+# Or use the test script
+./scripts/run-tests.sh
+```
+
+Test files are located in `__tests__/` directory:
+- `__tests__/services/backupService.test.js` - Tests for export/import functionality
+- `__tests__/services/pingService.test.js` - Tests for ping service
+
+**Important**: Always run tests after making changes to ensure everything still works correctly.
+
 ## License
 
 MIT

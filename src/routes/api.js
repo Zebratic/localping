@@ -124,6 +124,52 @@ router.post('/targets', validateTargetInput, async (req, res) => {
     }
 
     const db = getDB();
+    const faviconService = require('../services/faviconService');
+    
+    // Build target URL for favicon fetching
+    const protocolLower = protocol.toUpperCase();
+    const defaultPort = protocolLower === 'HTTPS' ? 443 : protocolLower === 'HTTP' ? 80 : null;
+    const targetPort = port || defaultPort;
+    const targetPath = path || '/';
+    const targetUrl = targetPort && targetPort !== defaultPort
+      ? `${protocolLower.toLowerCase()}://${host}:${targetPort}${targetPath}`
+      : `${protocolLower.toLowerCase()}://${host}${targetPath}`;
+
+    // Auto-fetch favicon for HTTP/HTTPS if appIcon not provided
+    let fetchedAppIcon = appIcon;
+    let finalAppUrl = appUrl;
+    if ((protocolLower === 'HTTP' || protocolLower === 'HTTPS') && !appIcon) {
+      try {
+        // Parse auth if it's a string
+        let authObj = auth;
+        if (auth && typeof auth === 'string') {
+          try {
+            authObj = JSON.parse(auth);
+          } catch (e) {
+            authObj = null;
+          }
+        }
+
+        const faviconUrl = await faviconService.getFaviconUrlFromHtml(targetUrl, {
+          timeout: (timeout || 30) * 1000,
+          maxRedirects: maxRedirects !== undefined ? maxRedirects : 5,
+          ignoreSsl: ignoreSsl === true,
+          auth: authObj,
+        });
+
+        if (faviconUrl) {
+          fetchedAppIcon = faviconUrl;
+          // Also set appUrl if not provided
+          if (!finalAppUrl) {
+            finalAppUrl = targetUrl;
+          }
+        }
+      } catch (error) {
+        // Silently fail - favicon fetching is optional
+        console.error(`Failed to fetch favicon for ${targetUrl}:`, error.message);
+      }
+    }
+
     const target = {
       name,
       host,
@@ -133,8 +179,8 @@ router.post('/targets', validateTargetInput, async (req, res) => {
       enabled: enabled !== false,
       path: path || null,
       // Application settings
-      appUrl: appUrl || null,
-      appIcon: appIcon || null,
+      appUrl: finalAppUrl || null,
+      appIcon: fetchedAppIcon || null,
       // Retry settings
       retries: retries !== undefined ? retries : 0,
       retryInterval: retryInterval !== undefined ? retryInterval : 5,
@@ -320,74 +366,201 @@ router.get('/targets/:id/statistics', async (req, res) => {
   try {
     const db = getDB();
     const targetId = req.params.id;
-    const days = parseFloat(req.query.days) || 30;
+    const period = req.query.period || (req.query.days ? null : '24h'); // Default to 24h if no period specified
+    const days = parseFloat(req.query.days) || null;
 
-    // For short time periods (<= 1 day), query pingResults directly and aggregate
-    if (days <= 1) {
-      const Database = require('better-sqlite3');
-      const path = require('path');
-      const dbPath = path.join(process.cwd(), 'data', 'localping.db');
-      const sqliteDb = new Database(dbPath);
+    let startDateObj;
+    let endDateObj = new Date();
+    let groupByTrunc;
+    let intervalMinutes;
+    let maxPoints;
 
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      const startDateStr = startDate.toISOString();
-
-      // Aggregate by hour for periods <= 1 day
-      const stmt = sqliteDb.prepare(`
-        SELECT 
-          strftime('%Y-%m-%d %H:00:00', timestamp) as date,
-          COUNT(*) as totalPings,
-          SUM(CASE WHEN success = 1 OR success = 'true' THEN 1 ELSE 0 END) as successfulPings,
-          AVG(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS REAL) ELSE NULL END) as avgResponseTime,
-          MIN(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS INTEGER) ELSE NULL END) as minResponseTime,
-          MAX(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS INTEGER) ELSE NULL END) as maxResponseTime
-        FROM pingResults
-        WHERE targetId = ? AND timestamp >= ?
-        GROUP BY strftime('%Y-%m-%d %H:00:00', timestamp)
-        ORDER BY date ASC
-      `);
+    // Determine grouping based on period
+    if (period === '1h') {
+      // 1H: 60 data points (one per minute)
+      startDateObj = new Date();
+      startDateObj.setHours(startDateObj.getHours() - 1);
+      groupByTrunc = "date_trunc('minute', timestamp)";
+      intervalMinutes = 1;
+      maxPoints = 60;
+    } else if (period === '24h') {
+      // 24H: 48 data points (every 30 minutes)
+      startDateObj = new Date();
+      startDateObj.setHours(startDateObj.getHours() - 24);
+      groupByTrunc = "to_timestamp(FLOOR(EXTRACT(EPOCH FROM timestamp) / 1800) * 1800)";
+      intervalMinutes = 30;
+      maxPoints = 48;
+    } else if (period === '7d') {
+      // 7D: 56 data points (every 3 hours)
+      startDateObj = new Date();
+      startDateObj.setDate(startDateObj.getDate() - 7);
+      groupByTrunc = "to_timestamp(FLOOR(EXTRACT(EPOCH FROM timestamp) / 10800) * 10800)";
+      intervalMinutes = 180;
+      maxPoints = 56;
+    } else if (period === '30d') {
+      // 30D: 60 data points (every 12 hours)
+      startDateObj = new Date();
+      startDateObj.setDate(startDateObj.getDate() - 30);
+      groupByTrunc = "to_timestamp(FLOOR(EXTRACT(EPOCH FROM timestamp) / 43200) * 43200)";
+      intervalMinutes = 720;
+      maxPoints = 60;
+    } else if (period === 'all') {
+      // ALL: 60 data points spread evenly since monitor creation
+      const firstPingResult = await db.query(`
+        SELECT MIN(timestamp) as first_timestamp
+        FROM "pingResults"
+        WHERE "targetId" = $1
+      `, [targetId]);
       
-      // Get last response time separately
-      const lastResponseStmt = sqliteDb.prepare(`
-        SELECT responseTime FROM pingResults 
-        WHERE targetId = ? AND timestamp >= ? 
-        ORDER BY timestamp DESC LIMIT 1
-      `);
-
-      const results = stmt.all(targetId, startDateStr);
-      const lastResponse = lastResponseStmt.get(targetId, startDateStr);
-      sqliteDb.close();
-
-      const stats = results.map(r => ({
-        date: r.date,
-        totalPings: r.totalPings || 0,
-        successfulPings: r.successfulPings || 0,
-        failedPings: (r.totalPings || 0) - (r.successfulPings || 0),
-        uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
-        avgResponseTime: r.avgResponseTime || 0,
-        minResponseTime: r.minResponseTime || null,
-        maxResponseTime: r.maxResponseTime || null,
-        lastResponseTime: lastResponse?.responseTime || 0,
-      }));
-
-      return res.json({ success: true, statistics: stats });
+      if (firstPingResult.rows[0] && firstPingResult.rows[0].first_timestamp) {
+        startDateObj = new Date(firstPingResult.rows[0].first_timestamp);
+        const totalSeconds = Math.floor((endDateObj - startDateObj) / 1000);
+        // Calculate interval to get exactly 60 points
+        intervalMinutes = Math.max(1, Math.floor(totalSeconds / 60 / 60));
+        maxPoints = 60;
+      } else {
+        // No data, return empty
+        return res.json({ success: true, statistics: [] });
+      }
+    } else if (days !== null) {
+      // Fallback to days parameter for backward compatibility
+      startDateObj = new Date();
+      startDateObj.setDate(startDateObj.getDate() - days);
+      if (days <= 1) {
+        groupByTrunc = "date_trunc('hour', timestamp)";
+        intervalMinutes = 60;
+        maxPoints = 24;
+      } else {
+        groupByTrunc = "date_trunc('day', timestamp)";
+        intervalMinutes = 1440;
+        maxPoints = days;
+      }
+    } else {
+      // Default to 24h
+      startDateObj = new Date();
+      startDateObj.setHours(startDateObj.getHours() - 24);
+      groupByTrunc = "date_trunc('minute', timestamp) - (EXTRACT(MINUTE FROM timestamp)::integer % 30 || ' minutes')::interval";
+      intervalMinutes = 30;
+      maxPoints = 48;
     }
 
-    // For longer periods, use daily statistics table
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
+    // Generate evenly spaced time buckets and aggregate data into them
+    // This ensures we always get the exact number of points requested
+    const intervalSeconds = intervalMinutes * 60;
+    const startEpoch = Math.floor(startDateObj.getTime() / 1000);
+    const endEpoch = Math.floor(endDateObj.getTime() / 1000);
+    
+    // Generate time buckets using generate_series
+    const result = await db.query(`
+      WITH time_buckets AS (
+        SELECT 
+          to_timestamp(bucket_epoch) as bucket_time
+        FROM generate_series($2::bigint, $3::bigint, $5::bigint) as bucket_epoch
+        ORDER BY bucket_epoch
+        LIMIT $4
+      )
+      SELECT 
+        time_buckets.bucket_time::text as date,
+        COALESCE(COUNT(pr._id), 0)::integer as "totalPings",
+        COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
+        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime",
+        MIN(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "minResponseTime",
+        MAX(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "maxResponseTime"
+      FROM time_buckets
+      LEFT JOIN "pingResults" pr ON 
+        pr."targetId" = $1 
+        AND pr.timestamp >= time_buckets.bucket_time 
+        AND pr.timestamp < time_buckets.bucket_time + ($5 || ' seconds')::interval
+      GROUP BY time_buckets.bucket_time
+      ORDER BY time_buckets.bucket_time ASC
+    `, [targetId, startEpoch, endEpoch, maxPoints, intervalSeconds]);
+    
+    // Get last response time separately
+    const lastResponseResult = await db.query(`
+      SELECT "responseTime" FROM "pingResults" 
+      WHERE "targetId" = $1 AND timestamp >= $2 AND timestamp <= $3
+      ORDER BY timestamp DESC LIMIT 1
+    `, [targetId, startDateObj, endDateObj]);
 
-    const stats = await db
-      .collection('statistics')
-      .find({
-        targetId,
-        date: { $gte: startDate },
-      })
-      .sort({ date: -1 })
-      .toArray();
+    const results = result.rows; // Already in chronological order
+    const lastResponse = lastResponseResult.rows[0] || null;
 
-    res.json({ success: true, statistics: stats });
+    const stats = results.map(r => ({
+      date: r.date,
+      totalPings: r.totalPings || 0,
+      successfulPings: r.successfulPings || 0,
+      failedPings: (r.totalPings || 0) - (r.successfulPings || 0),
+      uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
+      avgResponseTime: r.avgResponseTime || 0,
+      minResponseTime: r.minResponseTime || null,
+      maxResponseTime: r.maxResponseTime || null,
+      lastResponseTime: lastResponse?.responseTime || 0,
+    }));
+
+    // Get uptime data for 24h and 30d, plus daily stats for blocks
+    const uptime24hStart = new Date();
+    uptime24hStart.setDate(uptime24hStart.getDate() - 1);
+    uptime24hStart.setHours(0, 0, 0, 0);
+    
+    const uptime30dStart = new Date();
+    uptime30dStart.setDate(uptime30dStart.getDate() - 30);
+    uptime30dStart.setHours(0, 0, 0, 0);
+
+    // Get 24h uptime
+    const uptime24hResult = await db.query(`
+      SELECT 
+        SUM("totalPings")::bigint as "totalPings",
+        SUM("successfulPings")::bigint as "successfulPings"
+      FROM statistics
+      WHERE "targetId" = $1 AND date >= $2
+    `, [targetId, uptime24hStart]);
+    
+    const uptime24hData = uptime24hResult.rows[0] || { totalPings: 0, successfulPings: 0 };
+    const uptime24h = uptime24hData.totalPings > 0 
+      ? (uptime24hData.successfulPings / uptime24hData.totalPings) * 100 
+      : 0;
+
+    // Get 30d uptime and daily stats
+    const uptime30dResult = await db.query(`
+      SELECT 
+        date::date as date,
+        "totalPings",
+        "successfulPings",
+        "failedPings",
+        uptime
+      FROM statistics
+      WHERE "targetId" = $1 AND date >= $2
+      ORDER BY date ASC
+    `, [targetId, uptime30dStart]);
+
+    const dailyStats = uptime30dResult.rows;
+    let totalPings30d = 0;
+    let successfulPings30d = 0;
+    dailyStats.forEach(stat => {
+      totalPings30d += stat.totalPings || 0;
+      successfulPings30d += stat.successfulPings || 0;
+    });
+    const uptime30d = totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0;
+
+    return res.json({ 
+      success: true, 
+      statistics: stats,
+      uptime: {
+        '24h': {
+          uptime: uptime24h,
+          totalPings: uptime24hData.totalPings || 0,
+          successfulPings: uptime24hData.successfulPings || 0,
+          failedPings: (uptime24hData.totalPings || 0) - (uptime24hData.successfulPings || 0)
+        },
+        '30d': {
+          uptime: uptime30d,
+          totalPings: totalPings30d,
+          successfulPings: successfulPings30d,
+          failedPings: totalPings30d - successfulPings30d
+        }
+      },
+      dailyStats: dailyStats // For uptime blocks
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

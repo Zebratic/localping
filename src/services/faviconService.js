@@ -7,7 +7,7 @@ class FaviconService {
    * @param {string} url - The URL to get favicon from (e.g., https://example.com)
    * @returns {Promise<string|null>} - Base64 encoded favicon data or null if not found
    */
-  async getFavicon(url) {
+  async getFavicon(url, options = {}) {
     if (!url) return null;
 
     try {
@@ -23,7 +23,7 @@ class FaviconService {
       }
 
       // Method 2: Try fetching HTML and looking for favicon link tag
-      const htmlFavicon = await this.getFaviconFromHtml(baseUrl);
+      const htmlFavicon = await this.getFaviconFromHtml(baseUrl, options);
       if (htmlFavicon) {
         return htmlFavicon;
       }
@@ -67,13 +67,37 @@ class FaviconService {
   /**
    * Parse HTML and extract favicon link
    */
-  async getFaviconFromHtml(baseUrl) {
+  async getFaviconFromHtml(baseUrl, options = {}) {
     try {
-      const response = await axios.get(baseUrl, {
-        timeout: 5000,
+      const axiosConfig = {
+        timeout: options.timeout || 5000,
         validateStatus: (status) => status < 400,
-        maxRedirects: 5,
-      });
+        maxRedirects: options.maxRedirects || 5,
+      };
+
+      // Handle SSL/TLS options
+      if (options.ignoreSsl === true) {
+        const httpsAgent = require('https').Agent({ rejectUnauthorized: false });
+        const httpAgent = require('http').Agent({ rejectUnauthorized: false });
+        axiosConfig.httpsAgent = httpsAgent;
+        axiosConfig.httpAgent = httpAgent;
+      }
+
+      // Handle authentication
+      if (options.auth) {
+        if (options.auth.type === 'basic') {
+          axiosConfig.auth = {
+            username: options.auth.username,
+            password: options.auth.password,
+          };
+        } else if (options.auth.type === 'bearer') {
+          axiosConfig.headers = {
+            'Authorization': `Bearer ${options.auth.token}`,
+          };
+        }
+      }
+
+      const response = await axios.get(baseUrl, axiosConfig);
 
       if (response.status !== 200 || !response.data) {
         return null;
@@ -81,32 +105,110 @@ class FaviconService {
 
       const html = response.data;
 
-      // Look for apple-touch-icon first (highest priority)
-      let match = html.match(/<link[^>]*rel="apple-touch-icon"[^>]*href="([^"]+)"/i);
-      if (match) {
-        const iconUrl = this.resolveUrl(match[1], baseUrl);
-        return await this.fetchFaviconAsBase64(iconUrl);
+      // Extract all link tags with rel containing icon
+      const linkMatches = html.matchAll(/<link[^>]*>/gi);
+      const faviconLinks = [];
+      
+      for (const linkMatch of linkMatches) {
+        const linkTag = linkMatch[0];
+        const relMatch = linkTag.match(/rel=["']([^"']+)["']/i);
+        if (relMatch && /icon/i.test(relMatch[1])) {
+          const hrefMatch = linkTag.match(/href=["']([^"']+)["']/i);
+          if (hrefMatch) {
+            faviconLinks.push({
+              rel: relMatch[1].toLowerCase(),
+              href: hrefMatch[1],
+              priority: this.getFaviconPriority(relMatch[1])
+            });
+          }
+        }
       }
 
-      // Look for icon with type attribute (often higher quality)
-      match = html.match(/<link[^>]*rel="icon"[^>]*type="image\/png"[^>]*href="([^"]+)"/i);
-      if (match) {
-        const iconUrl = this.resolveUrl(match[1], baseUrl);
-        return await this.fetchFaviconAsBase64(iconUrl);
+      // Sort by priority (higher priority first)
+      faviconLinks.sort((a, b) => b.priority - a.priority);
+
+      // Try each favicon in priority order
+      for (const link of faviconLinks) {
+        const iconUrl = this.resolveUrl(link.href, baseUrl);
+        const faviconData = await this.fetchFaviconAsBase64(iconUrl);
+        if (faviconData) {
+          return faviconData;
+        }
       }
 
-      // Look for any icon
-      match = html.match(/<link[^>]*rel="icon"[^>]*href="([^"]+)"/i);
-      if (match) {
-        const iconUrl = this.resolveUrl(match[1], baseUrl);
-        return await this.fetchFaviconAsBase64(iconUrl);
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Get favicon URL from HTML (returns URL string instead of base64)
+   * Useful for storing just the URL
+   */
+  async getFaviconUrlFromHtml(baseUrl, options = {}) {
+    try {
+      const axiosConfig = {
+        timeout: options.timeout || 5000,
+        validateStatus: (status) => status < 400,
+        maxRedirects: options.maxRedirects || 5,
+      };
+
+      // Handle SSL/TLS options
+      if (options.ignoreSsl === true) {
+        const httpsAgent = require('https').Agent({ rejectUnauthorized: false });
+        const httpAgent = require('http').Agent({ rejectUnauthorized: false });
+        axiosConfig.httpsAgent = httpsAgent;
+        axiosConfig.httpAgent = httpAgent;
       }
 
-      // Look for shortcut icon
-      match = html.match(/<link[^>]*rel="shortcut icon"[^>]*href="([^"]+)"/i);
-      if (match) {
-        const iconUrl = this.resolveUrl(match[1], baseUrl);
-        return await this.fetchFaviconAsBase64(iconUrl);
+      // Handle authentication
+      if (options.auth) {
+        if (options.auth.type === 'basic') {
+          axiosConfig.auth = {
+            username: options.auth.username,
+            password: options.auth.password,
+          };
+        } else if (options.auth.type === 'bearer') {
+          axiosConfig.headers = {
+            'Authorization': `Bearer ${options.auth.token}`,
+          };
+        }
+      }
+
+      const response = await axios.get(baseUrl, axiosConfig);
+
+      if (response.status !== 200 || !response.data) {
+        return null;
+      }
+
+      const html = response.data;
+
+      // Extract all link tags with rel containing icon
+      const linkMatches = html.matchAll(/<link[^>]*>/gi);
+      const faviconLinks = [];
+      
+      for (const linkMatch of linkMatches) {
+        const linkTag = linkMatch[0];
+        const relMatch = linkTag.match(/rel=["']([^"']+)["']/i);
+        if (relMatch && /icon/i.test(relMatch[1])) {
+          const hrefMatch = linkTag.match(/href=["']([^"']+)["']/i);
+          if (hrefMatch) {
+            faviconLinks.push({
+              rel: relMatch[1].toLowerCase(),
+              href: hrefMatch[1],
+              priority: this.getFaviconPriority(relMatch[1])
+            });
+          }
+        }
+      }
+
+      // Sort by priority (higher priority first)
+      faviconLinks.sort((a, b) => b.priority - a.priority);
+
+      // Return the highest priority favicon URL
+      if (faviconLinks.length > 0) {
+        return this.resolveUrl(faviconLinks[0].href, baseUrl);
       }
 
       return null;
@@ -146,16 +248,30 @@ class FaviconService {
    * Resolve relative URLs to absolute
    */
   resolveUrl(url, baseUrl) {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
+    // Remove query strings and fragments for matching
+    const cleanUrl = url.split('?')[0].split('#')[0];
+    
+    if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
+      return url; // Return original with query string if present
     }
 
-    const urlObj = new URL(baseUrl);
-    if (url.startsWith('/')) {
-      return `${urlObj.protocol}//${urlObj.host}${url}`;
-    }
+    try {
+      const urlObj = new URL(baseUrl);
+      if (cleanUrl.startsWith('/')) {
+        return `${urlObj.protocol}//${urlObj.host}${url}`;
+      }
 
-    return `${urlObj.protocol}//${urlObj.host}/${url}`;
+      // Handle relative paths
+      const basePath = urlObj.pathname || '/';
+      const baseDir = basePath.substring(0, basePath.lastIndexOf('/') + 1);
+      return `${urlObj.protocol}//${urlObj.host}${baseDir}${url}`;
+    } catch (error) {
+      // If URL parsing fails, try simple string concatenation
+      if (cleanUrl.startsWith('/')) {
+        return baseUrl.replace(/\/$/, '') + url;
+      }
+      return baseUrl.replace(/\/$/, '') + '/' + url;
+    }
   }
 
   /**
@@ -172,6 +288,19 @@ class FaviconService {
     if (type.includes('webp')) return 'image/webp';
 
     return 'image/x-icon';
+  }
+
+  /**
+   * Get priority for favicon rel types (higher = better)
+   */
+  getFaviconPriority(rel) {
+    const relLower = rel.toLowerCase();
+    if (relLower.includes('apple-touch-icon')) return 5;
+    if (relLower.includes('icon') && relLower.includes('mask')) return 4;
+    if (relLower === 'icon') return 3;
+    if (relLower.includes('shortcut') && relLower.includes('icon')) return 2;
+    if (relLower.includes('icon')) return 1;
+    return 0;
   }
 }
 

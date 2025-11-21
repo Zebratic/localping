@@ -254,7 +254,7 @@ async function loadPingChart(targetId, days = 1) {
         ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : days <= 1
         ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       labels.push(label);
       data.push(stat.avgResponseTime || 0);
     });

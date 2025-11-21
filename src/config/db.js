@@ -1,49 +1,72 @@
 require('dotenv').config();
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 const chalk = require('../utils/colors');
 const cacheService = require('../services/cacheService');
 
-let db = null;
+let pool = null;
 
 const connectDB = async () => {
   try {
-    const dbDir = path.join(process.cwd(), 'data');
-    const dbPath = path.join(dbDir, 'localping.db');
+    // Get database connection details from environment or use defaults
+    const dbConfig = {
+      host: process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT || 5432,
+      database: process.env.DB_NAME || 'localping',
+      user: process.env.DB_USER || 'localping',
+      password: process.env.DB_PASSWORD || 'localping',
+      max: 20, // Maximum number of clients in the pool
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    };
 
-    // Ensure data directory exists
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
+    pool = new Pool(dbConfig);
 
-    db = new Database(dbPath);
-
-    // Enable foreign keys
-    db.pragma('foreign_keys = ON');
+    // Test connection
+    const client = await pool.connect();
+    await client.query('SELECT NOW()');
+    client.release();
 
     // Initialize tables
-    initializeTables();
+    await initializeTables();
 
-    console.log(chalk.green('✓ SQLite database connected at:'), dbPath);
+    console.log(chalk.green('✓ PostgreSQL database connected'));
 
     // Return a minimal object compatible with the rest of the code
     return {
       collection: (name) => createCollectionWrapper(name),
       admin: () => ({
-        ping: async () => true
+        ping: async () => {
+          try {
+            const client = await pool.connect();
+            await client.query('SELECT 1');
+            client.release();
+            return true;
+          } catch (error) {
+            return false;
+          }
+        }
       })
     };
   } catch (error) {
-    console.error(chalk.red('✗ SQLite connection failed:'), error.message);
+    console.error(chalk.red('✗ PostgreSQL connection failed:'), error.message);
     process.exit(1);
   }
 };
 
-const initializeTables = () => {
+const executeQuery = async (text, params) => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(text, params);
+    return result;
+  } finally {
+    client.release();
+  }
+};
+
+const initializeTables = async () => {
   try {
     // Targets table
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS targets (
         _id TEXT PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
@@ -51,194 +74,241 @@ const initializeTables = () => {
         protocol TEXT NOT NULL,
         port INTEGER,
         path TEXT,
-        enabled BOOLEAN DEFAULT 1,
-        publicVisible BOOLEAN DEFAULT 1,
-        publicShowDetails BOOLEAN DEFAULT 0,
+        enabled BOOLEAN DEFAULT true,
+        "publicVisible" BOOLEAN DEFAULT true,
+        "publicShowDetails" BOOLEAN DEFAULT false,
+        "publicShowStatus" BOOLEAN DEFAULT true,
+        "publicShowAppLink" BOOLEAN DEFAULT true,
         interval INTEGER DEFAULT 60,
         retries INTEGER DEFAULT 0,
-        retryInterval INTEGER DEFAULT 5,
+        "retryInterval" INTEGER DEFAULT 5,
         timeout INTEGER DEFAULT 30,
-        httpMethod TEXT DEFAULT 'GET',
-        statusCodes TEXT DEFAULT '200-299',
-        maxRedirects INTEGER DEFAULT 5,
-        ignoreSsl BOOLEAN DEFAULT 0,
-        upsideDown BOOLEAN DEFAULT 0,
+        "httpMethod" TEXT DEFAULT 'GET',
+        "statusCodes" TEXT DEFAULT '200-299',
+        "maxRedirects" INTEGER DEFAULT 5,
+        "ignoreSsl" BOOLEAN DEFAULT false,
+        "upsideDown" BOOLEAN DEFAULT false,
         auth TEXT,
-        appUrl TEXT,
-        appIcon TEXT,
+        "appUrl" TEXT,
+        "appIcon" TEXT,
         position INTEGER DEFAULT 0,
         "group" TEXT,
-        quickCommands TEXT,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        "quickCommands" TEXT,
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
     // Migration: Add publicVisible column if it doesn't exist
     try {
-      db.exec(`ALTER TABLE targets ADD COLUMN publicVisible BOOLEAN DEFAULT 1`);
+      await executeQuery(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "publicVisible" BOOLEAN DEFAULT true`);
     } catch (error) {
       // Column already exists, ignore
     }
 
     // Migration: Add publicShowDetails column if it doesn't exist
     try {
-      db.exec(`ALTER TABLE targets ADD COLUMN publicShowDetails BOOLEAN DEFAULT 0`);
+      await executeQuery(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "publicShowDetails" BOOLEAN DEFAULT false`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Migration: Add publicShowStatus column if it doesn't exist
+    try {
+      await executeQuery(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "publicShowStatus" BOOLEAN DEFAULT true`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Migration: Add publicShowAppLink column if it doesn't exist
+    try {
+      await executeQuery(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "publicShowAppLink" BOOLEAN DEFAULT true`);
     } catch (error) {
       // Column already exists, ignore
     }
 
     // Ping results table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS pingResults (
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS "pingResults" (
         _id TEXT PRIMARY KEY,
-        targetId TEXT NOT NULL,
+        "targetId" TEXT NOT NULL,
         success BOOLEAN NOT NULL,
-        responseTime INTEGER,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        statusCode INTEGER,
+        "responseTime" INTEGER,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "statusCode" INTEGER,
         error TEXT,
         protocol TEXT,
-        FOREIGN KEY(targetId) REFERENCES targets(_id)
+        FOREIGN KEY("targetId") REFERENCES targets(_id)
       )
     `);
 
     // Alerts table
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS alerts (
         _id TEXT PRIMARY KEY,
-        targetId TEXT NOT NULL,
+        "targetId" TEXT NOT NULL,
         type TEXT NOT NULL,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         message TEXT,
-        FOREIGN KEY(targetId) REFERENCES targets(_id)
+        FOREIGN KEY("targetId") REFERENCES targets(_id)
       )
     `);
 
     // Statistics table
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS statistics (
         _id TEXT PRIMARY KEY,
-        targetId TEXT NOT NULL,
+        "targetId" TEXT NOT NULL,
         date DATE NOT NULL,
-        totalPings INTEGER DEFAULT 0,
-        successfulPings INTEGER DEFAULT 0,
-        failedPings INTEGER DEFAULT 0,
+        "totalPings" INTEGER DEFAULT 0,
+        "successfulPings" INTEGER DEFAULT 0,
+        "failedPings" INTEGER DEFAULT 0,
         uptime REAL DEFAULT 0,
-        lastResponseTime INTEGER DEFAULT 0,
-        avgResponseTime REAL DEFAULT 0,
-        minResponseTime INTEGER,
-        maxResponseTime INTEGER,
-        FOREIGN KEY(targetId) REFERENCES targets(_id),
-        UNIQUE(targetId, date)
+        "lastResponseTime" INTEGER DEFAULT 0,
+        "avgResponseTime" REAL DEFAULT 0,
+        "minResponseTime" INTEGER,
+        "maxResponseTime" INTEGER,
+        FOREIGN KEY("targetId") REFERENCES targets(_id),
+        UNIQUE("targetId", date)
       )
     `);
 
     // Incidents table
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS incidents (
         _id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         description TEXT,
         severity TEXT DEFAULT 'major',
         status TEXT DEFAULT 'investigating',
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        "affectedServices" TEXT,
+        updates TEXT,
+        "resolvedAt" TIMESTAMP,
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
+    // Migration: Add affectedServices column if it doesn't exist
+    try {
+      await executeQuery(`ALTER TABLE incidents ADD COLUMN IF NOT EXISTS "affectedServices" TEXT`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Migration: Add updates column if it doesn't exist
+    try {
+      await executeQuery(`ALTER TABLE incidents ADD COLUMN IF NOT EXISTS updates TEXT`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Migration: Add resolvedAt column if it doesn't exist
+    try {
+      await executeQuery(`ALTER TABLE incidents ADD COLUMN IF NOT EXISTS "resolvedAt" TIMESTAMP`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
     // Actions table
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS actions (
         _id TEXT PRIMARY KEY,
-        targetId TEXT NOT NULL,
+        "targetId" TEXT NOT NULL,
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         command TEXT,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(targetId) REFERENCES targets(_id),
-        UNIQUE(targetId, name)
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY("targetId") REFERENCES targets(_id),
+        UNIQUE("targetId", name)
       )
     `);
 
     // Favicons table
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS favicons (
         _id TEXT PRIMARY KEY,
-        appUrl TEXT NOT NULL UNIQUE,
+        "appUrl" TEXT NOT NULL UNIQUE,
         favicon TEXT,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
     // Public UI Settings table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS publicUISettings (
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS "publicUISettings" (
         _id TEXT PRIMARY KEY DEFAULT 'settings',
         title TEXT DEFAULT 'Homelab',
         subtitle TEXT DEFAULT 'System Status & Application Dashboard',
-        customCSS TEXT,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        "customCSS" TEXT,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
     // Initialize default settings if not exists
-    db.exec(`
-      INSERT OR IGNORE INTO publicUISettings (_id, title, subtitle, customCSS)
+    await executeQuery(`
+      INSERT INTO "publicUISettings" (_id, title, subtitle, "customCSS")
       VALUES ('settings', 'Homelab', 'System Status & Application Dashboard', NULL)
+      ON CONFLICT (_id) DO NOTHING
     `);
 
     // Posts table (for blog/changelog)
-    db.exec(`
+    await executeQuery(`
       CREATE TABLE IF NOT EXISTS posts (
         _id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         content TEXT NOT NULL,
-        published BOOLEAN DEFAULT 1,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        published BOOLEAN DEFAULT true,
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
     // Admin Settings table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS adminSettings (
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS "adminSettings" (
         _id TEXT PRIMARY KEY DEFAULT 'settings',
-        sessionDurationDays INTEGER DEFAULT 30,
-        dataRetentionDays INTEGER DEFAULT 30,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        "sessionDurationDays" INTEGER DEFAULT 30,
+        "dataRetentionDays" INTEGER DEFAULT 30,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
     // Migration: Add dataRetentionDays column if it doesn't exist
     try {
-      db.exec(`ALTER TABLE adminSettings ADD COLUMN dataRetentionDays INTEGER DEFAULT 30`);
+      await executeQuery(`ALTER TABLE "adminSettings" ADD COLUMN IF NOT EXISTS "dataRetentionDays" INTEGER DEFAULT 30`);
+    } catch (error) {
+      // Column already exists, ignore
+    }
+
+    // Migration: Add debugLogging column if it doesn't exist
+    try {
+      await executeQuery(`ALTER TABLE "adminSettings" ADD COLUMN IF NOT EXISTS "debugLogging" BOOLEAN DEFAULT false`);
     } catch (error) {
       // Column already exists, ignore
     }
 
     // Initialize default admin settings if not exists
-    db.exec(`
-      INSERT OR IGNORE INTO adminSettings (_id, sessionDurationDays, dataRetentionDays)
+    await executeQuery(`
+      INSERT INTO "adminSettings" (_id, "sessionDurationDays", "dataRetentionDays")
       VALUES ('settings', 30, 30)
+      ON CONFLICT (_id) DO NOTHING
     `);
 
     // Create indices
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);
-      CREATE INDEX IF NOT EXISTS idx_pingResults_targetId ON pingResults(targetId);
-      CREATE INDEX IF NOT EXISTS idx_pingResults_timestamp ON pingResults(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_alerts_targetId ON alerts(targetId);
-      CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_statistics_targetId ON statistics(targetId);
-      CREATE INDEX IF NOT EXISTS idx_statistics_date ON statistics(date);
-      CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
-      CREATE INDEX IF NOT EXISTS idx_actions_targetId ON actions(targetId);
-      CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published);
-      CREATE INDEX IF NOT EXISTS idx_posts_createdAt ON posts(createdAt);
-    `);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_pingResults_targetId ON "pingResults"("targetId")`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_pingResults_timestamp ON "pingResults"(timestamp)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_alerts_targetId ON alerts("targetId")`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_statistics_targetId ON statistics("targetId")`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_statistics_date ON statistics(date)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_actions_targetId ON actions("targetId")`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_posts_createdAt ON posts("createdAt")`);
 
-    console.log(chalk.green('✓ SQLite tables initialized'));
+    console.log(chalk.green('✓ PostgreSQL tables initialized'));
   } catch (error) {
     console.error(chalk.yellow('⚠ Warning initializing tables:'), error.message);
   }
@@ -260,7 +330,7 @@ const getTTL = (collectionName) => {
 
 const createCollectionWrapper = (name) => {
   return {
-    find: (query = {}) => {
+    find: (queryObj = {}) => {
       // Store options for chaining
       let sortOption = null;
       let limitOption = null;
@@ -277,19 +347,20 @@ const createCollectionWrapper = (name) => {
         toArray: async () => {
           try {
             // Check cache first
-            const cacheKey = cacheService.generateKey(name, query, { sort: sortOption, limit: limitOption });
+            const cacheKey = cacheService.generateKey(name, queryObj, { sort: sortOption, limit: limitOption });
             const cached = cacheService.get(cacheKey);
             if (cached !== null) {
               return cached;
             }
 
-            const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
-            let sql = `SELECT * FROM ${name}`;
+            const keys = Object.keys(queryObj).filter(k => typeof queryObj[k] !== 'function');
+            let sql = `SELECT * FROM "${name}"`;
             const params = [];
+            let paramIndex = 1;
 
             if (keys.length > 0) {
               const whereClauses = keys.map(k => {
-                const val = query[k];
+                const val = queryObj[k];
                 // Handle MongoDB-style operators
                 if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
                   if ('$gte' in val) {
@@ -299,7 +370,8 @@ const createCollectionWrapper = (name) => {
                     } else {
                       params.push(gteVal);
                     }
-                    return `"${k}" >= ?`;
+                    const idx = paramIndex++;
+                    return `"${k}" >= $${idx}`;
                   } else if ('$lte' in val) {
                     const lteVal = val.$lte;
                     if (lteVal instanceof Date) {
@@ -307,7 +379,8 @@ const createCollectionWrapper = (name) => {
                     } else {
                       params.push(lteVal);
                     }
-                    return `"${k}" <= ?`;
+                    const idx = paramIndex++;
+                    return `"${k}" <= $${idx}`;
                   } else if ('$gt' in val) {
                     const gtVal = val.$gt;
                     if (gtVal instanceof Date) {
@@ -315,7 +388,8 @@ const createCollectionWrapper = (name) => {
                     } else {
                       params.push(gtVal);
                     }
-                    return `"${k}" > ?`;
+                    const idx = paramIndex++;
+                    return `"${k}" > $${idx}`;
                   } else if ('$lt' in val) {
                     const ltVal = val.$lt;
                     if (ltVal instanceof Date) {
@@ -323,23 +397,26 @@ const createCollectionWrapper = (name) => {
                     } else {
                       params.push(ltVal);
                     }
-                    return `"${k}" < ?`;
+                    const idx = paramIndex++;
+                    return `"${k}" < $${idx}`;
                   } else {
                     // Fallback to JSON stringify for other objects
                     params.push(JSON.stringify(val));
-                    return `"${k}" = ?`;
+                    const idx = paramIndex++;
+                    return `"${k}" = $${idx}`;
                   }
                 }
                 // Handle different types
                 if (typeof val === 'boolean') {
-                  params.push(val ? 1 : 0);
+                  params.push(val);
                 } else if (val instanceof Date) {
                   // Convert Date to ISO date string (YYYY-MM-DD)
                   params.push(val.toISOString().split('T')[0]);
                 } else {
                   params.push(val);
                 }
-                return `"${k}" = ?`;
+                const idx = paramIndex++;
+                return `"${k}" = $${idx}`;
               });
               sql += ' WHERE ' + whereClauses.join(' AND ');
             }
@@ -356,8 +433,17 @@ const createCollectionWrapper = (name) => {
               sql += ` LIMIT ${limitOption}`;
             }
 
-            const stmt = db.prepare(sql);
-            const results = stmt.all(...params);
+            const result = await executeQuery(sql, params);
+            
+            // Convert boolean integers back to booleans for compatibility
+            const results = result.rows.map(row => {
+              const converted = {};
+              for (const [key, value] of Object.entries(row)) {
+                // PostgreSQL returns booleans as booleans, but keep for consistency
+                converted[key] = value;
+              }
+              return converted;
+            });
             
             // Cache the results
             cacheService.set(cacheKey, results, getTTL(name));
@@ -372,28 +458,28 @@ const createCollectionWrapper = (name) => {
 
       return chainable;
     },
-    findOne: async (query = {}) => {
+    findOne: async (queryObj = {}) => {
       try {
         // Check cache first
-        const cacheKey = cacheService.generateKey(name, query, { findOne: true });
+        const cacheKey = cacheService.generateKey(name, queryObj, { findOne: true });
         const cached = cacheService.get(cacheKey);
         if (cached !== null) {
           return cached;
         }
 
-        const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
-        let sql = `SELECT * FROM ${name}`;
+        const keys = Object.keys(queryObj).filter(k => typeof queryObj[k] !== 'function');
+        let sql = `SELECT * FROM "${name}"`;
         const params = [];
+        let paramIndex = 1;
 
         if (keys.length > 0) {
           const whereClauses = keys.map(k => {
-            const val = query[k];
+            const val = queryObj[k];
             // Handle different types
             if (typeof val === 'boolean') {
-              params.push(val ? 1 : 0);
+              params.push(val);
             } else if (val instanceof Date) {
               // Convert Date to ISO date string (YYYY-MM-DD) for DATE columns
-              // For statistics table date column, use date format
               if (name === 'statistics' && k === 'date') {
                 params.push(val.toISOString().split('T')[0]);
               } else {
@@ -404,19 +490,20 @@ const createCollectionWrapper = (name) => {
             } else {
               params.push(val);
             }
-            return `"${k}" = ?`;
+            const idx = paramIndex++;
+            return `"${k}" = $${idx}`;
           });
           sql += ' WHERE ' + whereClauses.join(' AND ');
         }
 
         sql += ' LIMIT 1';
-        const stmt = db.prepare(sql);
-        const result = stmt.get(...params);
+        const result = await executeQuery(sql, params);
+        const row = result.rows[0] || null;
         
         // Cache the result
-        cacheService.set(cacheKey, result, getTTL(name));
+        cacheService.set(cacheKey, row, getTTL(name));
         
-        return result;
+        return row;
       } catch (error) {
         console.error(chalk.red(`Error finding one ${name}:`), error.message);
         return null;
@@ -427,13 +514,13 @@ const createCollectionWrapper = (name) => {
         const id = doc._id || require('uuid').v4();
         const docWithId = { _id: id, ...doc };
         const fields = Object.keys(docWithId);
-        const placeholders = fields.map(() => '?').join(', ');
+        const placeholders = fields.map((_, i) => `$${i + 1}`).join(', ');
         const quotedFields = fields.map(f => `"${f}"`).join(', ');
         const values = fields.map(f => {
           const val = docWithId[f];
-          // Convert boolean to 0/1 for SQLite
+          // PostgreSQL handles booleans natively
           if (typeof val === 'boolean') {
-            return val ? 1 : 0;
+            return val;
           }
           // Convert Date to ISO timestamp string (YYYY-MM-DD HH:MM:SS) or date string for DATE columns
           if (val instanceof Date) {
@@ -450,23 +537,24 @@ const createCollectionWrapper = (name) => {
           return val;
         });
 
-        // Use INSERT OR REPLACE for tables with unique constraints to prevent errors
-        let sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders})`;
+        // Use INSERT with ON CONFLICT for tables with unique constraints
+        let sql = `INSERT INTO "${name}" (${quotedFields}) VALUES (${placeholders})`;
         
         // Handle unique constraints with ON CONFLICT for specific tables
         if (name === 'statistics') {
           // Statistics has UNIQUE(targetId, date) - use ON CONFLICT to increment values atomically
-          // This handles race conditions where multiple pings try to insert simultaneously
+          // In ON CONFLICT, reference existing row columns directly (no qualifier needed)
+          // and new row columns with excluded.
           const updateClauses = [];
           // Increment counters
           if (fields.includes('totalPings')) {
-            updateClauses.push(`"totalPings" = "totalPings" + excluded."totalPings"`);
+            updateClauses.push(`"totalPings" = statistics."totalPings" + excluded."totalPings"`);
           }
           if (fields.includes('successfulPings')) {
-            updateClauses.push(`"successfulPings" = "successfulPings" + excluded."successfulPings"`);
+            updateClauses.push(`"successfulPings" = statistics."successfulPings" + excluded."successfulPings"`);
           }
           if (fields.includes('failedPings')) {
-            updateClauses.push(`"failedPings" = "failedPings" + excluded."failedPings"`);
+            updateClauses.push(`"failedPings" = statistics."failedPings" + excluded."failedPings"`);
           }
           // Update latest values
           if (fields.includes('lastResponseTime')) {
@@ -475,58 +563,57 @@ const createCollectionWrapper = (name) => {
           // Recalculate average: weighted average of existing and new
           if (fields.includes('avgResponseTime')) {
             updateClauses.push(`"avgResponseTime" = CASE 
-              WHEN "totalPings" + excluded."totalPings" > 0 
-              THEN ("avgResponseTime" * "totalPings" + excluded."avgResponseTime" * excluded."totalPings") / ("totalPings" + excluded."totalPings")
+              WHEN statistics."totalPings" + excluded."totalPings" > 0 
+              THEN (statistics."avgResponseTime" * statistics."totalPings" + excluded."avgResponseTime" * excluded."totalPings") / (statistics."totalPings" + excluded."totalPings")
               ELSE excluded."avgResponseTime"
             END`);
           }
           // Recalculate uptime percentage
           if (fields.includes('uptime')) {
             updateClauses.push(`"uptime" = CASE 
-              WHEN "totalPings" + excluded."totalPings" > 0 
-              THEN (CAST("successfulPings" + excluded."successfulPings" AS REAL) / CAST("totalPings" + excluded."totalPings" AS REAL)) * 100
+              WHEN statistics."totalPings" + excluded."totalPings" > 0 
+              THEN (CAST(statistics."successfulPings" + excluded."successfulPings" AS REAL) / CAST(statistics."totalPings" + excluded."totalPings" AS REAL)) * 100
               ELSE excluded."uptime"
             END`);
           }
           // Update min/max response times
           if (fields.includes('minResponseTime')) {
             updateClauses.push(`"minResponseTime" = CASE 
-              WHEN "minResponseTime" IS NULL THEN excluded."minResponseTime"
-              WHEN excluded."minResponseTime" IS NULL THEN "minResponseTime"
-              WHEN "minResponseTime" < excluded."minResponseTime" THEN "minResponseTime"
+              WHEN statistics."minResponseTime" IS NULL THEN excluded."minResponseTime"
+              WHEN excluded."minResponseTime" IS NULL THEN statistics."minResponseTime"
+              WHEN statistics."minResponseTime" < excluded."minResponseTime" THEN statistics."minResponseTime"
               ELSE excluded."minResponseTime"
             END`);
           }
           if (fields.includes('maxResponseTime')) {
             updateClauses.push(`"maxResponseTime" = CASE 
-              WHEN "maxResponseTime" IS NULL THEN excluded."maxResponseTime"
-              WHEN excluded."maxResponseTime" IS NULL THEN "maxResponseTime"
-              WHEN "maxResponseTime" > excluded."maxResponseTime" THEN "maxResponseTime"
+              WHEN statistics."maxResponseTime" IS NULL THEN excluded."maxResponseTime"
+              WHEN excluded."maxResponseTime" IS NULL THEN statistics."maxResponseTime"
+              WHEN statistics."maxResponseTime" > excluded."maxResponseTime" THEN statistics."maxResponseTime"
               ELSE excluded."maxResponseTime"
             END`);
           }
           if (updateClauses.length > 0) {
-            sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(targetId, date) DO UPDATE SET ${updateClauses.join(', ')}`;
+            sql = `INSERT INTO "${name}" (${quotedFields}) VALUES (${placeholders}) ON CONFLICT("targetId", date) DO UPDATE SET ${updateClauses.join(', ')}`;
           }
         } else if (name === 'actions') {
           // Actions has UNIQUE(targetId, name) - use ON CONFLICT to update instead
           const updateFields = fields.filter(f => f !== '_id' && f !== 'targetId' && f !== 'name');
           const updateClauses = updateFields.map(f => `"${f}" = excluded."${f}"`).join(', ');
-          sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(targetId, name) DO UPDATE SET ${updateClauses}`;
+          sql = `INSERT INTO "${name}" (${quotedFields}) VALUES (${placeholders}) ON CONFLICT("targetId", name) DO UPDATE SET ${updateClauses}`;
         } else if (name === 'favicons') {
           // Favicons has UNIQUE(appUrl) - use ON CONFLICT to update instead
           const updateFields = fields.filter(f => f !== '_id' && f !== 'appUrl');
           const updateClauses = updateFields.map(f => `"${f}" = excluded."${f}"`).join(', ');
-          sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(appUrl) DO UPDATE SET ${updateClauses}`;
+          sql = `INSERT INTO "${name}" (${quotedFields}) VALUES (${placeholders}) ON CONFLICT("appUrl") DO UPDATE SET ${updateClauses}`;
         } else if (name === 'targets') {
           // Targets has UNIQUE(name) - use ON CONFLICT to update instead
           const updateFields = fields.filter(f => f !== '_id' && f !== 'name');
           const updateClauses = updateFields.map(f => `"${f}" = excluded."${f}"`).join(', ');
-          sql = `INSERT INTO ${name} (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(name) DO UPDATE SET ${updateClauses}`;
+          sql = `INSERT INTO "${name}" (${quotedFields}) VALUES (${placeholders}) ON CONFLICT(name) DO UPDATE SET ${updateClauses}`;
         }
         
-        const stmt = db.prepare(sql);
-        stmt.run(...values);
+        await executeQuery(sql, values);
         
         // Invalidate cache for this collection
         cacheService.invalidateCollection(name);
@@ -537,15 +624,20 @@ const createCollectionWrapper = (name) => {
         throw error;
       }
     },
-    updateOne: async (query, update) => {
+    updateOne: async (queryObj, update) => {
       try {
         const { $set } = update;
-        const setClauses = Object.keys($set).map(k => `"${k}" = ?`).join(', ');
-        const setValues = Object.values($set).map(v => {
+        const setClauses = Object.keys($set).map((k, i) => `"${k}" = $${i + 1}`).join(', ');
+        const setValues = Object.values($set).map((v, idx) => {
           if (typeof v === 'boolean') {
-            return v ? 1 : 0;
+            return v;
           }
           if (v instanceof Date) {
+            // For statistics table date column, use date format (YYYY-MM-DD)
+            const key = Object.keys($set)[idx];
+            if (name === 'statistics' && key === 'date') {
+              return v.toISOString().split('T')[0];
+            }
             return v.toISOString().replace('T', ' ').substring(0, 19);
           }
           if (typeof v === 'object' && v !== null) {
@@ -554,13 +646,18 @@ const createCollectionWrapper = (name) => {
           return v;
         });
 
-        const queryKeys = Object.keys(query);
-        const whereClauses = queryKeys.map(k => `"${k}" = ?`).join(' AND ');
-        const whereValues = Object.values(query).map(v => {
+        const queryKeys = Object.keys(queryObj);
+        const whereClauses = queryKeys.map((k, i) => `"${k}" = $${setValues.length + i + 1}`).join(' AND ');
+        const whereValues = Object.values(queryObj).map((v, idx) => {
           if (typeof v === 'boolean') {
-            return v ? 1 : 0;
+            return v;
           }
           if (v instanceof Date) {
+            // For statistics table date column, use date format (YYYY-MM-DD)
+            const key = Object.keys(queryObj)[idx];
+            if (name === 'statistics' && key === 'date') {
+              return v.toISOString().split('T')[0];
+            }
             return v.toISOString().replace('T', ' ').substring(0, 19);
           }
           if (typeof v === 'object' && v !== null) {
@@ -569,26 +666,25 @@ const createCollectionWrapper = (name) => {
           return v;
         });
 
-        const sql = `UPDATE ${name} SET ${setClauses} WHERE ${whereClauses}`;
-        const stmt = db.prepare(sql);
-        const result = stmt.run(...setValues, ...whereValues);
+        const sql = `UPDATE "${name}" SET ${setClauses} WHERE ${whereClauses}`;
+        const result = await executeQuery(sql, [...setValues, ...whereValues]);
         
         // Invalidate cache for this collection
         cacheService.invalidateCollection(name);
         
-        return { modifiedCount: result.changes };
+        return { modifiedCount: result.rowCount || 0 };
       } catch (error) {
         console.error(chalk.red(`Error updating ${name}:`), error.message);
         throw error;
       }
     },
-    deleteOne: async (query) => {
+    deleteOne: async (queryObj) => {
       try {
-        const keys = Object.keys(query);
-        const whereClauses = keys.map(k => `"${k}" = ?`).join(' AND ');
-        const values = Object.values(query).map(v => {
+        const keys = Object.keys(queryObj);
+        const whereClauses = keys.map((k, i) => `"${k}" = $${i + 1}`).join(' AND ');
+        const values = Object.values(queryObj).map(v => {
           if (typeof v === 'boolean') {
-            return v ? 1 : 0;
+            return v;
           }
           if (v instanceof Date) {
             return v.toISOString().replace('T', ' ').substring(0, 19);
@@ -596,77 +692,78 @@ const createCollectionWrapper = (name) => {
           return v;
         });
 
-        const sql = `DELETE FROM ${name} WHERE ${whereClauses}`;
-        const stmt = db.prepare(sql);
-        const result = stmt.run(...values);
+        const sql = `DELETE FROM "${name}" WHERE ${whereClauses}`;
+        const result = await executeQuery(sql, values);
         
         // Invalidate cache for this collection
         cacheService.invalidateCollection(name);
         
-        return { deletedCount: result.changes };
+        return { deletedCount: result.rowCount || 0 };
       } catch (error) {
         console.error(chalk.red(`Error deleting from ${name}:`), error.message);
         throw error;
       }
     },
-    deleteMany: async (query = {}) => {
+    deleteMany: async (queryObj = {}) => {
       try {
-        const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
-        let sql = `DELETE FROM ${name}`;
+        const keys = Object.keys(queryObj).filter(k => typeof queryObj[k] !== 'function');
+        let sql = `DELETE FROM "${name}"`;
         const params = [];
+        let paramIndex = 1;
 
         if (keys.length > 0) {
           const whereClauses = keys.map(k => {
-            const val = query[k];
+            const val = queryObj[k];
             if (typeof val === 'boolean') {
-              params.push(val ? 1 : 0);
+              params.push(val);
             } else if (val instanceof Date) {
               params.push(val.toISOString().split('T')[0]);
             } else {
               params.push(val);
             }
-            return `"${k}" = ?`;
+            const idx = paramIndex++;
+            return `"${k}" = $${idx}`;
           });
           sql += ' WHERE ' + whereClauses.join(' AND ');
         }
 
-        const stmt = db.prepare(sql);
-        const result = stmt.run(...params);
+        const result = await executeQuery(sql, params);
         
         // Invalidate cache for this collection
         cacheService.invalidateCollection(name);
         
-        return { deletedCount: result.changes };
+        return { deletedCount: result.rowCount || 0 };
       } catch (error) {
         console.error(chalk.red(`Error deleting from ${name}:`), error.message);
         throw error;
       }
     },
-    countDocuments: async (query = {}) => {
+    countDocuments: async (queryObj = {}) => {
       try {
         // Check cache first
-        const cacheKey = cacheService.generateKey(name, query, { count: true });
+        const cacheKey = cacheService.generateKey(name, queryObj, { count: true });
         const cached = cacheService.get(cacheKey);
         if (cached !== null) {
           return cached;
         }
 
-        const keys = Object.keys(query).filter(k => typeof query[k] !== 'function');
-        let sql = `SELECT COUNT(*) as count FROM ${name}`;
+        const keys = Object.keys(queryObj).filter(k => typeof queryObj[k] !== 'function');
+        let sql = `SELECT COUNT(*) as count FROM "${name}"`;
         const params = [];
+        let paramIndex = 1;
 
         if (keys.length > 0) {
           const whereClauses = keys.map(k => {
-            const val = query[k];
-            params.push(typeof val === 'boolean' ? (val ? 1 : 0) : val);
-            return `"${k}" = ?`;
+            const val = queryObj[k];
+            params.push(typeof val === 'boolean' ? val : val);
+            const idx = paramIndex++;
+            return `"${k}" = $${idx}`;
           });
           sql += ' WHERE ' + whereClauses.join(' AND ');
         }
 
-        const stmt = db.prepare(sql);
-        const result = stmt.get(...params);
-        const count = result ? result.count : 0;
+        const result = await executeQuery(sql, params);
+        const count = result.rows[0] ? parseInt(result.rows[0].count) : 0;
         
         // Cache the count
         cacheService.set(cacheKey, count, getTTL(name));
@@ -682,21 +779,34 @@ const createCollectionWrapper = (name) => {
 };
 
 const getDB = () => {
-  if (!db) {
+  if (!pool) {
     throw new Error('Database not connected. Call connectDB() first.');
   }
   return {
     collection: (name) => createCollectionWrapper(name),
     admin: () => ({
-      ping: async () => true
-    })
+      ping: async () => {
+        try {
+          const client = await pool.connect();
+          await client.query('SELECT 1');
+          client.release();
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+    }),
+    // Direct query method for complex SQL queries
+    query: async (text, params) => {
+      return await executeQuery(text, params);
+    }
   };
 };
 
 const closeDB = async () => {
-  if (db) {
-    db.close();
-    console.log(chalk.green('✓ SQLite connection closed'));
+  if (pool) {
+    await pool.end();
+    console.log(chalk.green('✓ PostgreSQL connection closed'));
   }
 };
 

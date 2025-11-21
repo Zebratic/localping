@@ -215,8 +215,8 @@ async function switchChartPeriod(period) {
   });
 
   if (currentMonitorId) {
-    const monitorResponse = await axios.get(`/admin/api/targets/${currentMonitorId}`);
-    await loadMonitorStatistics(currentMonitorId, monitorResponse.data.target?.timeout || 30);
+    // Statistics endpoint now includes target details, so we only need one call
+    await loadMonitorStatistics(currentMonitorId, 30);
   }
 }
 
@@ -239,11 +239,10 @@ function applyCustomRange() {
   currentEndDate = endDate;
   currentTimePeriod = null;
   
-  if (currentMonitorId) {
-    const monitorResponse = axios.get(`/admin/api/targets/${currentMonitorId}`).then(res => {
-      loadMonitorStatistics(currentMonitorId, res.data.target?.timeout || 30);
-    });
-  }
+    if (currentMonitorId) {
+      // Statistics endpoint now includes target details, so we only need one call
+      loadMonitorStatistics(currentMonitorId, 30);
+    }
 }
 
 // Navigate time period (previous/next)
@@ -275,9 +274,8 @@ function navigateTimePeriod(direction) {
     document.getElementById('endDate').value = currentEndDate;
     
     if (currentMonitorId) {
-      const monitorResponse = axios.get(`/admin/api/targets/${currentMonitorId}`).then(res => {
-        loadMonitorStatistics(currentMonitorId, res.data.target?.timeout || 30);
-      });
+      // Statistics endpoint now includes target details, so we only need one call
+      loadMonitorStatistics(currentMonitorId, 30);
     }
   }
 }
@@ -285,36 +283,29 @@ function navigateTimePeriod(direction) {
 // Load monitor statistics and draw chart
 async function loadMonitorStatistics(targetId, timeout = 30) {
   try {
-    // Determine days based on current chart period
-    let days = 1;
-    if (currentChartPeriod === '1h') {
-      days = 0.04; // 1 hour = 1/24 days
-    } else if (currentChartPeriod === '7d') {
-      days = 7;
-    } else if (currentChartPeriod === '30d') {
-      days = 30;
-    } else if (currentChartPeriod === 'all') {
-      days = 90;
-    }
+    // Determine period for chart (default to 24h if not set)
+    const period = currentChartPeriod || '24h';
     
-    // Load statistics for chart
-    const statsResponse = await axios.get(`/admin/api/targets/${targetId}/statistics?days=${days}`);
+    // Load all data in one API call (target + statistics + uptime)
+    const statsResponse = await axios.get(`/admin/api/targets/${targetId}/statistics?period=${period}`);
     const stats = statsResponse.data.statistics || [];
-
-    // Load monitor details for status and protocol
-    const monitorResponse = await axios.get(`/admin/api/targets/${targetId}`);
-    const monitor = monitorResponse.data.target;
+    const uptimeData = statsResponse.data.uptime || {};
+    const dailyStats = statsResponse.data.dailyStats || [];
+    const monitor = statsResponse.data.target || {};
     const isUp = monitor.currentStatus === 'up';
 
-    // Load uptime data for 24h and 30d
-    const uptime24hRes = await axios.get(`/admin/api/targets/${targetId}/uptime?days=1`);
-    const uptime30dRes = await axios.get(`/admin/api/targets/${targetId}/uptime?days=30`);
-
-    const uptime24h = parseFloat(uptime24hRes.data.uptime || 0);
-    const uptime30d = parseFloat(uptime30dRes.data.uptime || 0);
-    const totalPings = uptime30dRes.data.totalPings || 0;
-    const successfulPings = uptime30dRes.data.successfulPings || 0;
-    const failedPings = totalPings - successfulPings;
+    const uptime24h = parseFloat(uptimeData['24h']?.uptime || 0);
+    const uptime30d = parseFloat(uptimeData['30d']?.uptime || 0);
+    const totalPings = uptimeData['30d']?.totalPings || 0;
+    const successfulPings = uptimeData['30d']?.successfulPings || 0;
+    const failedPings = uptimeData['30d']?.failedPings || 0;
+    
+    // Generate uptime blocks from daily statistics
+    if (dailyStats.length > 0) {
+      generateUptimeBlocksFromDailyStats(dailyStats, 30);
+    } else {
+      generateUptimeBlocks(stats);
+    }
 
     // Update stats displays
     document.getElementById('currentStatusDisplay').textContent = isUp ? '✓ UP' : '✗ DOWN';
@@ -333,7 +324,7 @@ async function loadMonitorStatistics(targetId, timeout = 30) {
     
     const latestStat = stats.length > 0 ? stats[stats.length - 1] : null;
     const currentPing = latestStat?.lastResponseTime || 0;
-    document.getElementById('monitorPing').textContent = currentPing > 0 ? `${currentPing.toFixed(2)} ms` : '--';
+    document.getElementById('monitorPing').textContent = currentPing > 0 ? `${Math.round(currentPing)} ms` : '--';
     
     // Calculate average ping
     let totalResponseTime = 0;
@@ -345,10 +336,9 @@ async function loadMonitorStatistics(targetId, timeout = 30) {
       }
     });
     const avgPing = responseTimeCount > 0 ? totalResponseTime / responseTimeCount : 0;
-    document.getElementById('monitorAvgPing').textContent = avgPing > 0 ? `${avgPing.toFixed(2)} ms` : '--';
+    document.getElementById('monitorAvgPing').textContent = avgPing > 0 ? `${Math.round(avgPing)} ms` : '--';
 
-    // Generate uptime block indicator
-    generateUptimeBlocks(stats);
+    // Uptime blocks are generated from daily stats above
 
     // Draw chart (matching public UI style)
     drawStatusChart(stats, null, timeout * 1000);
@@ -363,7 +353,87 @@ async function loadMonitorStatistics(targetId, timeout = 30) {
   }
 }
 
-// Generate uptime block indicator (simplified for admin UI)
+// Generate uptime block indicator from daily statistics (accurate)
+function generateUptimeBlocksFromDailyStats(dailyStats, days = 30) {
+  const blocksContainer = document.getElementById('uptimeBlocks');
+  const labelElement = document.getElementById('uptimeBlocksLabel');
+  const titleElement = document.getElementById('uptimeBlocksTitle');
+  
+  blocksContainer.innerHTML = '';
+
+  // Create a map of date -> stats for quick lookup
+  const statsMap = new Map();
+  dailyStats.forEach(stat => {
+    const dateKey = new Date(stat.date).toISOString().split('T')[0];
+    statsMap.set(dateKey, stat);
+  });
+
+  const now = new Date();
+  const blocks = [];
+  let upCount = 0;
+  let totalCount = 0;
+
+  for (let i = days - 1; i >= 0; i--) {
+    const dayStart = new Date(now);
+    dayStart.setDate(now.getDate() - i);
+    dayStart.setHours(0, 0, 0, 0);
+    const dateKey = dayStart.toISOString().split('T')[0];
+
+    const stat = statsMap.get(dateKey);
+    let isUp = null;
+
+    if (stat) {
+      const totalPings = stat.totalPings || 0;
+      const successfulPings = stat.successfulPings || 0;
+      // Day is considered "up" if >= 50% of pings were successful
+      isUp = totalPings === 0 ? null : (successfulPings / totalPings) >= 0.5;
+    } else if (dayStart > now) {
+      isUp = null; // Future day
+    } else {
+      isUp = null; // No data for past day
+    }
+
+    blocks.push({
+      period: dayStart,
+      isUp: isUp
+    });
+
+    if (isUp === true) upCount++;
+    if (isUp !== null) totalCount++;
+  }
+
+  // Generate blocks
+  blocks.forEach((block) => {
+    const blockEl = document.createElement('div');
+    blockEl.className = 'uptime-block';
+    
+    const titleText = block.period.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    
+    if (block.isUp === null) {
+      blockEl.classList.add('unknown');
+      blockEl.title = `${titleText} - No data`;
+    } else if (block.isUp) {
+      blockEl.classList.add('up');
+      blockEl.title = `${titleText} - Up`;
+    } else {
+      blockEl.classList.add('down');
+      blockEl.title = `${titleText} - Down`;
+    }
+
+    blocksContainer.appendChild(blockEl);
+  });
+
+  // Update label
+  if (totalCount > 0) {
+    const uptimePercent = (upCount / totalCount) * 100;
+    labelElement.textContent = `${upCount}/${totalCount} days up (${uptimePercent.toFixed(1)}%)`;
+  } else {
+    labelElement.textContent = 'No data available';
+  }
+  titleElement.textContent = `${days}-Day Uptime`;
+}
+
+// Generate uptime block indicator (fallback - uses chart stats)
 function generateUptimeBlocks(stats) {
   const blocksContainer = document.getElementById('uptimeBlocks');
   const labelElement = document.getElementById('uptimeBlocksLabel');
@@ -450,6 +520,7 @@ function generateUptimeBlocks(stats) {
 }
 
 // Draw status chart with real data (matching public UI style)
+// Data is displayed chronologically: left (oldest) to right (newest)
 function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
   const ctx = document.getElementById('statusChart').getContext('2d');
 
@@ -474,16 +545,32 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
     return;
   }
 
-  // Sort stats by date
-  const sortedStats = [...stats].sort((a, b) => new Date(a.date) - new Date(b.date));
+  // Parse and sort stats by date (oldest first = left to right)
+  const sortedStats = [...stats]
+    .map(stat => ({
+      ...stat,
+      dateObj: new Date(stat.date) // Parse date once
+    }))
+    .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime()); // Sort chronologically (oldest first)
   
-  // Generate labels based on period
+  // Generate labels based on period (formatted for readability)
   const labels = sortedStats.map(stat => {
-    const date = new Date(stat.date);
-    if (currentChartPeriod === '1h' || currentChartPeriod === '24h') {
+    const date = stat.dateObj;
+    if (currentChartPeriod === '1h') {
+      // 1H: Show time only (HH:MM)
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } else if (currentChartPeriod === '24h') {
+      // 24H: Show day and time (Mon 15, 14:30)
+      return date.toLocaleString([], { weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } else if (currentChartPeriod === '7d') {
+      // 7D: Show date and time (Nov 15, 14:30)
+      return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } else if (currentChartPeriod === '30d') {
+      // 30D: Show date only (Nov 15)
+      return date.toLocaleString([], { month: 'short', day: 'numeric' });
     } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      // Default: Show date and time
+      return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
   });
 
@@ -491,24 +578,32 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
   const downData = [];
 
   sortedStats.forEach(stat => {
-    // Add response time data
+    // Add response time data (rounded to nearest integer)
     const avgResponseTime = stat.avgResponseTime || 0;
-    responseTimeData.push(avgResponseTime);
+    responseTimeData.push(Math.round(avgResponseTime));
 
-    // Add downtime indicator
+    // Add downtime indicator (will be scaled to max Y value later)
     const isDown = stat.successfulPings === 0;
-    downData.push(isDown ? 100 : null);
+    downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
   });
+
+  // Calculate max response time for scaling downtime indicator
+  const validResponseTimes = responseTimeData.filter(v => v > 0);
+  const maxResponseTime = validResponseTimes.length > 0 ? Math.max(...validResponseTimes) : 100;
+  const downtimeMaxValue = Math.round(Math.max(maxResponseTime * 1.1, 100)); // Add 10% padding, minimum 100, rounded
+
+  // Scale downtime indicator to max Y value
+  const scaledDownData = downData.map(val => val !== null ? downtimeMaxValue : null);
 
   // Add test result if provided
   if (testResult && sortedStats.length > 0) {
     const lastIndex = responseTimeData.length - 1;
     if (testResult.success && testResult.responseTime) {
-      responseTimeData[lastIndex] = testResult.responseTime;
-      downData[lastIndex] = null;
+      responseTimeData[lastIndex] = Math.round(testResult.responseTime);
+      scaledDownData[lastIndex] = null;
     } else {
       responseTimeData[lastIndex] = 0;
-      downData[lastIndex] = 100;
+      scaledDownData[lastIndex] = downtimeMaxValue;
     }
   }
 
@@ -537,7 +632,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
         },
         {
           label: 'Downtime',
-          data: downData,
+          data: scaledDownData,
           borderColor: '#ef4444',
           backgroundColor: 'rgba(239, 68, 68, 0.25)',
           fill: true,
@@ -583,7 +678,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
                   return '🔴 Offline';
                 }
                 const pingTag = value < 50 ? '🟢 Excellent' : value < 100 ? '🟡 Good' : value < 200 ? '🟠 Fair' : '🔴 Poor';
-                return `${pingTag} ${value.toFixed(2)} ms`;
+                return `${pingTag} ${Math.round(value)} ms`;
               } else {
                 return context.raw ? '🔴 Service Down' : '';
               }
@@ -604,6 +699,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
       scales: {
         y: {
           beginAtZero: true,
+          max: downtimeMaxValue, // Set max to ensure downtime indicator reaches top
           grid: { 
             color: 'rgba(255, 255, 255, 0.08)', 
             drawBorder: false,
@@ -614,7 +710,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
             font: { size: 11, weight: '500' },
             padding: 8,
             callback: function(value) {
-              return value + ' ms';
+              return Math.round(value) + ' ms';
             }
           },
           title: { 
@@ -626,6 +722,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
           }
         },
         x: {
+          type: 'category',
           grid: { 
             color: 'rgba(255, 255, 255, 0.05)', 
             drawBorder: false 
@@ -635,8 +732,12 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
             maxRotation: 45, 
             minRotation: 0, 
             font: { size: 10, weight: '500' },
-            padding: 8
+            padding: 8,
+            autoSkip: true,
+            maxTicksLimit: 12
           },
+          // Ensure chronological order (left = oldest, right = newest)
+          reverse: false
         },
       },
       elements: {
@@ -1084,7 +1185,7 @@ async function testMonitor() {
 
     // Update ping displays
     if (result.success && result.responseTime) {
-      document.getElementById('monitorPing').textContent = `${result.responseTime.toFixed(2)} ms`;
+      document.getElementById('monitorPing').textContent = `${Math.round(result.responseTime)} ms`;
       // Update average if we have it
       const currentAvg = document.getElementById('monitorAvgPing').textContent;
       if (currentAvg !== '--') {
@@ -1094,13 +1195,10 @@ async function testMonitor() {
       document.getElementById('monitorPing').textContent = '--';
     }
 
-    // Reload statistics to get updated chart data
-    const statsResponse = await axios.get(`/admin/api/targets/${currentMonitorId}/statistics?days=1`);
+    // Reload statistics to get updated chart data (includes target details)
+    const statsResponse = await axios.get(`/admin/api/targets/${currentMonitorId}/statistics?period=1h`);
     const stats = statsResponse.data.statistics || [];
-
-    // Get monitor timeout
-    const monitorResponse = await axios.get(`/admin/api/targets/${currentMonitorId}`);
-    const timeoutMs = (monitorResponse.data.target?.timeout || 30) * 1000;
+    const timeoutMs = (statsResponse.data.target?.timeout || 30) * 1000;
 
     // Draw chart with test result added
     drawStatusChart(stats, result, timeoutMs);
@@ -1119,7 +1217,7 @@ async function testMonitor() {
     }
 
     if (result.success) {
-      showNotification(`Test successful: ${result.responseTime?.toFixed(2)}ms`, 'success');
+      showNotification(`Test successful: ${Math.round(result.responseTime || 0)}ms`, 'success');
     } else {
       showNotification(`Test failed: ${result.error || 'Connection failed'}`, 'error');
     }
@@ -1516,14 +1614,8 @@ async function testAllMonitors() {
           }
 
           // Reload statistics and update chart (get timeout from monitor)
-          const monitorResponse = await axios.get(`/admin/api/targets/${target._id}`);
-          const monitorTimeout = monitorResponse.data.target?.timeout || 30;
-          await loadMonitorStatistics(target._id, monitorTimeout);
-          
-          // Update uptime blocks
-          const statsResponse = await axios.get(`/admin/api/targets/${target._id}/statistics?days=1`);
-          const stats = statsResponse.data.statistics || [];
-          generateUptimeBlocks(stats);
+          // Statistics endpoint now includes target details and daily stats, so we only need one call
+          await loadMonitorStatistics(target._id, 30);
         }
 
         if (result.success) {
@@ -1603,8 +1695,6 @@ async function loadVisibility() {
       
       const item = document.createElement('div');
       item.className = 'visibility-item flex flex-col gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/30 cursor-move';
-      item.dataset.targetId = target._id;
-      item.dataset.position = target.position || index;
       item.draggable = true;
       item.innerHTML = `
         <div class="flex items-start gap-3">
@@ -1665,6 +1755,9 @@ async function loadVisibility() {
           </div>
         </div>
       `;
+      // Set dataset attributes after innerHTML to ensure they persist
+      item.dataset.targetId = target._id;
+      item.dataset.position = target.position || index;
       visibilityList.appendChild(item);
     });
 
@@ -1681,19 +1774,32 @@ function setupDragAndDrop() {
   const visibilityList = document.getElementById('visibilityList');
   const items = document.querySelectorAll('.visibility-item');
   let draggedElement = null;
+  let hasMoved = false;
 
   items.forEach(item => {
     item.addEventListener('dragstart', (e) => {
       draggedElement = item;
+      hasMoved = false;
       item.style.opacity = '0.5';
       item.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
     });
 
-    item.addEventListener('dragend', (e) => {
+    item.addEventListener('dragend', async (e) => {
       item.style.opacity = '1';
       item.classList.remove('dragging');
+      
+      if (hasMoved && draggedElement) {
+        // Update data-position attributes
+        const allItems = visibilityList.querySelectorAll('.visibility-item');
+        allItems.forEach((item, index) => {
+          item.dataset.position = index;
+        });
+        await savePositions();
+      }
+      
       draggedElement = null;
+      hasMoved = false;
     });
 
     item.addEventListener('dragover', (e) => {
@@ -1704,18 +1810,26 @@ function setupDragAndDrop() {
       
       const afterElement = getDragAfterElement(visibilityList, e.clientY);
       if (afterElement == null) {
-        visibilityList.appendChild(draggedElement);
+        if (visibilityList.lastElementChild !== draggedElement) {
+          visibilityList.appendChild(draggedElement);
+          hasMoved = true;
+        }
       } else {
-        visibilityList.insertBefore(draggedElement, afterElement);
+        if (afterElement !== draggedElement && afterElement.nextSibling !== draggedElement) {
+          visibilityList.insertBefore(draggedElement, afterElement);
+          hasMoved = true;
+        }
       }
     });
 
-    item.addEventListener('drop', async (e) => {
+    item.addEventListener('drop', (e) => {
       e.preventDefault();
-      if (draggedElement && draggedElement !== item) {
-        await savePositions();
-      }
     });
+  });
+
+  // Also handle drop on the container itself
+  visibilityList.addEventListener('drop', (e) => {
+    e.preventDefault();
   });
 }
 
@@ -1744,11 +1858,20 @@ async function savePositions() {
       position: index
     }));
 
+    // Validate all targetIds are present
+    const missingIds = positions.filter(p => !p.targetId);
+    if (missingIds.length > 0) {
+      console.error('Missing targetIds:', missingIds);
+      showNotification('Error: Some monitors are missing IDs', 'error');
+      return;
+    }
+
     await axios.put('/admin/api/targets/positions', { positions });
     showNotification('Monitor order saved', 'success');
   } catch (error) {
     console.error('Error saving positions:', error);
-    showNotification('Error saving monitor order', 'error');
+    const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
+    showNotification(`Error saving monitor order: ${errorMsg}`, 'error');
     // Reload to reset positions
     loadVisibility();
   }
@@ -1845,6 +1968,10 @@ async function loadAdminSettings() {
       if (dataRetentionEl) {
         dataRetentionEl.value = settings.dataRetentionDays || 30;
       }
+      const debugLoggingEl = document.getElementById('debugLogging');
+      if (debugLoggingEl) {
+        debugLoggingEl.checked = settings.debugLogging === true;
+      }
     }
 
     // Update database size display
@@ -1871,8 +1998,10 @@ async function saveAdminSettings() {
   try {
     const sessionDurationEl = document.getElementById('sessionDurationDays');
     const dataRetentionEl = document.getElementById('dataRetentionDays');
+    const debugLoggingEl = document.getElementById('debugLogging');
     const sessionDurationDays = sessionDurationEl ? parseInt(sessionDurationEl.value, 10) : 30;
     const dataRetentionDays = dataRetentionEl ? parseInt(dataRetentionEl.value, 10) : 30;
+    const debugLogging = debugLoggingEl ? debugLoggingEl.checked : false;
 
     if (isNaN(sessionDurationDays) || sessionDurationDays < 1 || sessionDurationDays > 365) {
       showNotification('Session duration must be between 1 and 365 days', 'error');
@@ -1886,7 +2015,8 @@ async function saveAdminSettings() {
 
     await axios.put('/admin/api/admin-settings', {
       sessionDurationDays: sessionDurationDays,
-      dataRetentionDays: dataRetentionDays
+      dataRetentionDays: dataRetentionDays,
+      debugLogging: debugLogging
     });
 
     showNotification('Admin settings saved successfully', 'success');

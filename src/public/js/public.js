@@ -1071,14 +1071,14 @@ async function loadServiceDetails(serviceId) {
   const contentEl = document.getElementById(`service-content-${serviceId}`);
 
   try {
-    // Load uptime data for 24h and 30d
-    const uptime24hRes = await axios.get(`/api/targets/${serviceId}/uptime?days=1`);
-    const uptime30dRes = await axios.get(`/api/targets/${serviceId}/uptime?days=30`);
-
-    const uptime24h = parseFloat(uptime24hRes.data.uptime);
-    const uptime30d = parseFloat(uptime30dRes.data.uptime);
-    const totalPings = uptime30dRes.data.totalPings;
-    const successfulPings = uptime30dRes.data.successfulPings;
+    // Load all data in one API call (statistics + uptime) - use 24h period for initial load
+    const statsResponse = await axios.get(`/api/targets/${serviceId}/statistics?period=24h`);
+    const uptimeData = statsResponse.data.uptime || {};
+    
+    const uptime24h = parseFloat(uptimeData['24h']?.uptime || 0);
+    const uptime30d = parseFloat(uptimeData['30d']?.uptime || 0);
+    const totalPings = uptimeData['30d']?.totalPings || 0;
+    const successfulPings = uptimeData['30d']?.successfulPings || 0;
 
     contentEl.innerHTML = `
       <div class="space-y-4 p-4 border-t border-slate-700">
@@ -1182,14 +1182,15 @@ async function loadServiceDetailsUpdate(serviceId) {
       return;
     }
 
-    // Load uptime data for 24h and 30d
-    const uptime24hRes = await axios.get(`/api/targets/${serviceId}/uptime?days=1`);
-    const uptime30dRes = await axios.get(`/api/targets/${serviceId}/uptime?days=30`);
+    // Load all data in one API call (statistics + uptime) - use current period or 24h
+    const currentPeriod = chartPeriods[serviceId] || '24h';
+    const statsResponse = await axios.get(`/api/targets/${serviceId}/statistics?period=${currentPeriod}`);
+    const uptimeData = statsResponse.data.uptime || {};
 
-    const uptime24h = parseFloat(uptime24hRes.data.uptime).toFixed(2);
-    const uptime30d = parseFloat(uptime30dRes.data.uptime).toFixed(2);
-    const totalPings = uptime30dRes.data.totalPings;
-    const successfulPings = uptime30dRes.data.successfulPings;
+    const uptime24h = parseFloat(uptimeData['24h']?.uptime || 0).toFixed(2);
+    const uptime30d = parseFloat(uptimeData['30d']?.uptime || 0).toFixed(2);
+    const totalPings = uptimeData['30d']?.totalPings || 0;
+    const successfulPings = uptimeData['30d']?.successfulPings || 0;
 
     // Update values dynamically
     const uptime24hEl = contentEl.querySelector(`.uptime-24h-${serviceId}`);
@@ -1252,46 +1253,62 @@ async function updateChartData(serviceId, period) {
     const chart = charts[serviceId];
     if (!chart) return;
 
-    let days = 1;
-    if (period === '1h') {
-      days = 0.04;
-    } else if (period === '7d') {
-      days = 7;
-    } else if (period === '30d') {
-      days = 30;
-    } else if (period === 'all') {
-      days = 90;
-    }
-
-    // Fetch real statistics from the API
-    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?days=${days}`);
+    // Fetch real statistics from the API with period parameter
+    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?period=${period}`);
     const statistics = statsRes.data.statistics || [];
+
+    // Parse and sort statistics chronologically (oldest first = left to right)
+    const sortedStats = [...statistics]
+      .map(stat => ({
+        ...stat,
+        dateObj: new Date(stat.date) // Parse date once
+      }))
+      .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime()); // Sort chronologically (oldest first)
 
     const labels = [];
     const responseTimeData = [];
     const downData = [];
 
-    statistics.forEach(stat => {
-      const date = new Date(stat.date);
-      if (period === '1h' || period === '24h') {
+    sortedStats.forEach(stat => {
+      const date = stat.dateObj;
+      if (period === '1h') {
+        // 1H: Show time only (HH:MM)
         labels.push(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      } else if (period === '24h') {
+        // 24H: Show day and time (Mon 15, 14:30)
+        labels.push(date.toLocaleString([], { weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+      } else if (period === '7d') {
+        // 7D: Show date and time (Nov 15, 14:30)
+        labels.push(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+      } else if (period === '30d') {
+        // 30D: Show date only (Nov 15)
+        labels.push(date.toLocaleString([], { month: 'short', day: 'numeric' }));
       } else {
-        labels.push(date.toLocaleDateString([], { month: 'short', day: 'numeric' }));
+        // Default: Show date and time
+        labels.push(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
       }
 
-      // Add response time data
+      // Add response time data (rounded to nearest integer)
       const avgResponseTime = stat.avgResponseTime || 0;
-      responseTimeData.push(avgResponseTime);
+      responseTimeData.push(Math.round(avgResponseTime));
 
-      // Add downtime indicator
+      // Add downtime indicator (will be scaled to max Y value later)
       const isDown = stat.successfulPings === 0;
-      downData.push(isDown ? 100 : null);
+      downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
     });
+
+    // Calculate max response time for scaling downtime indicator
+    const validResponseTimes = responseTimeData.filter(v => v > 0);
+    const maxResponseTime = validResponseTimes.length > 0 ? Math.max(...validResponseTimes) : 100;
+    const downtimeMaxValue = Math.round(Math.max(maxResponseTime * 1.1, 100)); // Add 10% padding, minimum 100, rounded
+
+    // Scale downtime indicator to max Y value
+    const scaledDownData = downData.map(val => val !== null ? downtimeMaxValue : null);
 
     // Update chart data dynamically
     chart.data.labels = labels;
     chart.data.datasets[0].data = responseTimeData;
-    chart.data.datasets[1].data = downData;
+    chart.data.datasets[1].data = scaledDownData;
     
     // Update point radius based on period
     chart.data.datasets[0].pointRadius = period === '1h' || period === '24h' ? 4 : 0;
@@ -1313,40 +1330,48 @@ async function loadServiceChart(serviceId, period) {
       return;
     }
 
-    let days = 1;
-    if (period === '1h') {
-      days = 0.04; // 1 hour = 1/24 days
-    } else if (period === '7d') {
-      days = 7;
-    } else if (period === '30d') {
-      days = 30;
-    } else if (period === 'all') {
-      days = 90;
-    }
-
-    // Fetch real statistics from the API
-    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?days=${days}`);
+    // Fetch real statistics from the API with period parameter
+    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?period=${period}`);
     const statistics = statsRes.data.statistics || [];
+
+    // Parse and sort statistics chronologically (oldest first = left to right)
+    const sortedStats = [...statistics]
+      .map(stat => ({
+        ...stat,
+        dateObj: new Date(stat.date) // Parse date once
+      }))
+      .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime()); // Sort chronologically (oldest first)
 
     const labels = [];
     const responseTimeData = [];
     const downData = [];
 
-    statistics.forEach(stat => {
-      const date = new Date(stat.date);
-      if (period === '1h' || period === '24h') {
+    sortedStats.forEach(stat => {
+      const date = stat.dateObj;
+      if (period === '1h') {
+        // 1H: Show time only (HH:MM)
         labels.push(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      } else if (period === '24h') {
+        // 24H: Show day and time (Mon 15, 14:30)
+        labels.push(date.toLocaleString([], { weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+      } else if (period === '7d') {
+        // 7D: Show date and time (Nov 15, 14:30)
+        labels.push(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+      } else if (period === '30d') {
+        // 30D: Show date only (Nov 15)
+        labels.push(date.toLocaleString([], { month: 'short', day: 'numeric' }));
       } else {
-        labels.push(date.toLocaleDateString([], { month: 'short', day: 'numeric' }));
+        // Default: Show date and time
+        labels.push(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
       }
 
-      // Add response time data
+      // Add response time data (rounded to nearest integer)
       const avgResponseTime = stat.avgResponseTime || 0;
-      responseTimeData.push(avgResponseTime);
+      responseTimeData.push(Math.round(avgResponseTime));
 
-      // Add downtime indicator
+      // Add downtime indicator (will be scaled to max Y value later)
       const isDown = stat.successfulPings === 0;
-      downData.push(isDown ? 100 : null);
+      downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
     });
 
     // Destroy existing chart if any
@@ -1360,6 +1385,10 @@ async function loadServiceChart(serviceId, period) {
     const validResponseTimes = responseTimeData.filter(v => v > 0);
     const minResponseTime = validResponseTimes.length > 0 ? Math.min(...validResponseTimes) : 0;
     const maxResponseTime = validResponseTimes.length > 0 ? Math.max(...validResponseTimes) : 100;
+    const downtimeMaxValue = Math.round(Math.max(maxResponseTime * 1.1, 100)); // Add 10% padding, minimum 100, rounded
+
+    // Scale downtime indicator to max Y value
+    const scaledDownData = downData.map(val => val !== null ? downtimeMaxValue : null);
     
     // Store the period for this chart
     chartPeriods[serviceId] = period;
@@ -1389,7 +1418,7 @@ async function loadServiceChart(serviceId, period) {
           },
           {
             label: 'Downtime',
-            data: downData,
+            data: scaledDownData,
             borderColor: '#ef4444',
             backgroundColor: 'rgba(239, 68, 68, 0.25)',
             fill: true,
@@ -1435,7 +1464,7 @@ async function loadServiceChart(serviceId, period) {
                     return '🔴 Offline';
                   }
                   const pingTag = value < 50 ? '🟢 Excellent' : value < 100 ? '🟡 Good' : value < 200 ? '🟠 Fair' : '🔴 Poor';
-                  return `${pingTag} ${value.toFixed(2)} ms`;
+                  return `${pingTag} ${Math.round(value)} ms`;
                 } else {
                   return context.raw ? '🔴 Service Down' : '';
                 }
@@ -1456,6 +1485,7 @@ async function loadServiceChart(serviceId, period) {
         scales: {
           y: {
             beginAtZero: true,
+            max: downtimeMaxValue, // Set max to ensure downtime indicator reaches top
             grid: { 
               color: 'rgba(255, 255, 255, 0.08)', 
               drawBorder: false,
@@ -1466,7 +1496,7 @@ async function loadServiceChart(serviceId, period) {
               font: { size: 11, weight: '500' },
               padding: 8,
               callback: function(value) {
-                return value + ' ms';
+                return Math.round(value) + ' ms';
               }
             },
             title: { 
@@ -1478,6 +1508,7 @@ async function loadServiceChart(serviceId, period) {
             }
           },
           x: {
+            type: 'category',
             grid: { 
               color: 'rgba(255, 255, 255, 0.05)', 
               drawBorder: false 
@@ -1487,8 +1518,12 @@ async function loadServiceChart(serviceId, period) {
               maxRotation: 45, 
               minRotation: 0, 
               font: { size: 10, weight: '500' },
-              padding: 8
+              padding: 8,
+              autoSkip: true,
+              maxTicksLimit: 12
             },
+            // Ensure chronological order (left = oldest, right = newest)
+            reverse: false
           },
         },
         elements: {

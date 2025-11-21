@@ -1240,6 +1240,19 @@
               <p class="form-help mt-2">How long to keep full historic data. Data older than this will be minimized (keeping only important data points). Default: 30 days.</p>
             </div>
             <div class="border-t border-slate-700/30 pt-4">
+              <label class="form-label">Debug Logging</label>
+              <div class="flex items-center gap-3 mb-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" id="debugLogging" class="checkbox-input">
+                  <span class="text-sm text-slate-300">Enable debug logging</span>
+                </label>
+                <button onclick="saveAdminSettings()" class="btn-primary">
+                  <i class="fas fa-save mr-2"></i>Save
+                </button>
+              </div>
+              <p class="form-help">When enabled, detailed ping statistics will be logged to the server console. Useful for troubleshooting ping issues.</p>
+            </div>
+            <div class="border-t border-slate-700/30 pt-4">
               <label class="form-label">Data Management</label>
               <p class="form-help mb-3">Clear all historic ping data. This will not affect incidents or blog posts.</p>
               <div class="mb-3 p-3 bg-slate-800/50 rounded-lg border border-slate-700/30">

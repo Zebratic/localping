@@ -12,7 +12,7 @@ const { connectDB, closeDB, getDB } = require('./config/db');
 const SQLiteSessionStore = require('./config/sessionStore');
 const monitorService = require('./services/monitorService');
 const gatewayService = require('./services/gatewayService');
-const sqliteService = require('./services/sqliteService');
+// sqliteService removed - using PostgreSQL via db.js now
 const dataRetentionService = require('./services/dataRetentionService');
 const { apiKeyAuth, createRateLimiter, validateTargetInput } = require('./middleware/auth');
 const { setupCheckMiddleware, isSetupComplete } = require('./middleware/setupCheck');
@@ -115,20 +115,14 @@ let db = null;
 
 const startServer = async () => {
   try {
-    // Initialize SQLite database
-    sqliteService.initializeDatabase();
-
-    // Connect to SQLite database
+    // Connect to PostgreSQL database
     db = await connectDB();
     console.log(chalk.green('✓ Connected to database'));
 
     // Detect gateway
     await gatewayService.detectAllGateways();
 
-    // Set up periodic cleanup of old SQLite data
-    setInterval(() => {
-      sqliteService.cleanupOldData();
-    }, 24 * 60 * 60 * 1000); // Run daily
+    // Set up periodic cleanup of old data (handled by dataRetentionService)
 
     // Set up periodic data retention processing
     setInterval(async () => {
@@ -191,7 +185,6 @@ const shutdown = async (signal) => {
     const pingService = require('./services/pingService');
     await pingService.shutdown();
     await closeDB();
-    sqliteService.closeDatabase();
     console.log(chalk.green('✓ Server shut down successfully'));
     process.exit(0);
   } catch (error) {

@@ -1,5 +1,5 @@
 const { getDB } = require('../config/db');
-const sqliteService = require('./sqliteService');
+// sqliteService removed - using PostgreSQL via db.js now
 const path = require('path');
 const fs = require('fs');
 
@@ -79,19 +79,11 @@ async function exportData(options = {}) {
     // Export statistics from main DB
     exportData.data.statistics = await db.collection('statistics').find({}).toArray();
     
-    // Export ping_results from SQLite service
-    sqliteService.initializeDatabase();
-    const sqliteDb = sqliteService.getDatabase();
-    const pingResults = sqliteDb.prepare('SELECT * FROM ping_results').all();
-    exportData.data.ping_results = pingResults.map(r => ({
-      ...r,
-      success: r.success === 1,
-      timestamp: r.timestamp
-    }));
+    // Export pingResults from PostgreSQL (legacy format name for compatibility)
+    exportData.data.ping_results = await db.collection('pingResults').find({}).toArray();
     
-    // Export daily_stats from SQLite service
-    const dailyStats = sqliteDb.prepare('SELECT * FROM daily_stats').all();
-    exportData.data.daily_stats = dailyStats;
+    // Export statistics as daily_stats (legacy format name for compatibility)
+    exportData.data.daily_stats = await db.collection('statistics').find({}).toArray();
   }
 
   // Export actions
@@ -292,25 +284,22 @@ async function importData(importData, options = {}) {
       }
     }
 
-    // Import SQLite service data
+    // Import ping_results (legacy format) - convert to pingResults
     if (importData.data.ping_results && Array.isArray(importData.data.ping_results)) {
       try {
-        sqliteService.initializeDatabase();
-        const sqliteDb = sqliteService.getDatabase();
         let imported = 0;
         for (const pingResult of importData.data.ping_results) {
           try {
-            sqliteDb.prepare(`
-              INSERT INTO ping_results (targetId, success, responseTime, timestamp, statusCode, error)
-              VALUES (?, ?, ?, ?, ?, ?)
-            `).run(
-              pingResult.targetId,
-              pingResult.success ? 1 : 0,
-              pingResult.responseTime || null,
-              pingResult.timestamp,
-              pingResult.statusCode || null,
-              pingResult.error || null
-            );
+            await db.collection('pingResults').insertOne({
+              _id: require('uuid').v4(),
+              targetId: pingResult.targetId,
+              success: pingResult.success === 1 || pingResult.success === true,
+              responseTime: pingResult.responseTime || null,
+              timestamp: pingResult.timestamp ? new Date(pingResult.timestamp) : new Date(),
+              statusCode: pingResult.statusCode || null,
+              error: pingResult.error || null,
+              protocol: pingResult.protocol || null
+            });
             imported++;
           } catch (error) {
             // Skip duplicates
@@ -322,31 +311,25 @@ async function importData(importData, options = {}) {
       }
     }
 
+    // Import daily_stats (legacy format) - convert to statistics
     if (importData.data.daily_stats && Array.isArray(importData.data.daily_stats)) {
       try {
-        sqliteService.initializeDatabase();
-        const sqliteDb = sqliteService.getDatabase();
         let imported = 0;
         for (const stat of importData.data.daily_stats) {
           try {
-            sqliteDb.prepare(`
-              INSERT INTO daily_stats (targetId, date, totalPings, successfulPings, avgResponseTime, minResponseTime, maxResponseTime)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
-              ON CONFLICT(targetId, date) DO UPDATE SET
-                totalPings = excluded.totalPings,
-                successfulPings = excluded.successfulPings,
-                avgResponseTime = excluded.avgResponseTime,
-                minResponseTime = excluded.minResponseTime,
-                maxResponseTime = excluded.maxResponseTime
-            `).run(
-              stat.targetId,
-              stat.date,
-              stat.totalPings || 0,
-              stat.successfulPings || 0,
-              stat.avgResponseTime || 0,
-              stat.minResponseTime || null,
-              stat.maxResponseTime || null
-            );
+            await db.collection('statistics').insertOne({
+              _id: require('uuid').v4(),
+              targetId: stat.targetId,
+              date: stat.date ? new Date(stat.date) : new Date(),
+              totalPings: stat.totalPings || 0,
+              successfulPings: stat.successfulPings || 0,
+              failedPings: (stat.totalPings || 0) - (stat.successfulPings || 0),
+              uptime: stat.totalPings > 0 ? (stat.successfulPings / stat.totalPings) * 100 : 0,
+              lastResponseTime: null,
+              avgResponseTime: stat.avgResponseTime || 0,
+              minResponseTime: stat.minResponseTime || null,
+              maxResponseTime: stat.maxResponseTime || null
+            });
             imported++;
           } catch (error) {
             // Skip duplicates

@@ -5,6 +5,7 @@ const { getDB } = require('../config/db');
 const monitorService = require('../services/monitorService');
 const IncidentService = require('../services/incidentService');
 const { adminPageAuth } = require('../middleware/auth');
+const chalk = require('../utils/colors');
 
 // Admin login page (GET)
 router.get('/login', (req, res) => {
@@ -535,6 +536,7 @@ router.post('/api/targets', async (req, res) => {
       host,
       port,
       protocol,
+      path,
       interval,
       enabled,
       publicVisible,
@@ -565,19 +567,66 @@ router.post('/api/targets', async (req, res) => {
     }
 
     const db = getDB();
+    const faviconService = require('../services/faviconService');
+    
+    // Build target URL for favicon fetching
+    const protocolLower = protocol.toUpperCase();
+    const defaultPort = protocolLower === 'HTTPS' ? 443 : protocolLower === 'HTTP' ? 80 : null;
+    const targetPort = port || defaultPort;
+    const targetPath = path || '/';
+    const targetUrl = targetPort && targetPort !== defaultPort
+      ? `${protocolLower.toLowerCase()}://${host}:${targetPort}${targetPath}`
+      : `${protocolLower.toLowerCase()}://${host}${targetPath}`;
+
+    // Auto-fetch favicon for HTTP/HTTPS if appIcon not provided
+    let fetchedAppIcon = appIcon;
+    let finalAppUrl = appUrl;
+    if ((protocolLower === 'HTTP' || protocolLower === 'HTTPS') && !appIcon) {
+      try {
+        // Parse auth if it's a string
+        let authObj = auth;
+        if (auth && typeof auth === 'string') {
+          try {
+            authObj = JSON.parse(auth);
+          } catch (e) {
+            authObj = null;
+          }
+        }
+
+        const faviconUrl = await faviconService.getFaviconUrlFromHtml(targetUrl, {
+          timeout: (timeout || 30) * 1000,
+          maxRedirects: maxRedirects !== undefined ? maxRedirects : 5,
+          ignoreSsl: ignoreSsl === true,
+          auth: authObj,
+        });
+
+        if (faviconUrl) {
+          fetchedAppIcon = faviconUrl;
+          // Also set appUrl if not provided
+          if (!finalAppUrl) {
+            finalAppUrl = targetUrl;
+          }
+        }
+      } catch (error) {
+        // Silently fail - favicon fetching is optional
+        console.error(`Failed to fetch favicon for ${targetUrl}:`, error.message);
+      }
+    }
+
     const target = {
       name,
       host,
       port: port || null,
       protocol: protocol.toUpperCase(),
+      path: path || null,
       interval: interval || 60,
       enabled: enabled !== false,
       publicVisible: publicVisible !== false,
       publicShowDetails: publicShowDetails === true,
       publicShowStatus: publicShowStatus !== false, // Default to true
       publicShowAppLink: publicShowAppLink !== false, // Default to true
-      appUrl: appUrl || null,
-      appIcon: appIcon || null,
+      appUrl: finalAppUrl || null,
+      appIcon: fetchedAppIcon || null,
       retries: retries !== undefined ? retries : 0,
       retryInterval: retryInterval !== undefined ? retryInterval : 5,
       timeout: timeout !== undefined ? timeout : 30,
@@ -606,6 +655,82 @@ router.post('/api/targets', async (req, res) => {
       target: { ...target, _id: result.insertedId },
     });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update target positions (bulk) - MUST be before /api/targets/:id route
+router.put('/api/targets/positions', async (req, res) => {
+  try {
+    const db = getDB();
+    const { positions } = req.body; // Array of { targetId, position }
+
+    if (!Array.isArray(positions)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Positions must be an array',
+      });
+    }
+
+    // Validate all targetIds are provided and trim them
+    const missingIds = positions.filter(p => !p.targetId);
+    if (missingIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid targetId provided',
+      });
+    }
+
+    // Invalidate cache to ensure fresh data
+    const cacheService = require('../services/cacheService');
+    cacheService.invalidateCollection('targets');
+
+    // Validate all targetIds exist by querying them all at once using direct SQL
+    // Trim IDs to handle any whitespace issues
+    const targetIds = positions.map(p => String(p.targetId).trim()).filter(id => id);
+    
+    if (targetIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No target IDs provided',
+      });
+    }
+    
+    const placeholders = targetIds.map((_, i) => `$${i + 1}`).join(', ');
+    const query = `SELECT _id FROM targets WHERE _id IN (${placeholders})`;
+    const result = await db.query(query, targetIds);
+    
+    const existingIds = new Set(result.rows.map(r => r._id));
+    const missingTargetIds = targetIds.filter(id => !existingIds.has(id));
+    
+    if (missingTargetIds.length > 0) {
+      console.error('Missing target IDs:', missingTargetIds);
+      console.error('Requested IDs:', targetIds);
+      console.error('Found IDs:', Array.from(existingIds));
+      return res.status(404).json({
+        success: false,
+        error: `Target not found: ${missingTargetIds[0]}`,
+        details: {
+          missing: missingTargetIds,
+          requested: targetIds.length,
+          found: existingIds.size
+        }
+      });
+    }
+
+    // Update all positions (use trimmed IDs)
+    const updatePromises = positions.map(({ targetId, position }) =>
+      db.collection('targets').updateOne(
+        { _id: String(targetId).trim() },
+        { $set: { position: position || 0, updatedAt: new Date() } }
+      )
+    );
+
+    await Promise.all(updatePromises);
+
+    res.json({ success: true, message: 'Positions updated' });
+  } catch (error) {
+    console.error('Error updating positions:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -698,35 +823,6 @@ router.put('/api/targets/:id', async (req, res) => {
   }
 });
 
-// Update target positions (bulk)
-router.put('/api/targets/positions', async (req, res) => {
-  try {
-    const db = getDB();
-    const { positions } = req.body; // Array of { targetId, position }
-
-    if (!Array.isArray(positions)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Positions must be an array',
-      });
-    }
-
-    // Update all positions in a transaction
-    const updatePromises = positions.map(({ targetId, position }) =>
-      db.collection('targets').updateOne(
-        { _id: targetId },
-        { $set: { position: position || 0, updatedAt: new Date() } }
-      )
-    );
-
-    await Promise.all(updatePromises);
-
-    res.json({ success: true, message: 'Positions updated' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Delete target
 router.delete('/api/targets/:id', async (req, res) => {
   try {
@@ -759,94 +855,243 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
   try {
     const db = getDB();
     const targetId = req.params.id;
+    
+    // Get target details
+    const target = await db.collection('targets').findOne({ _id: targetId });
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'Target not found' });
+    }
+    
+    // Parse JSON fields
+    const parsedTarget = { ...target };
+    if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
+      try {
+        parsedTarget.auth = JSON.parse(parsedTarget.auth);
+      } catch (e) {
+        parsedTarget.auth = null;
+      }
+    }
+    if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
+      try {
+        parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
+      } catch (e) {
+        parsedTarget.quickCommands = [];
+      }
+    }
+    
+    const targetWithStatus = {
+      ...parsedTarget,
+      currentStatus: monitorService.getTargetStatus(targetId),
+    };
+    const period = req.query.period || null;
     const days = parseFloat(req.query.days) || null;
     const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
     const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
 
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const dbPath = path.join(process.cwd(), 'data', 'localping.db');
-    const sqliteDb = new Database(dbPath);
-
-    let startDateStr;
-    let endDateStr;
-    let groupByFormat;
+    let startDateObj;
+    let endDateObj;
+    let groupByTrunc;
     let timePeriod;
+    let maxPoints;
+    let intervalMinutes;
 
     // Determine time period and grouping
     if (startDate && endDate) {
       // Custom date range
-      startDateStr = startDate.toISOString();
-      endDateStr = endDate.toISOString();
+      startDateObj = startDate;
+      endDateObj = endDate;
       const diffDays = (endDate - startDate) / (1000 * 60 * 60 * 24);
       
       if (diffDays <= 1) {
-        groupByFormat = "strftime('%Y-%m-%d %H:00:00', timestamp)";
+        intervalMinutes = 60;
         timePeriod = 'hour';
+        maxPoints = 24;
       } else if (diffDays <= 7) {
-        groupByFormat = "strftime('%Y-%m-%d %H:00:00', timestamp)";
+        intervalMinutes = 60;
         timePeriod = 'hour';
-      } else if (diffDays <= 30) {
-        groupByFormat = "strftime('%Y-%m-%d', timestamp)";
-        timePeriod = 'day';
+        maxPoints = 168;
       } else {
-        groupByFormat = "strftime('%Y-%m-%d', timestamp)";
+        intervalMinutes = 1440; // 1 day
         timePeriod = 'day';
+        maxPoints = diffDays;
+      }
+    } else if (period) {
+      // Use period parameter
+      endDateObj = new Date();
+      
+      if (period === '1h') {
+        // 1H: 60 data points (one per minute)
+        startDateObj = new Date();
+        startDateObj.setHours(startDateObj.getHours() - 1);
+        intervalMinutes = 1;
+        timePeriod = 'minute';
+        maxPoints = 60;
+      } else if (period === '24h') {
+        // 24H: 48 data points (every 30 minutes)
+        startDateObj = new Date();
+        startDateObj.setHours(startDateObj.getHours() - 24);
+        intervalMinutes = 30;
+        timePeriod = '30min';
+        maxPoints = 48;
+      } else if (period === '7d') {
+        // 7D: 56 data points (every 3 hours)
+        startDateObj = new Date();
+        startDateObj.setDate(startDateObj.getDate() - 7);
+        intervalMinutes = 180; // 3 hours
+        timePeriod = '3hour';
+        maxPoints = 56;
+      } else if (period === '30d') {
+        // 30D: 60 data points (every 12 hours)
+        startDateObj = new Date();
+        startDateObj.setDate(startDateObj.getDate() - 30);
+        intervalMinutes = 720; // 12 hours
+        timePeriod = '12hour';
+        maxPoints = 60;
+      } else if (period === 'all') {
+        // ALL: 60 data points spread evenly since monitor creation
+        const firstPingResult = await db.query(`
+          SELECT MIN(timestamp) as first_timestamp
+          FROM "pingResults"
+          WHERE "targetId" = $1
+        `, [targetId]);
+        
+        if (firstPingResult.rows[0] && firstPingResult.rows[0].first_timestamp) {
+          startDateObj = new Date(firstPingResult.rows[0].first_timestamp);
+          const totalSeconds = Math.floor((endDateObj - startDateObj) / 1000);
+          // Calculate interval to get exactly 60 points
+          intervalMinutes = Math.max(1, Math.floor(totalSeconds / 60 / 60));
+          timePeriod = 'custom';
+          maxPoints = 60;
+        } else {
+          // No data, return empty
+          return res.json({ success: true, statistics: [] });
+        }
+      } else {
+        // Unknown period, default to 24h
+        startDateObj = new Date();
+        startDateObj.setHours(startDateObj.getHours() - 24);
+        intervalMinutes = 30;
+        timePeriod = '30min';
+        maxPoints = 48;
       }
     } else if (days) {
-      // Fixed period
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - days);
-      startDateStr = start.toISOString();
-      endDateStr = end.toISOString();
+      // Fixed period using days (backward compatibility)
+      endDateObj = new Date();
+      startDateObj = new Date();
+      startDateObj.setDate(startDateObj.getDate() - days);
       
       if (days <= 1) {
-        groupByFormat = "strftime('%Y-%m-%d %H:00:00', timestamp)";
+        intervalMinutes = 60;
         timePeriod = 'hour';
+        maxPoints = 24;
       } else if (days <= 7) {
-        groupByFormat = "strftime('%Y-%m-%d %H:00:00', timestamp)";
+        intervalMinutes = 60;
         timePeriod = 'hour';
+        maxPoints = 168;
       } else {
-        groupByFormat = "strftime('%Y-%m-%d', timestamp)";
+        intervalMinutes = 1440; // 1 day
         timePeriod = 'day';
+        maxPoints = days;
       }
     } else {
-      // Default to last 30 days
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - 30);
-      startDateStr = start.toISOString();
-      endDateStr = end.toISOString();
-      groupByFormat = "strftime('%Y-%m-%d', timestamp)";
-      timePeriod = 'day';
+      // Default to last 24h
+      endDateObj = new Date();
+      startDateObj = new Date();
+      startDateObj.setHours(startDateObj.getHours() - 24);
+      intervalMinutes = 30;
+      timePeriod = '30min';
+      maxPoints = 48;
     }
 
-    // Aggregate by determined time period
-    const stmt = sqliteDb.prepare(`
+    // Generate evenly spaced time buckets and aggregate data into them
+    // This ensures we always get the exact number of points requested
+    const intervalSeconds = intervalMinutes * 60;
+    const startEpoch = Math.floor(startDateObj.getTime() / 1000);
+    const endEpoch = Math.floor(endDateObj.getTime() / 1000);
+    
+    // Debug: Check if we have any ping results in the time range
+    // Convert dates to ISO strings for PostgreSQL
+    const startDateStr = startDateObj.toISOString().replace('T', ' ').substring(0, 19);
+    const endDateStr = endDateObj.toISOString().replace('T', ' ').substring(0, 19);
+    
+    const debugCheck = await db.query(`
+      SELECT COUNT(*) as count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
+      FROM "pingResults"
+      WHERE "targetId" = $1 AND timestamp >= $2::timestamp AND timestamp <= $3::timestamp
+    `, [targetId, startDateStr, endDateStr]);
+    
+    // Also check all ping results for this target
+    const allPingsCheck = await db.query(`
+      SELECT COUNT(*) as count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
+      FROM "pingResults"
+      WHERE "targetId" = $1
+    `, [targetId]);
+    
+    // Check admin settings for debug logging
+    const adminSettings = await db.collection('adminSettings').findOne({ _id: 'settings' });
+    const debugLogging = adminSettings?.debugLogging === true;
+    
+    if (debugLogging || process.env.DEBUG_STATS || process.env.NODE_ENV === 'development') {
+      console.log(chalk.cyan(`[Stats Debug] Target: ${targetId}, Period: ${period || 'default'}`));
+      console.log(chalk.gray(`  Time range: ${startDateObj.toISOString()} to ${endDateObj.toISOString()}`));
+      console.log(chalk.gray(`  Epoch range: ${startEpoch} to ${endEpoch}, interval: ${intervalSeconds}s`));
+      console.log(chalk.gray(`  All ping results for target: ${allPingsCheck.rows[0]?.count || 0}`));
+      if (allPingsCheck.rows[0]?.min_ts) {
+        console.log(chalk.gray(`  All pings - Min: ${allPingsCheck.rows[0].min_ts}, Max: ${allPingsCheck.rows[0].max_ts}`));
+      }
+      console.log(chalk.gray(`  Ping results in query range: ${debugCheck.rows[0]?.count || 0}`));
+      if (debugCheck.rows[0]?.min_ts) {
+        console.log(chalk.gray(`  Query range - Min: ${debugCheck.rows[0].min_ts}, Max: ${debugCheck.rows[0].max_ts}`));
+      }
+    }
+    
+    // Generate time buckets using generate_series
+    // Use AT TIME ZONE 'UTC' to ensure bucket_time is in UTC before casting to timestamp
+    const result = await db.query(`
+      WITH time_buckets AS (
+        SELECT 
+          (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
+        FROM generate_series($2::bigint, $3::bigint, $5::bigint) as bucket_epoch
+        ORDER BY bucket_epoch
+        LIMIT $4
+      )
       SELECT 
-        ${groupByFormat} as date,
-        COUNT(*) as totalPings,
-        SUM(CASE WHEN success = 1 OR success = 'true' THEN 1 ELSE 0 END) as successfulPings,
-        AVG(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS REAL) ELSE NULL END) as avgResponseTime,
-        MIN(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS INTEGER) ELSE NULL END) as minResponseTime,
-        MAX(CASE WHEN responseTime IS NOT NULL THEN CAST(responseTime AS INTEGER) ELSE NULL END) as maxResponseTime
-      FROM ping_results
-      WHERE targetId = ? AND timestamp >= ? AND timestamp <= ?
-      GROUP BY ${groupByFormat}
-      ORDER BY date ASC
-    `);
+        time_buckets.bucket_time::text as date,
+        COALESCE(COUNT(pr._id), 0)::integer as "totalPings",
+        COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
+        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime",
+        MIN(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "minResponseTime",
+        MAX(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "maxResponseTime"
+      FROM time_buckets
+      LEFT JOIN "pingResults" pr ON 
+        pr."targetId" = $1 
+        AND pr.timestamp >= time_buckets.bucket_time
+        AND pr.timestamp < (time_buckets.bucket_time + ($5 || ' seconds')::interval)
+      GROUP BY time_buckets.bucket_time
+      ORDER BY time_buckets.bucket_time ASC
+    `, [targetId, startEpoch, endEpoch, maxPoints, intervalSeconds]);
     
     // Get last response time separately
-    const lastResponseStmt = sqliteDb.prepare(`
-      SELECT responseTime FROM ping_results 
-      WHERE targetId = ? AND timestamp >= ? AND timestamp <= ?
+    const lastResponseResult = await db.query(`
+      SELECT "responseTime" FROM "pingResults" 
+      WHERE "targetId" = $1 AND timestamp >= $2::timestamp AND timestamp <= $3::timestamp
       ORDER BY timestamp DESC LIMIT 1
-    `);
+    `, [targetId, startDateStr, endDateStr]);
 
-    const results = stmt.all(targetId, startDateStr, endDateStr);
-    const lastResponse = lastResponseStmt.get(targetId, startDateStr, endDateStr);
-    sqliteDb.close();
+    const results = result.rows; // Already in chronological order
+    const lastResponse = lastResponseResult.rows[0] || null;
+    
+    // Debug: Log query results
+    if (debugLogging || process.env.DEBUG_STATS || process.env.NODE_ENV === 'development') {
+      console.log(chalk.gray(`  Query returned ${results.length} time buckets`));
+      if (results.length > 0) {
+        const bucketsWithData = results.filter(r => r.totalPings > 0);
+        console.log(chalk.gray(`  Buckets with data: ${bucketsWithData.length}`));
+        if (bucketsWithData.length > 0) {
+          console.log(chalk.gray(`  First bucket with data: ${bucketsWithData[0].date}, pings: ${bucketsWithData[0].totalPings}`));
+        }
+      }
+    }
 
     const stats = results.map(r => ({
       date: r.date,
@@ -860,7 +1105,71 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
       lastResponseTime: lastResponse?.responseTime || 0,
     }));
 
-    return res.json({ success: true, statistics: stats });
+    // Get uptime data for 24h and 30d, plus daily stats for blocks
+    const uptime24hStart = new Date();
+    uptime24hStart.setDate(uptime24hStart.getDate() - 1);
+    uptime24hStart.setHours(0, 0, 0, 0);
+    
+    const uptime30dStart = new Date();
+    uptime30dStart.setDate(uptime30dStart.getDate() - 30);
+    uptime30dStart.setHours(0, 0, 0, 0);
+
+    // Get 24h uptime
+    const uptime24hResult = await db.query(`
+      SELECT 
+        SUM("totalPings")::bigint as "totalPings",
+        SUM("successfulPings")::bigint as "successfulPings"
+      FROM statistics
+      WHERE "targetId" = $1 AND date >= $2
+    `, [targetId, uptime24hStart]);
+    
+    const uptime24hData = uptime24hResult.rows[0] || { totalPings: 0, successfulPings: 0 };
+    const uptime24h = uptime24hData.totalPings > 0 
+      ? (uptime24hData.successfulPings / uptime24hData.totalPings) * 100 
+      : 0;
+
+    // Get 30d uptime and daily stats
+    const uptime30dResult = await db.query(`
+      SELECT 
+        date::date as date,
+        "totalPings",
+        "successfulPings",
+        "failedPings",
+        uptime
+      FROM statistics
+      WHERE "targetId" = $1 AND date >= $2
+      ORDER BY date ASC
+    `, [targetId, uptime30dStart]);
+
+    const dailyStats = uptime30dResult.rows;
+    let totalPings30d = 0;
+    let successfulPings30d = 0;
+    dailyStats.forEach(stat => {
+      totalPings30d += stat.totalPings || 0;
+      successfulPings30d += stat.successfulPings || 0;
+    });
+    const uptime30d = totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0;
+
+    return res.json({ 
+      success: true, 
+      target: targetWithStatus, // Include target details
+      statistics: stats,
+      uptime: {
+        '24h': {
+          uptime: uptime24h,
+          totalPings: uptime24hData.totalPings || 0,
+          successfulPings: uptime24hData.successfulPings || 0,
+          failedPings: (uptime24hData.totalPings || 0) - (uptime24hData.successfulPings || 0)
+        },
+        '30d': {
+          uptime: uptime30d,
+          totalPings: totalPings30d,
+          successfulPings: successfulPings30d,
+          failedPings: totalPings30d - successfulPings30d
+        }
+      },
+      dailyStats: dailyStats // For uptime blocks
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -875,15 +1184,22 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
 
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
 
-    const stats = await db
-      .collection('statistics')
-      .find({
-        targetId,
-        date: { $gte: startDate },
-      })
-      .toArray();
+    // Query daily statistics from PostgreSQL
+    const statsResult = await db.query(`
+      SELECT 
+        date::date as date,
+        "totalPings",
+        "successfulPings",
+        "failedPings",
+        uptime
+      FROM statistics
+      WHERE "targetId" = $1 AND date >= $2
+      ORDER BY date ASC
+    `, [targetId, startDate]);
 
+    const stats = statsResult.rows;
     let totalPings = 0;
     let successfulPings = 0;
 
@@ -894,7 +1210,14 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
 
     const uptime = totalPings > 0 ? (successfulPings / totalPings) * 100 : 0;
 
-    res.json({ success: true, uptime });
+    res.json({ 
+      success: true, 
+      uptime,
+      totalPings,
+      successfulPings,
+      failedPings: totalPings - successfulPings,
+      dailyStats: stats // Include daily stats for blocks
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1087,25 +1410,19 @@ router.delete('/api/posts/:id', async (req, res) => {
 router.post('/api/clear-ping-data', async (req, res) => {
   try {
     const db = getDB();
-    const sqliteService = require('../services/sqliteService');
 
-    // Clear pingResults from main database
+    // Clear pingResults from database
     const pingResultsDeleted = await db.collection('pingResults').deleteMany({});
     
-    // Clear statistics from main database
+    // Clear statistics from database
     const statisticsDeleted = await db.collection('statistics').deleteMany({});
-
-    // Clear ping_results and daily_stats from SQLite service database
-    const sqliteResult = sqliteService.clearAllPingData();
 
     res.json({ 
       success: true, 
       message: 'All ping data cleared successfully',
       details: {
         pingResults: pingResultsDeleted.deletedCount || 0,
-        statistics: statisticsDeleted.deletedCount || 0,
-        sqlitePingResults: sqliteResult.pingRecordsDeleted || 0,
-        sqliteDailyStats: sqliteResult.dailyStatsDeleted || 0
+        statistics: statisticsDeleted.deletedCount || 0
       }
     });
   } catch (error) {
@@ -1139,6 +1456,11 @@ router.get('/api/admin-settings', async (req, res) => {
       settings.dataRetentionDays = 30;
     }
 
+    // Ensure debugLogging exists (for migration)
+    if (settings.debugLogging === undefined) {
+      settings.debugLogging = false;
+    }
+
     // Get database file size
     const fs = require('fs');
     const path = require('path');
@@ -1163,7 +1485,7 @@ router.get('/api/admin-settings', async (req, res) => {
 router.put('/api/admin-settings', async (req, res) => {
   try {
     const db = getDB();
-    const { sessionDurationDays, dataRetentionDays } = req.body;
+    const { sessionDurationDays, dataRetentionDays, debugLogging } = req.body;
 
     if (sessionDurationDays !== undefined) {
       const days = parseInt(sessionDurationDays, 10);
@@ -1197,6 +1519,10 @@ router.put('/api/admin-settings', async (req, res) => {
       updateData.dataRetentionDays = parseInt(dataRetentionDays, 10);
     }
 
+    if (debugLogging !== undefined) {
+      updateData.debugLogging = debugLogging === true || debugLogging === 'true';
+    }
+
     const existing = await db.collection('adminSettings').findOne({ _id: 'settings' });
 
     if (existing) {
@@ -1209,6 +1535,7 @@ router.put('/api/admin-settings', async (req, res) => {
         _id: 'settings',
         sessionDurationDays: sessionDurationDays !== undefined ? parseInt(sessionDurationDays, 10) : 30,
         dataRetentionDays: dataRetentionDays !== undefined ? parseInt(dataRetentionDays, 10) : 30,
+        debugLogging: debugLogging !== undefined ? (debugLogging === true || debugLogging === 'true') : false,
         ...updateData,
       });
     }

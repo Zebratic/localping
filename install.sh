@@ -117,6 +117,55 @@ npm install --silent 2>/dev/null || npm install
 echo "📁 Creating data directory..."
 mkdir -p "$INSTALL_DIR/data"
 
+echo "🗄️  Setting up PostgreSQL..."
+# Install PostgreSQL if not present
+if ! command -v psql &> /dev/null; then
+    echo "📦 Installing PostgreSQL..."
+    apt-get install -y -qq postgresql postgresql-contrib 2>/dev/null || apt-get install -y postgresql postgresql-contrib
+    systemctl enable postgresql
+    systemctl start postgresql
+    echo "✅ PostgreSQL installed"
+else
+    echo "✓ PostgreSQL already installed"
+    # Ensure PostgreSQL is running
+    systemctl start postgresql 2>/dev/null || true
+fi
+
+# Wait for PostgreSQL to be ready
+sleep 2
+
+# Generate secure database password
+DB_PASSWORD=$(openssl rand -base64 24 | tr -d "=+/" | cut -c1-24)
+DB_NAME="localping"
+DB_USER="localping"
+
+# Create database and user if they don't exist
+echo "🔧 Configuring PostgreSQL database..."
+sudo -u postgres psql -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
+
+# Configure PostgreSQL for local-only access (security)
+PG_VERSION=$(sudo -u postgres psql -t -c "SHOW server_version_num;" | xargs)
+PG_MAJOR_VERSION=$(echo "$PG_VERSION" | cut -c1-2)
+PG_HBA_FILE="/etc/postgresql/$PG_MAJOR_VERSION/main/pg_hba.conf"
+
+if [ -f "$PG_HBA_FILE" ]; then
+    # Ensure local connections use md5 (password) authentication
+    if ! grep -q "^local.*$DB_NAME.*$DB_USER.*md5" "$PG_HBA_FILE"; then
+        # Add local connection rule if it doesn't exist
+        echo "local   $DB_NAME    $DB_USER    md5" | sudo tee -a "$PG_HBA_FILE" > /dev/null
+    fi
+    # Ensure host connections are restricted to localhost only
+    if ! grep -q "^host.*$DB_NAME.*$DB_USER.*127.0.0.1/32.*md5" "$PG_HBA_FILE"; then
+        echo "host    $DB_NAME    $DB_USER    127.0.0.1/32    md5" | sudo tee -a "$PG_HBA_FILE" > /dev/null
+    fi
+    # Reload PostgreSQL configuration
+    systemctl reload postgresql 2>/dev/null || sudo -u postgres pg_ctl reload -D /var/lib/postgresql/$PG_MAJOR_VERSION/main 2>/dev/null || true
+fi
+
+echo "✅ PostgreSQL database configured"
+
 echo "🔧 Setting up environment file..."
 if [ ! -f ".env" ]; then
     # Generate secure random strings
@@ -128,6 +177,13 @@ if [ ! -f ".env" ]; then
 API_PORT=8000
 NODE_ENV=production
 SESSION_SECRET=$SESSION_SECRET
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=$DB_NAME
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASSWORD
 
 # Notification Settings
 NOTIFICATION_ENABLED=true
@@ -148,6 +204,17 @@ EOF
 else
     if [ "$IS_UPDATE" = true ]; then
         echo "✓ Preserving existing .env file"
+        # Add DB config if missing (for existing installations)
+        if ! grep -q "^DB_HOST=" .env; then
+            echo "" >> .env
+            echo "# Database Configuration" >> .env
+            echo "DB_HOST=localhost" >> .env
+            echo "DB_PORT=5432" >> .env
+            echo "DB_NAME=$DB_NAME" >> .env
+            echo "DB_USER=$DB_USER" >> .env
+            echo "DB_PASSWORD=$DB_PASSWORD" >> .env
+            echo "✅ Added database configuration to .env"
+        fi
     else
         echo "⚠️  .env already exists, skipping creation"
     fi

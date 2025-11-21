@@ -105,7 +105,7 @@ describe('PingService', () => {
 
   describe('pingHTTP method', () => {
     it('should successfully ping HTTP endpoint', async () => {
-      axios.get.mockResolvedValue({ status: 200 });
+      axios.mockResolvedValue({ status: 200 });
 
       const result = await pingService.pingHTTP('http://example.com/', Date.now());
 
@@ -115,7 +115,7 @@ describe('PingService', () => {
     });
 
     it('should handle HTTP timeout', async () => {
-      axios.get.mockRejectedValue(new Error('Request timeout'));
+      axios.mockRejectedValue(new Error('Request timeout'));
 
       const result = await pingService.pingHTTP('http://example.com/', Date.now());
 
@@ -124,7 +124,7 @@ describe('PingService', () => {
     });
 
     it('should use port 443 for HTTPS by default', async () => {
-      axios.get.mockResolvedValue({ status: 200 });
+      axios.mockResolvedValue({ status: 200 });
 
       const result = await pingService.pingHTTP('https://example.com/', Date.now());
 
@@ -133,7 +133,7 @@ describe('PingService', () => {
     });
 
     it('should use custom port in HTTP URL', async () => {
-      axios.get.mockResolvedValue({ status: 200 });
+      axios.mockResolvedValue({ status: 200 });
 
       const result = await pingService.pingHTTP('http://example.com:8080/', Date.now());
 
@@ -160,7 +160,7 @@ describe('PingService', () => {
     });
 
     it('should route HTTP protocol correctly', async () => {
-      axios.get.mockResolvedValue({ status: 200 });
+      axios.mockResolvedValue({ status: 200 });
 
       const target = {
         host: 'example.com',
@@ -176,7 +176,7 @@ describe('PingService', () => {
     });
 
     it('should route HTTPS protocol correctly', async () => {
-      axios.get.mockResolvedValue({ status: 200 });
+      axios.mockResolvedValue({ status: 200 });
 
       const target = {
         host: 'example.com',

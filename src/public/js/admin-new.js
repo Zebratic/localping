@@ -34,6 +34,8 @@ function switchTab(tabName) {
     loadVisibility();
   } else if (tabName === 'settings') {
     loadPublicUISettings();
+  } else if (tabName === 'backup') {
+    // Backup tab doesn't need to load anything on switch
   }
 }
 
@@ -1707,6 +1709,7 @@ async function loadAdminSettings() {
   try {
     const response = await axios.get('/admin/api/admin-settings');
     const settings = response.data.settings;
+    const dbSize = response.data.dbSize || 0;
 
     if (settings) {
       const sessionDurationEl = document.getElementById('sessionDurationDays');
@@ -1718,9 +1721,24 @@ async function loadAdminSettings() {
         dataRetentionEl.value = settings.dataRetentionDays || 30;
       }
     }
+
+    // Update database size display
+    const dbSizeEl = document.getElementById('databaseSize');
+    if (dbSizeEl) {
+      dbSizeEl.textContent = formatFileSize(dbSize);
+    }
   } catch (error) {
     console.error('Error loading admin settings:', error);
   }
+}
+
+// Format file size to human-readable format
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 // Save admin settings
@@ -1864,6 +1882,169 @@ function attachFormListeners() {
   }
   if (authSelect) {
     authSelect.onchange = updateAuthFields;
+  }
+}
+
+// ============ BACKUP FUNCTIONS ============
+
+// Toggle export options based on full backup checkbox
+function toggleExportOptions() {
+  const fullBackup = document.getElementById('exportFull').checked;
+  const exportOptions = document.getElementById('exportOptions');
+  const checkboxes = exportOptions.querySelectorAll('input[type="checkbox"]');
+  
+  if (fullBackup) {
+    checkboxes.forEach(cb => {
+      cb.checked = true;
+      cb.disabled = true;
+    });
+  } else {
+    checkboxes.forEach(cb => {
+      cb.disabled = false;
+    });
+  }
+}
+
+// Export backup
+async function exportBackup() {
+  try {
+    const fullBackup = document.getElementById('exportFull').checked;
+    const exportOptions = {
+      full: fullBackup,
+      monitors: document.getElementById('exportMonitors').checked,
+      incidents: document.getElementById('exportIncidents').checked,
+      posts: document.getElementById('exportPosts').checked,
+      dataPoints: document.getElementById('exportDataPoints').checked,
+      actions: document.getElementById('exportActions').checked,
+      alerts: document.getElementById('exportAlerts').checked,
+      settings: document.getElementById('exportSettings').checked,
+      favicons: document.getElementById('exportFavicons').checked,
+    };
+
+    // Check if at least one option is selected
+    if (!fullBackup && !Object.values(exportOptions).slice(1).some(v => v === true)) {
+      showNotification('Please select at least one data type to export', 'error');
+      return;
+    }
+
+    showNotification('Exporting backup...', 'success');
+    
+    const response = await axios.post('/admin/api/backup/export', exportOptions);
+    
+    if (response.data.success) {
+      // Create download link
+      const dataStr = JSON.stringify(response.data.data, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `localping-backup-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      showNotification('Backup exported successfully', 'success');
+    } else {
+      showNotification(response.data.error || 'Error exporting backup', 'error');
+    }
+  } catch (error) {
+    console.error('Error exporting backup:', error);
+    showNotification(error.response?.data?.error || 'Error exporting backup', 'error');
+  }
+}
+
+// Import backup
+async function importBackup() {
+  try {
+    const fileInput = document.getElementById('importFile');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+      showNotification('Please select a backup file to import', 'error');
+      return;
+    }
+
+    if (!file.name.endsWith('.json')) {
+      showNotification('Please select a valid JSON backup file', 'error');
+      return;
+    }
+
+    showNotification('Reading backup file...', 'success');
+    
+    const fileContent = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+
+    let importData;
+    try {
+      importData = JSON.parse(fileContent);
+    } catch (error) {
+      showNotification('Invalid JSON file format', 'error');
+      return;
+    }
+
+    // Validate import data structure
+    if (!importData.data || typeof importData.data !== 'object') {
+      showNotification('Invalid backup file format', 'error');
+      return;
+    }
+
+    const overwrite = document.getElementById('importOverwrite').checked;
+    
+    showNotification('Importing backup...', 'success');
+    
+    const response = await axios.post('/admin/api/backup/import', {
+      importData,
+      overwrite,
+    });
+
+    if (response.data.success) {
+      const results = response.data.results;
+      let message = 'Backup imported successfully:\n';
+      
+      // Build summary message
+      if (results.imported) {
+        Object.keys(results.imported).forEach(key => {
+          const data = results.imported[key];
+          if (data.imported) message += `\n${key}: ${data.imported} imported`;
+          if (data.updated) message += `, ${data.updated} updated`;
+        });
+      }
+      
+      if (results.errors && results.errors.length > 0) {
+        message += `\n\nErrors: ${results.errors.length} error(s) occurred`;
+      }
+      
+      showNotification(message, 'success');
+      
+      // Clear file input
+      fileInput.value = '';
+      
+      // Reload relevant data
+      if (results.imported.targets || results.imported.incidents || results.imported.posts) {
+        // Reload current tab if applicable
+        const activeTab = document.querySelector('.tab-content.active');
+        if (activeTab) {
+          const tabId = activeTab.id;
+          if (tabId === 'monitors' && results.imported.targets) {
+            loadMonitors();
+          } else if (tabId === 'incidents' && results.imported.incidents) {
+            loadIncidents();
+          } else if (tabId === 'posts' && results.imported.posts) {
+            loadPosts();
+          }
+        }
+      }
+    } else {
+      showNotification(response.data.error || 'Error importing backup', 'error');
+    }
+  } catch (error) {
+    console.error('Error importing backup:', error);
+    showNotification(error.response?.data?.error || 'Error importing backup', 'error');
   }
 }
 

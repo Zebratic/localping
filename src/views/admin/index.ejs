@@ -611,6 +611,9 @@
         <button class="tab-button text-sm sm:text-base" onclick="switchTab('settings')">
           <i class="fas fa-cog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Settings</span>
         </button>
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('backup')">
+          <i class="fas fa-download mr-1 sm:mr-2"></i><span class="hidden xs:inline">Backup</span>
+        </button>
       </div>
     </div>
   </div>
@@ -1048,6 +1051,101 @@
       </div>
     </div>
 
+    <!-- Backup Tab -->
+    <div id="backup" class="tab-content">
+      <div>
+        <h2 class="text-2xl font-bold mb-6">Backup & Restore</h2>
+        
+        <!-- Export Section -->
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700/30">
+          <h3 class="text-xl font-semibold mb-4">
+            <i class="fas fa-download mr-2"></i>Export Data
+          </h3>
+          <p class="text-slate-400 mb-4">Export your data as a JSON backup file. You can choose to export everything or select specific data types.</p>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer mb-4">
+                <input type="checkbox" id="exportFull" class="checkbox-input" onchange="toggleExportOptions()">
+                <span class="form-label mb-0 font-semibold">Full Backup (Export Everything)</span>
+              </label>
+            </div>
+            
+            <div id="exportOptions" class="space-y-3 pl-6 border-l-2 border-slate-700/50">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportMonitors" class="checkbox-input" checked>
+                <span class="form-label mb-0">Monitors & Settings</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportIncidents" class="checkbox-input" checked>
+                <span class="form-label mb-0">Incidents</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportPosts" class="checkbox-input" checked>
+                <span class="form-label mb-0">Blog Posts</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportDataPoints" class="checkbox-input">
+                <span class="form-label mb-0">Data Points (Ping Results & Statistics)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportActions" class="checkbox-input" checked>
+                <span class="form-label mb-0">Actions</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportAlerts" class="checkbox-input">
+                <span class="form-label mb-0">Alerts</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportSettings" class="checkbox-input" checked>
+                <span class="form-label mb-0">Admin & UI Settings</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="exportFavicons" class="checkbox-input" checked>
+                <span class="form-label mb-0">Favicons</span>
+              </label>
+            </div>
+            
+            <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700/30">
+              <button onclick="exportBackup()" class="btn-primary flex-1">
+                <i class="fas fa-download mr-2"></i>Export Backup
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Import Section -->
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700/30">
+          <h3 class="text-xl font-semibold mb-4">
+            <i class="fas fa-upload mr-2"></i>Import Data
+          </h3>
+          <p class="text-slate-400 mb-4">Import data from a previously exported backup file. Existing data will be skipped unless you enable overwrite mode.</p>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer mb-4">
+                <input type="checkbox" id="importOverwrite" class="checkbox-input">
+                <span class="form-label mb-0">Overwrite existing data</span>
+              </label>
+              <p class="form-help">When enabled, existing items with the same ID will be updated. Otherwise, they will be skipped.</p>
+            </div>
+            
+            <div>
+              <label class="form-label">Backup File</label>
+              <input type="file" id="importFile" accept=".json" class="form-input">
+              <p class="form-help">Select a JSON backup file to import</p>
+            </div>
+            
+            <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700/30">
+              <button onclick="importBackup()" class="btn-primary flex-1">
+                <i class="fas fa-upload mr-2"></i>Import Backup
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Tab -->
     <div id="settings" class="tab-content">
       <div>
@@ -1122,6 +1220,10 @@
             <div class="border-t border-slate-700/30 pt-4">
               <label class="form-label">Data Management</label>
               <p class="form-help mb-3">Clear all historic ping data. This will not affect incidents or blog posts.</p>
+              <div class="mb-3 p-3 bg-slate-800/50 rounded-lg border border-slate-700/30">
+                <p class="text-slate-400 text-sm mb-1">Database Size</p>
+                <p class="text-lg font-semibold text-cyan-400" id="databaseSize">Loading...</p>
+              </div>
               <button onclick="showClearPingDataWarning()" class="btn-danger">
                 <i class="fas fa-trash-alt mr-2"></i>Clear All Ping Data
               </button>

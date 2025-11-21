@@ -1051,7 +1051,21 @@ router.get('/api/admin-settings', async (req, res) => {
       settings.dataRetentionDays = 30;
     }
 
-    res.json({ success: true, settings });
+    // Get database file size
+    const fs = require('fs');
+    const path = require('path');
+    const dbPath = path.join(process.cwd(), 'data', 'localping.db');
+    let dbSize = 0;
+    try {
+      if (fs.existsSync(dbPath)) {
+        const stats = fs.statSync(dbPath);
+        dbSize = stats.size;
+      }
+    } catch (error) {
+      console.error('Error getting database file size:', error);
+    }
+
+    res.json({ success: true, settings, dbSize });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1169,6 +1183,71 @@ router.put('/api/public-ui-settings', async (req, res) => {
     }
 
     res.json({ success: true, message: 'Public UI settings updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ BACKUP/EXPORT ROUTES ============
+
+// Export data
+router.post('/api/backup/export', async (req, res) => {
+  try {
+    const backupService = require('../services/backupService');
+    const {
+      full,
+      monitors,
+      incidents,
+      posts,
+      dataPoints,
+      actions,
+      alerts,
+      settings,
+      favicons,
+    } = req.body;
+
+    const exportData = await backupService.exportData({
+      full: full === true,
+      monitors: monitors === true,
+      incidents: incidents === true,
+      posts: posts === true,
+      dataPoints: dataPoints === true,
+      actions: actions === true,
+      alerts: alerts === true,
+      settings: settings === true,
+      favicons: favicons === true,
+    });
+
+    res.json({
+      success: true,
+      data: exportData,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Import data
+router.post('/api/backup/import', async (req, res) => {
+  try {
+    const backupService = require('../services/backupService');
+    const { importData, overwrite } = req.body;
+
+    if (!importData || !importData.data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid import data format',
+      });
+    }
+
+    const results = await backupService.importData(importData, {
+      overwrite: overwrite === true,
+    });
+
+    res.json({
+      success: true,
+      results,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

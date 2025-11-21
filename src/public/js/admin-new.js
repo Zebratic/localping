@@ -92,6 +92,9 @@ async function loadMonitors() {
             <span class="w-2 h-2 rounded-full ${status === 'up' ? 'bg-green-400' : 'bg-red-400'}"></span>
             ${statusText}
           </span>
+          <button onclick="event.stopPropagation(); cloneMonitor('${target._id}')" class="ml-2 p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-700/50 rounded transition-colors" title="Clone monitor">
+            <i class="fas fa-copy text-xs"></i>
+          </button>
         </div>
       `;
       card.onclick = () => selectMonitor(target);
@@ -716,14 +719,6 @@ function addNewMonitor() {
   document.getElementById('editPosition').value = '0';
   document.getElementById('editAuthMethod').value = 'none';
 
-  document.getElementById('emptyState').classList.add('hidden');
-  document.getElementById('monitorDetails').classList.remove('hidden');
-  document.getElementById('monitorName').textContent = 'New Monitor';
-  document.getElementById('monitorStatus').textContent = '--';
-  document.getElementById('monitorUptime').textContent = '--';
-  document.getElementById('monitorPing').textContent = '--';
-  document.getElementById('monitorAvgPing').textContent = '--';
-
   // Update protocol settings
   updateProtocolSettings();
   updateAuthFields();
@@ -733,13 +728,71 @@ function addNewMonitor() {
     card.classList.remove('selected');
   });
 
-  // Draw empty chart (use default timeout of 30s)
-  drawStatusChart([], null, 30000);
+  // Open edit modal
+  openEditMonitor();
+}
 
-  // Focus on name field
-  setTimeout(() => {
-    document.getElementById('editName').focus();
-  }, 100);
+// Clone monitor
+async function cloneMonitor(monitorId) {
+  try {
+    const response = await axios.get(`/admin/api/targets/${monitorId}`);
+    const monitor = response.data.target;
+    
+    // Set currentMonitorId to null for new monitor
+    currentMonitorId = null;
+    
+    // Populate form with cloned monitor data
+    document.getElementById('editName').value = `${monitor.name} (Copy)`;
+    document.getElementById('editHost').value = monitor.host || '';
+    document.getElementById('editProtocol').value = monitor.protocol || 'ICMP';
+    document.getElementById('editPort').value = monitor.port || '';
+    document.getElementById('editInterval').value = monitor.interval || 60;
+    document.getElementById('editGroup').value = monitor.group || '';
+    document.getElementById('editEnabled').checked = false; // Disable by default for cloned monitors
+    document.getElementById('editAppUrl').value = monitor.appUrl || '';
+    document.getElementById('editAppIcon').value = monitor.appIcon || '';
+    document.getElementById('editRetries').value = monitor.retries || 0;
+    document.getElementById('editRetryInterval').value = monitor.retryInterval || 5;
+    document.getElementById('editHttpMethod').value = monitor.httpMethod || 'GET';
+    document.getElementById('editTimeout').value = monitor.timeout || 30;
+    document.getElementById('editStatusCodes').value = monitor.statusCodes || '200-299';
+    document.getElementById('editMaxRedirects').value = monitor.maxRedirects || 5;
+    document.getElementById('editIgnoreSsl').checked = monitor.ignoreSsl || false;
+    document.getElementById('editUpsideDown').checked = monitor.upsideDown || false;
+    document.getElementById('editPosition').value = monitor.position || 0;
+    document.getElementById('editQuickCommands').value = (monitor.quickCommands || []).join(', ');
+    
+    // Handle authentication
+    if (monitor.auth) {
+      if (monitor.auth.type === 'basic') {
+        document.getElementById('editAuthMethod').value = 'basic';
+        document.getElementById('editAuthUsername').value = monitor.auth.username || '';
+        document.getElementById('editAuthPassword').value = monitor.auth.password || '';
+      } else if (monitor.auth.type === 'bearer') {
+        document.getElementById('editAuthMethod').value = 'bearer';
+        document.getElementById('editAuthToken').value = monitor.auth.token || '';
+      } else {
+        document.getElementById('editAuthMethod').value = 'none';
+      }
+    } else {
+      document.getElementById('editAuthMethod').value = 'none';
+    }
+    
+    // Update protocol settings
+    updateProtocolSettings();
+    updateAuthFields();
+    
+    // Update monitor list selection
+    document.querySelectorAll('.monitor-card').forEach(card => {
+      card.classList.remove('selected');
+    });
+    
+    // Open edit modal
+    openEditMonitor();
+  } catch (error) {
+    console.error('Error cloning monitor:', error);
+    showNotification('Error cloning monitor', 'error');
+  }
 }
 
 // Helper to get form element (works for both desktop, mobile, and modal)
@@ -765,11 +818,6 @@ function getFormElement(id) {
 
 // Handle edit button click - mobile uses panel, desktop uses modal
 function handleEditClick() {
-  if (!currentMonitorId) {
-    showNotification('No monitor selected', 'error');
-    return;
-  }
-
   // Check if we're on mobile (viewport width < 1024px)
   if (window.innerWidth < 1024) {
     toggleEditPanel();
@@ -780,11 +828,6 @@ function handleEditClick() {
 
 // Open edit monitor modal (desktop)
 function openEditMonitor() {
-  if (!currentMonitorId) {
-    showNotification('No monitor selected', 'error');
-    return;
-  }
-
   const modal = document.getElementById('editMonitorModal');
   const modalContainer = document.getElementById('editFormModal');
   const desktopForm = document.getElementById('editForm');
@@ -803,11 +846,21 @@ function openEditMonitor() {
     }
     
     // Update modal title
-    const monitorName = document.getElementById('monitorName')?.textContent || 'Monitor';
-    document.getElementById('editMonitorModalTitle').textContent = `Edit ${monitorName}`;
+    if (currentMonitorId) {
+      const monitorName = document.getElementById('monitorName')?.textContent || 'Monitor';
+      document.getElementById('editMonitorModalTitle').textContent = `Edit ${monitorName}`;
+    } else {
+      document.getElementById('editMonitorModalTitle').textContent = 'Add New Monitor';
+    }
     
     // Show modal
     modal.classList.add('active');
+    
+    // Focus on name field
+    setTimeout(() => {
+      const nameField = modalContainer.querySelector('#editName');
+      if (nameField) nameField.focus();
+    }, 100);
   }
 }
 

@@ -653,32 +653,52 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
 
 // Update protocol settings visibility
 function updateProtocolSettings() {
-  const protocol = document.getElementById('editProtocol').value;
-  const httpSection = document.getElementById('httpOptionsSection');
-  const authSection = document.getElementById('authSection');
+  const protocolElement = getFormElement('editProtocol');
+  if (!protocolElement) return;
+  
+  const protocol = protocolElement.value;
+  
+  // Find the form container (desktop, modal, or mobile)
+  const formContainer = protocolElement.closest('form') || protocolElement.closest('#editFormModal') || document.getElementById('editFormContainer');
+  if (!formContainer) return;
+  
+  const httpSection = formContainer.querySelector('#httpOptionsSection');
+  const authSection = formContainer.querySelector('#authSection');
 
-  if (protocol === 'HTTP' || protocol === 'HTTPS') {
-    httpSection.classList.remove('hidden');
-    authSection.classList.remove('hidden');
-  } else {
-    httpSection.classList.add('hidden');
-    authSection.classList.add('hidden');
+  if (httpSection && authSection) {
+    if (protocol === 'HTTP' || protocol === 'HTTPS') {
+      httpSection.classList.remove('hidden');
+      authSection.classList.remove('hidden');
+    } else {
+      httpSection.classList.add('hidden');
+      authSection.classList.add('hidden');
+    }
   }
 }
 
 // Update auth fields visibility
 function updateAuthFields() {
-  const authMethod = document.getElementById('editAuthMethod').value;
-  const basicFields = document.getElementById('basicAuthFields');
-  const bearerFields = document.getElementById('bearerAuthFields');
+  const authMethodElement = getFormElement('editAuthMethod');
+  if (!authMethodElement) return;
+  
+  const authMethod = authMethodElement.value;
+  
+  // Find the form container (desktop, modal, or mobile)
+  const formContainer = authMethodElement.closest('form') || authMethodElement.closest('#editFormModal') || document.getElementById('editFormContainer');
+  if (!formContainer) return;
+  
+  const basicFields = formContainer.querySelector('#basicAuthFields');
+  const bearerFields = formContainer.querySelector('#bearerAuthFields');
 
-  basicFields.classList.add('hidden');
-  bearerFields.classList.add('hidden');
+  if (basicFields && bearerFields) {
+    basicFields.classList.add('hidden');
+    bearerFields.classList.add('hidden');
 
-  if (authMethod === 'basic') {
-    basicFields.classList.remove('hidden');
-  } else if (authMethod === 'bearer') {
-    bearerFields.classList.remove('hidden');
+    if (authMethod === 'basic') {
+      basicFields.classList.remove('hidden');
+    } else if (authMethod === 'bearer') {
+      bearerFields.classList.remove('hidden');
+    }
   }
 }
 
@@ -885,13 +905,44 @@ function openEditMonitor() {
     // Clone entire form to modal
     modalContainer.innerHTML = desktopForm.outerHTML;
     
-    // Re-attach event listeners
+    // Re-attach event listeners and copy values from desktop form
     const clonedForm = modalContainer.querySelector('#editForm');
     if (clonedForm) {
+      // Copy all form values from desktop form to modal form
+      const formFields = [
+        'editName', 'editHost', 'editProtocol', 'editPort', 'editInterval', 
+        'editGroup', 'editAppUrl', 'editAppIcon', 'editRetries', 'editRetryInterval',
+        'editHttpMethod', 'editTimeout', 'editStatusCodes', 'editMaxRedirects',
+        'editPosition', 'editQuickCommands', 'editAuthMethod', 'editAuthUsername',
+        'editAuthPassword', 'editAuthToken', 'editEnabled', 'editIgnoreSsl', 
+        'editUpsideDown', 'editPublicVisible'
+      ];
+      
+      formFields.forEach(fieldId => {
+        const desktopField = desktopForm.querySelector(`#${fieldId}`);
+        const modalField = clonedForm.querySelector(`#${fieldId}`);
+        if (desktopField && modalField) {
+          if (desktopField.type === 'checkbox') {
+            modalField.checked = desktopField.checked;
+          } else {
+            modalField.value = desktopField.value;
+          }
+        }
+      });
+      
+      // Re-attach event listeners
       const protocolSelect = clonedForm.querySelector('#editProtocol');
       const authSelect = clonedForm.querySelector('#editAuthMethod');
-      if (protocolSelect) protocolSelect.onchange = updateProtocolSettings;
-      if (authSelect) authSelect.onchange = updateAuthFields;
+      if (protocolSelect) {
+        protocolSelect.onchange = updateProtocolSettings;
+        // Update protocol settings visibility in modal
+        updateProtocolSettings();
+      }
+      if (authSelect) {
+        authSelect.onchange = updateAuthFields;
+        // Update auth fields visibility in modal
+        updateAuthFields();
+      }
     }
     
     // Update modal title

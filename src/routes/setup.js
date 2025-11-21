@@ -112,6 +112,10 @@ router.post('/', async (req, res) => {
 
     fs.writeFileSync(envPath, envContent);
 
+    // Update in-memory environment variables so isSetupComplete() works
+    process.env.ADMIN_PASSWORD = adminPassword;
+    process.env.ADMIN_USERNAME = adminUsername;
+
     // Create default monitors in database
     const db = getDatabase();
 

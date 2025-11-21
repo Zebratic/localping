@@ -21,9 +21,22 @@ class WorkerPool {
     if (this.initialized) return;
     
     const workerPath = path.join(__dirname, 'pingWorker.js');
+    const fs = require('fs');
+    
+    // Verify worker file exists
+    if (!fs.existsSync(workerPath)) {
+      console.error(`Worker file not found: ${workerPath}`);
+      throw new Error(`Worker file not found: ${workerPath}`);
+    }
     
     for (let i = 0; i < this.size; i++) {
-      const worker = new Worker(workerPath);
+      let worker;
+      try {
+        worker = new Worker(workerPath);
+      } catch (error) {
+        console.error(`Failed to create worker ${i}:`, error);
+        throw error;
+      }
       
       worker.on('message', (message) => {
         const { id, result } = message;
@@ -32,6 +45,12 @@ class WorkerPool {
         if (task) {
           task.resolve(result);
           this.activeTasks.delete(id);
+        }
+        
+        // Mark worker as not busy
+        const workerInfo = this.workers.find(w => w.worker === worker);
+        if (workerInfo) {
+          workerInfo.busy = false;
         }
         
         this.processQueue();
@@ -133,6 +152,14 @@ class WorkerPool {
     if (!availableWorker) return;
     
     const task = this.queue.shift();
+    
+    // Check if task has already timed out
+    if (!this.activeTasks.has(task.id)) {
+      // Task was removed due to timeout, skip it
+      this.processQueue();
+      return;
+    }
+    
     availableWorker.busy = true;
     
     availableWorker.worker.postMessage({
@@ -149,20 +176,54 @@ class WorkerPool {
       this.initialize();
     }
     
+    // Get timeout from target config or use default (60 seconds)
+    const timeout = (target.timeout || 60) * 1000;
+    
     return new Promise((resolve, reject) => {
       const taskId = ++this.taskIdCounter;
+      
+      // Set up timeout for the task
+      let assignedWorker = null;
+      const timeoutHandle = setTimeout(() => {
+        const task = this.activeTasks.get(taskId);
+        if (task) {
+          this.activeTasks.delete(taskId);
+          
+          // Remove from queue if it's still queued
+          const queueIndex = this.queue.findIndex(t => t.id === taskId);
+          if (queueIndex !== -1) {
+            this.queue.splice(queueIndex, 1);
+          }
+          
+          // Mark assigned worker as not busy if it was assigned
+          if (assignedWorker) {
+            assignedWorker.busy = false;
+          }
+          
+          task.reject(new Error(`Ping timeout after ${timeout}ms`));
+          this.processQueue();
+        }
+      }, timeout);
       
       const task = {
         id: taskId,
         target,
-        resolve,
-        reject,
+        timeoutHandle,
+        resolve: (result) => {
+          clearTimeout(timeoutHandle);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutHandle);
+          reject(error);
+        },
       };
       
       const availableWorker = this.getAvailableWorker();
       
       if (availableWorker) {
         availableWorker.busy = true;
+        assignedWorker = availableWorker;
         this.activeTasks.set(taskId, task);
         
         availableWorker.worker.postMessage({
@@ -172,6 +233,8 @@ class WorkerPool {
       } else {
         // No available worker, add to queue
         this.queue.push(task);
+        // Store task in activeTasks so timeout can remove it from queue
+        this.activeTasks.set(taskId, task);
       }
     });
   }

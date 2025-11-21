@@ -417,6 +417,13 @@ router.get('/alerts', async (req, res) => {
 
 // Test ping a target
 router.post('/targets/:id/test', async (req, res) => {
+  // Set timeout for the request (60 seconds max)
+  const timeout = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(504).json({ success: false, error: 'Test timeout - ping took too long' });
+    }
+  }, 60000);
+
   try {
     const db = getDB();
     const targetId = req.params.id;
@@ -424,17 +431,31 @@ router.post('/targets/:id/test', async (req, res) => {
     const target = await db.collection('targets').findOne({ _id: targetId });
 
     if (!target) {
+      clearTimeout(timeout);
       return res.status(404).json({ success: false, error: 'Target not found' });
     }
 
-    const result = await pingService.ping(target);
-
-    res.json({
-      success: result.success,
-      result,
+    // Execute ping with timeout
+    const pingPromise = pingService.ping(target);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Ping timeout')), 55000); // 55 seconds
     });
+    
+    const result = await Promise.race([pingPromise, timeoutPromise]);
+
+    clearTimeout(timeout);
+
+    if (!res.headersSent) {
+      res.json({
+        success: result.success,
+        result,
+      });
+    }
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    clearTimeout(timeout);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: error.message });
+    }
   }
 });
 

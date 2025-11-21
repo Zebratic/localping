@@ -3,13 +3,9 @@
   "version": "0.1.0",
   "description": "A local system uptime monitor - Quick-fix your homelab remotely",
   "main": "src/app.js",
-  "bin": {
-    "localping": "./bin/localping"
-  },
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "cli": "node src/cli/localping.js",
     "gui": "electron src/electron/main.js",
     "web": "node src/app.js --mode web",
     "pm2:start": "pm2 start ecosystem.config.js",

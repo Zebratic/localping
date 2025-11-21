@@ -208,7 +208,7 @@ async function interactiveMonitor() {
 
   // Placeholder for terminal UI implementation
   console.log(chalk.yellow('⚠ Terminal UI not yet implemented.'));
-  console.log('Use the web admin panel instead: http://localhost:3001\n');
+  console.log('Use the web admin panel instead: http://\n');
 }
 
 function showHelp() {

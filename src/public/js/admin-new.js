@@ -92,9 +92,6 @@ async function loadMonitors() {
             <span class="w-2 h-2 rounded-full ${status === 'up' ? 'bg-green-400' : 'bg-red-400'}"></span>
             ${statusText}
           </span>
-          <button onclick="event.stopPropagation(); cloneMonitor('${target._id}')" class="ml-2 p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-700/50 rounded transition-colors" title="Clone monitor">
-            <i class="fas fa-copy text-xs"></i>
-          </button>
         </div>
       `;
       card.onclick = () => selectMonitor(target);
@@ -193,6 +190,12 @@ async function selectMonitor(monitor) {
       card.classList.add('selected');
     }
   });
+
+  // Show clone button
+  const cloneBtn = document.getElementById('cloneMonitorBtn');
+  if (cloneBtn) {
+    cloneBtn.style.display = 'block';
+  }
 }
 
 // Switch chart period (matching public UI style)
@@ -728,92 +731,138 @@ function addNewMonitor() {
     card.classList.remove('selected');
   });
 
+  // Hide clone button for new monitor
+  const cloneBtn = document.getElementById('cloneMonitorBtn');
+  if (cloneBtn) {
+    cloneBtn.style.display = 'none';
+  }
+
   // Open edit modal
   openEditMonitor();
 }
 
-// Clone monitor
-async function cloneMonitor(monitorId) {
+// Show clone monitor confirmation modal
+function showCloneMonitorConfirm() {
+  if (!currentMonitorId) {
+    showNotification('No monitor selected', 'error');
+    return;
+  }
+
+  const monitorName = document.getElementById('monitorName')?.textContent || 'Monitor';
+  document.getElementById('cloneMonitorName').textContent = monitorName;
+  
+  const modal = document.getElementById('cloneMonitorModal');
+  modal.classList.add('active');
+}
+
+// Close clone monitor modal
+function closeCloneMonitorModal() {
+  const modal = document.getElementById('cloneMonitorModal');
+  modal.classList.remove('active');
+}
+
+// Find available clone name
+async function findAvailableCloneName(baseName, existingNames) {
+  let cloneName = `${baseName} (clone)`;
+  let counter = 1;
+  
+  while (existingNames.includes(cloneName)) {
+    counter++;
+    cloneName = `${baseName} (clone ${counter})`;
+  }
+  
+  return cloneName;
+}
+
+// Confirm and clone monitor
+async function confirmCloneMonitor() {
+  if (!currentMonitorId) {
+    showNotification('No monitor selected', 'error');
+    return;
+  }
+
   try {
-    const response = await axios.get(`/admin/api/targets/${monitorId}`);
+    // Get current monitor data
+    const response = await axios.get(`/admin/api/targets/${currentMonitorId}`);
     const monitor = response.data.target;
     
-    // Set currentMonitorId to null for new monitor
-    currentMonitorId = null;
+    // Get all existing monitor names
+    const dashboardResponse = await axios.get('/admin/api/dashboard');
+    const existingNames = dashboardResponse.data.dashboard.targets.map(t => t.name);
     
-    // Populate form with cloned monitor data
-    document.getElementById('editName').value = `${monitor.name} (Copy)`;
-    document.getElementById('editHost').value = monitor.host || '';
-    document.getElementById('editProtocol').value = monitor.protocol || 'ICMP';
-    document.getElementById('editPort').value = monitor.port || '';
-    document.getElementById('editInterval').value = monitor.interval || 60;
-    document.getElementById('editGroup').value = monitor.group || '';
-    document.getElementById('editEnabled').checked = false; // Disable by default for cloned monitors
-    document.getElementById('editAppUrl').value = monitor.appUrl || '';
-    document.getElementById('editAppIcon').value = monitor.appIcon || '';
-    document.getElementById('editRetries').value = monitor.retries || 0;
-    document.getElementById('editRetryInterval').value = monitor.retryInterval || 5;
-    document.getElementById('editHttpMethod').value = monitor.httpMethod || 'GET';
-    document.getElementById('editTimeout').value = monitor.timeout || 30;
-    document.getElementById('editStatusCodes').value = monitor.statusCodes || '200-299';
-    document.getElementById('editMaxRedirects').value = monitor.maxRedirects || 5;
-    document.getElementById('editIgnoreSsl').checked = monitor.ignoreSsl || false;
-    document.getElementById('editUpsideDown').checked = monitor.upsideDown || false;
-    document.getElementById('editPosition').value = monitor.position || 0;
-    document.getElementById('editQuickCommands').value = (monitor.quickCommands || []).join(', ');
+    // Find available clone name
+    const cloneName = await findAvailableCloneName(monitor.name, existingNames);
     
-    // Handle authentication
-    if (monitor.auth) {
-      if (monitor.auth.type === 'basic') {
-        document.getElementById('editAuthMethod').value = 'basic';
-        document.getElementById('editAuthUsername').value = monitor.auth.username || '';
-        document.getElementById('editAuthPassword').value = monitor.auth.password || '';
-      } else if (monitor.auth.type === 'bearer') {
-        document.getElementById('editAuthMethod').value = 'bearer';
-        document.getElementById('editAuthToken').value = monitor.auth.token || '';
-      } else {
-        document.getElementById('editAuthMethod').value = 'none';
-      }
-    } else {
-      document.getElementById('editAuthMethod').value = 'none';
-    }
-    
-    // Update protocol settings
-    updateProtocolSettings();
-    updateAuthFields();
-    
-    // Update monitor list selection
-    document.querySelectorAll('.monitor-card').forEach(card => {
-      card.classList.remove('selected');
-    });
-    
-    // Open edit modal
-    openEditMonitor();
+    // Prepare clone data (same settings, but disabled and no data points)
+    const cloneData = {
+      name: cloneName,
+      host: monitor.host || '',
+      protocol: monitor.protocol || 'ICMP',
+      port: monitor.port || null,
+      interval: monitor.interval || 60,
+      enabled: false, // Disabled by default
+      publicVisible: monitor.publicVisible !== false,
+      publicShowDetails: monitor.publicShowDetails === true,
+      group: monitor.group || null,
+      appUrl: monitor.appUrl || null,
+      appIcon: monitor.appIcon || null,
+      retries: monitor.retries || 0,
+      retryInterval: monitor.retryInterval || 5,
+      timeout: monitor.timeout || 30,
+      httpMethod: monitor.httpMethod || 'GET',
+      statusCodes: monitor.statusCodes || '200-299',
+      maxRedirects: monitor.maxRedirects || 5,
+      ignoreSsl: monitor.ignoreSsl || false,
+      upsideDown: monitor.upsideDown || false,
+      position: monitor.position || 0,
+      quickCommands: monitor.quickCommands || [],
+      auth: monitor.auth || null
+    };
+
+    // Create the cloned monitor
+    const createResponse = await axios.post('/admin/api/targets', cloneData);
+    const newMonitorId = createResponse.data.targetId;
+
+    // Close modal
+    closeCloneMonitorModal();
+
+    // Show success notification
+    showNotification('Monitor cloned successfully', 'success');
+
+    // Reload monitors and select the new one
+    await loadMonitors();
+    const newMonitorResponse = await axios.get(`/admin/api/targets/${newMonitorId}`);
+    await selectMonitor(newMonitorResponse.data.target);
   } catch (error) {
     console.error('Error cloning monitor:', error);
-    showNotification('Error cloning monitor', 'error');
+    showNotification(error.response?.data?.error || 'Error cloning monitor', 'error');
   }
 }
 
 // Helper to get form element (works for both desktop, mobile, and modal)
 function getFormElement(id) {
-  // Try desktop form first
-  let element = document.getElementById(id);
-  // If not found, try modal form
-  if (!element) {
+  // Check if modal is active first (prioritize modal form)
+  const editModal = document.getElementById('editMonitorModal');
+  if (editModal && editModal.classList.contains('active')) {
     const modalForm = document.querySelector('#editFormModal');
     if (modalForm) {
-      element = modalForm.querySelector(`#${id}`);
+      const element = modalForm.querySelector(`#${id}`);
+      if (element) return element;
     }
   }
-  // If still not found, try mobile form
-  if (!element) {
+  
+  // Check if mobile panel is open
+  const settingsPanel = document.getElementById('settingsPanel');
+  if (settingsPanel && settingsPanel.classList.contains('open')) {
     const mobileForm = document.querySelector('#editFormMobileContainer #editForm');
     if (mobileForm) {
-      element = mobileForm.querySelector(`#${id}`);
+      const element = mobileForm.querySelector(`#${id}`);
+      if (element) return element;
     }
   }
-  return element;
+  
+  // Fall back to desktop form
+  return document.getElementById(id);
 }
 
 // Handle edit button click - mobile uses panel, desktop uses modal
@@ -1772,5 +1821,11 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMonitors();
   attachFormListeners();
   loadPublicUISettings(); // Load custom title for header
+  
+  // Hide clone button initially
+  const cloneBtn = document.getElementById('cloneMonitorBtn');
+  if (cloneBtn) {
+    cloneBtn.style.display = 'none';
+  }
 });
 

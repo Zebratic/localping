@@ -538,6 +538,7 @@ router.post('/api/targets', async (req, res) => {
       interval,
       enabled,
       publicVisible,
+      publicShowDetails,
       appUrl,
       appIcon,
       retries,

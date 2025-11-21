@@ -745,9 +745,12 @@
                 </div>
                 
                 <!-- Edit Button at Bottom -->
-                <div class="mt-6">
-                  <button onclick="handleEditClick()" class="btn-primary w-full">
+                <div class="mt-6 flex gap-2">
+                  <button onclick="handleEditClick()" class="btn-primary flex-1">
                     <i class="fas fa-edit mr-2"></i>Edit Monitor Settings
+                  </button>
+                  <button onclick="showCloneMonitorConfirm()" class="btn-secondary" id="cloneMonitorBtn" style="display: none;">
+                    <i class="fas fa-copy mr-2"></i>Clone
                   </button>
                 </div>
               </div>
@@ -1231,6 +1234,38 @@
 
   <!-- Notifications -->
   <div id="notificationContainer"></div>
+
+  <!-- Clone Monitor Confirmation Modal -->
+  <div id="cloneMonitorModal" class="post-modal">
+    <div class="post-modal-content" style="max-width: 500px;">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold text-cyan-400">
+          <i class="fas fa-copy mr-2"></i>Clone Monitor
+        </h3>
+        <button onclick="closeCloneMonitorModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <div class="space-y-4">
+          <p class="text-slate-300 text-sm">
+            This will create a new monitor with the same settings as "<span id="cloneMonitorName"></span>". The new monitor will be disabled by default and will not include any historical data.
+          </p>
+          <p class="text-slate-400 text-sm">
+            Are you sure you want to clone this monitor?
+          </p>
+          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+            <button onclick="confirmCloneMonitor()" class="btn-primary flex-1">
+              <i class="fas fa-copy mr-2"></i>Yes, Clone Monitor
+            </button>
+            <button onclick="closeCloneMonitorModal()" class="btn-secondary flex-1">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Clear Ping Data Warning Modal -->
   <div id="clearPingDataModal" class="post-modal">

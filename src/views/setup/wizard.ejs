@@ -57,7 +57,7 @@
                 type="text"
                 id="adminUsername"
                 name="adminUsername"
-                value="<%= formData?.adminUsername || 'admin' %>"
+                value="admin"
                 class="form-input w-full px-4 py-2 border rounded-lg text-white placeholder-gray-500"
                 required
               />
@@ -105,7 +105,7 @@
                 type="text"
                 id="gatewayIp"
                 name="gatewayIp"
-                value="<%= formData?.gatewayIp || detectedGateway %>"
+                value="<%= detectedGateway %>"
                 class="form-input w-full px-4 py-2 border rounded-lg text-white placeholder-gray-500"
                 placeholder="e.g., 192.168.1.1"
                 required

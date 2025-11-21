@@ -128,6 +128,9 @@ echo "🔐 Setting ICMP capabilities for Node.js..."
 NODE_PATH=$(which node)
 setcap cap_net_raw=ep "$NODE_PATH" 2>/dev/null || true
 
+echo "🧙 Running setup wizard..."
+npm run setup 2>/dev/null || node src/setup-wizard.js
+
 # Get the user who ran sudo
 SERVICE_USER="${SUDO_USER:-root}"
 SERVICE_NAME="localping"

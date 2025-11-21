@@ -26,7 +26,11 @@ router.post('/login', (req, res) => {
     });
   }
 
-  if (password === adminPassword) {
+  // Trim whitespace from both sides for comparison
+  const providedPassword = (password || '').trim();
+  const storedPassword = (adminPassword || '').trim();
+
+  if (providedPassword === storedPassword) {
     if (!req.session) {
       req.session = {};
     }

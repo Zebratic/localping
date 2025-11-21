@@ -11,7 +11,24 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-INSTALL_DIR="${1:-.}"
+INSTALL_DIR="${1:-}"
+
+# Auto-detect LocalPing directory if not provided
+if [ -z "$INSTALL_DIR" ]; then
+    if [ -d "/opt/localping" ] && [ -f "/opt/localping/.env.example" ]; then
+        INSTALL_DIR="/opt/localping"
+    elif [ -d "$HOME/localping" ] && [ -f "$HOME/localping/.env.example" ]; then
+        INSTALL_DIR="$HOME/localping"
+    elif [ -f ".env.example" ]; then
+        INSTALL_DIR="$(pwd)"
+    else
+        echo "❌ LocalPing directory not found!"
+        echo ""
+        echo "Usage: sudo bash install.sh [/path/to/localping]"
+        echo "Example: sudo bash install.sh /opt/localping"
+        exit 1
+    fi
+fi
 
 echo "📦 Installing system dependencies..."
 apt-get update -qq
@@ -29,12 +46,15 @@ if ! command -v node &> /dev/null; then
     apt-get install -y -qq nodejs
 fi
 
-echo "📁 Setting up LocalPing..."
-cd "$INSTALL_DIR"
+echo "📁 Setting up LocalPing at: $INSTALL_DIR"
+cd "$INSTALL_DIR" || {
+    echo "❌ Failed to enter directory: $INSTALL_DIR"
+    exit 1
+}
 
 # Validate required files exist
 if [ ! -f ".env.example" ]; then
-    echo "❌ .env.example not found. Make sure you're in the LocalPing directory."
+    echo "❌ .env.example not found at $INSTALL_DIR"
     exit 1
 fi
 

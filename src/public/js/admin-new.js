@@ -1888,7 +1888,7 @@ function attachFormListeners() {
 // ============ BACKUP FUNCTIONS ============
 
 // Toggle export options based on full backup checkbox
-function toggleExportOptions() {
+window.toggleExportOptions = function toggleExportOptions() {
   const fullBackup = document.getElementById('exportFull').checked;
   const exportOptions = document.getElementById('exportOptions');
   const checkboxes = exportOptions.querySelectorAll('input[type="checkbox"]');
@@ -1906,7 +1906,7 @@ function toggleExportOptions() {
 }
 
 // Export backup
-async function exportBackup() {
+window.exportBackup = async function exportBackup() {
   try {
     const fullBackup = document.getElementById('exportFull').checked;
     const exportOptions = {
@@ -1955,7 +1955,7 @@ async function exportBackup() {
 }
 
 // Import backup
-async function importBackup() {
+window.importBackup = async function importBackup() {
   try {
     const fileInput = document.getElementById('importFile');
     const file = fileInput.files[0];

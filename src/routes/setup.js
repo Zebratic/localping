@@ -182,7 +182,15 @@ router.post('/', async (req, res) => {
     }
 
     console.log(chalk.green('✓ Setup completed successfully'));
-    res.redirect('/admin/login');
+
+    // Automatically log the user in after setup
+    if (!req.session) {
+      req.session = {};
+    }
+    req.session.adminAuthenticated = true;
+
+    // Redirect to admin dashboard (user is now authenticated)
+    res.redirect('/admin');
   } catch (err) {
     console.error(chalk.red('Setup error:'), err.message);
     const detectedGateway = await detectGateway();

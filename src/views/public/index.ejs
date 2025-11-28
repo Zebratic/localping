@@ -102,16 +102,29 @@
     /* Uptime Bar Styles */
     .uptime-bar {
       display: inline-flex;
-      gap: 3px;
+      gap: 2px;
       flex-wrap: wrap;
     }
 
+    @media (min-width: 640px) {
+      .uptime-bar {
+        gap: 3px;
+      }
+    }
+
     .uptime-segment {
-      width: 10px;
-      height: 10px;
+      width: 6px;
+      height: 6px;
       border-radius: 2px;
       cursor: pointer;
       transition: all 0.2s;
+    }
+
+    @media (min-width: 640px) {
+      .uptime-segment {
+        width: 10px;
+        height: 10px;
+      }
     }
 
     .uptime-segment:hover {
@@ -129,11 +142,20 @@
     .status-badge {
       display: inline-flex;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0.375rem 0.75rem;
+      gap: 0.25rem;
+      padding: 0.2rem 0.4rem;
       border-radius: 9999px;
       font-weight: 500;
-      font-size: 0.875rem;
+      font-size: 0.7rem;
+      white-space: nowrap;
+    }
+
+    @media (min-width: 640px) {
+      .status-badge {
+        gap: 0.5rem;
+        padding: 0.375rem 0.75rem;
+        font-size: 0.875rem;
+      }
     }
 
     .status-badge.up {
@@ -149,10 +171,19 @@
     .service-row {
       display: flex;
       align-items: center;
-      padding: 1rem 1.5rem;
+      padding: 0.5rem 0.75rem;
       transition: all 0.3s;
       cursor: pointer;
-      gap: 1rem;
+      gap: 0.375rem;
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+
+    @media (min-width: 640px) {
+      .service-row {
+        padding: 1rem 1.5rem;
+        gap: 1rem;
+      }
     }
 
     .service-row:hover {
@@ -163,9 +194,66 @@
       background-color: rgba(255, 255, 255, 0.05);
     }
 
-    .service-name {
+    .service-icon {
       flex: 0 0 auto;
-      min-width: 200px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 0.5rem;
+    }
+
+    @media (min-width: 640px) {
+      .service-icon {
+        width: 32px;
+        height: 32px;
+        margin-right: 0.75rem;
+      }
+    }
+
+    .service-favicon {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 4px;
+    }
+
+    .service-icon i {
+      font-size: 1rem;
+      color: #94a3b8;
+    }
+
+    @media (min-width: 640px) {
+      .service-icon i {
+        font-size: 1.25rem;
+      }
+    }
+
+    .service-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 40%;
+    }
+
+    .service-name > div:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.875rem;
+    }
+
+    @media (min-width: 640px) {
+      .service-name {
+        flex: 0 0 auto;
+        min-width: 200px;
+        max-width: none;
+      }
+      .service-name > div:first-child {
+        font-size: 1rem;
+      }
     }
 
     .service-uptime {
@@ -173,23 +261,78 @@
       text-align: center;
       color: #06b6d4;
       font-weight: 600;
-      min-width: 60px;
+      min-width: 40px;
+      font-size: 0.75rem;
+      white-space: nowrap;
+    }
+
+    @media (min-width: 640px) {
+      .service-uptime {
+        min-width: 60px;
+        font-size: 1rem;
+      }
     }
 
     .service-bars {
-      flex: 1;
-      min-width: 200px;
+      display: none;
+    }
+
+    @media (min-width: 640px) {
+      .service-bars {
+        display: block;
+        flex: 1;
+        min-width: 200px;
+        margin: 0;
+      }
+    }
+
+    .service-ping {
+      flex: 0 0 auto;
+      font-size: 0.75rem;
+      white-space: nowrap;
+    }
+
+    @media (min-width: 640px) {
+      .service-ping {
+        font-size: 1rem;
+      }
+    }
+
+    .service-status-badge {
+      flex: 0 0 auto;
+    }
+
+    .service-expand-icon {
+      flex: 0 0 auto;
+      font-size: 0.75rem;
+      margin-left: 0.25rem;
+    }
+
+    @media (min-width: 640px) {
+      .service-expand-icon {
+        font-size: 1rem;
+        margin-left: 0.5rem;
+      }
     }
 
     .overall-status-box {
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 0.5rem;
-      padding: 1.5rem 2rem;
+      padding: 1rem 1.5rem;
       margin-bottom: 2rem;
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    @media (min-width: 640px) {
+      .overall-status-box {
+        padding: 1.5rem 2rem;
+        gap: 1rem;
+        flex-wrap: nowrap;
+      }
     }
 
     .status-indicator {

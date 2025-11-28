@@ -328,33 +328,41 @@ router.get('/api/status', async (req, res) => {
 
     const targets = await db.collection('targets').find({ enabled: true, publicVisible: true }).toArray();
 
-    // Fetch favicons for apps asynchronously
+    // Fetch favicons for apps asynchronously - use cached only, don't block on fetches
     const targetsWithStatus = await Promise.all(targets.map(async (target) => {
       let favicon = null;
 
-      // If this is an app (has appUrl), try to fetch favicon
+      // If this is an app (has appUrl), try to get cached favicon only
       if (target.appUrl) {
-        // Check if we have a cached favicon
+        // Check if we have a cached favicon (fast, non-blocking)
         let cachedFavicon = await db.collection('favicons').findOne({ appUrl: target.appUrl });
 
         if (cachedFavicon) {
           favicon = cachedFavicon.favicon;
-        } else {
-          // Fetch favicon and cache it
-          favicon = await faviconService.getFavicon(target.appUrl);
-          if (favicon) {
-            await db.collection('favicons').updateOne(
-              { appUrl: target.appUrl },
-              {
-                $set: {
-                  appUrl: target.appUrl,
-                  favicon: favicon,
-                  updatedAt: new Date(),
-                },
-              },
-              { upsert: true }
-            );
-          }
+        }
+        // Don't fetch new favicons here - do it in background to avoid blocking
+        // Background fetch will happen after response is sent
+        if (!favicon) {
+          // Fetch favicon in background (non-blocking)
+          faviconService.getFavicon(target.appUrl)
+            .then(async (newFavicon) => {
+              if (newFavicon) {
+                await db.collection('favicons').updateOne(
+                  { appUrl: target.appUrl },
+                  {
+                    $set: {
+                      appUrl: target.appUrl,
+                      favicon: newFavicon,
+                      updatedAt: new Date(),
+                    },
+                  },
+                  { upsert: true }
+                );
+              }
+            })
+            .catch(() => {
+              // Silently fail - favicon fetch is not critical
+            });
         }
       }
 

@@ -186,18 +186,37 @@ class MonitorService {
           // Handle alerts (non-blocking)
           if (newStatus !== currentStatus && currentStatus !== 'unknown') {
             if (newStatus === 'down') {
-              this.handleTargetDown(target).catch(err => {
+              this.handleTargetDown(target, result.responseTime).catch(err => {
                 if (process.env.NODE_ENV === 'development') {
                   console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
                 }
               });
             } else if (newStatus === 'up') {
-              this.handleTargetUp(target).catch(err => {
+              this.handleTargetUp(target, result.responseTime).catch(err => {
                 if (process.env.NODE_ENV === 'development') {
                   console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
                 }
               });
             }
+
+            // Evaluate event detection rules (non-blocking)
+            setImmediate(async () => {
+              try {
+                const eventDetectionService = require('./eventDetectionService');
+                await eventDetectionService.evaluateRules({
+                  targetId: target._id.toString(),
+                  target: target,
+                  status: newStatus,
+                  responseTime: result.responseTime,
+                  targetGroup: target.group,
+                });
+              } catch (error) {
+                // Silently fail - event detection is not critical
+                if (process.env.NODE_ENV === 'development') {
+                  console.error(chalk.yellow(`Event detection error for ${target.name}:`), error.message);
+                }
+              }
+            });
           }
         } catch (error) {
           // Silently handle errors to avoid blocking
@@ -214,7 +233,7 @@ class MonitorService {
   /**
    * Handle target going down
    */
-  async handleTargetDown(target) {
+  async handleTargetDown(target, responseTime = null) {
     const db = getDB();
     const now = Date.now();
     const lastAlertTime = this.lastAlertTime.get(target._id.toString()) || 0;
@@ -233,12 +252,25 @@ class MonitorService {
       this.lastAlertTime.set(target._id.toString(), now);
       console.log(chalk.red(`✗ ${target.name} is DOWN`));
     }
+
+    // Send external notifications (non-blocking)
+    setImmediate(async () => {
+      try {
+        const notificationService = require('./notificationService');
+        await notificationService.notifyMonitorStatus(target, 'down', responseTime);
+      } catch (error) {
+        // Silently fail - notifications are not critical
+        if (process.env.NODE_ENV === 'development') {
+          console.error(chalk.yellow(`Notification error for ${target.name}:`), error.message);
+        }
+      }
+    });
   }
 
   /**
    * Handle target coming back up
    */
-  async handleTargetUp(target) {
+  async handleTargetUp(target, responseTime = null) {
     const db = getDB();
 
     // Create alert
@@ -251,6 +283,19 @@ class MonitorService {
 
     // Log recovery
     console.log(chalk.green(`✓ ${target.name} is UP`));
+
+    // Send external notifications (non-blocking)
+    setImmediate(async () => {
+      try {
+        const notificationService = require('./notificationService');
+        await notificationService.notifyMonitorStatus(target, 'up', responseTime);
+      } catch (error) {
+        // Silently fail - notifications are not critical
+        if (process.env.NODE_ENV === 'development') {
+          console.error(chalk.yellow(`Notification error for ${target.name}:`), error.message);
+        }
+      }
+    });
   }
 
   /**

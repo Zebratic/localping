@@ -93,16 +93,26 @@
       color: #ef4444;
     }
 
-    .notification {
+    #notificationContainer {
       position: fixed;
       top: 20px;
       right: 20px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-width: 400px;
+      pointer-events: none;
+    }
+
+    .notification {
+      position: relative;
       min-width: 350px;
       border-radius: 0.5rem;
       padding: 1.5rem;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
-      z-index: 1000;
       animation: slideIn 0.3s ease-out;
+      pointer-events: auto;
     }
 
     @keyframes slideIn {
@@ -117,15 +127,15 @@
     }
 
     .notification.success {
-      background-color: rgba(16, 185, 129, 0.2);
-      border: 1px solid #10b981;
-      color: #d1fae5;
+      background-color: #10b981;
+      border: 1px solid #059669;
+      color: #ffffff;
     }
 
     .notification.error {
-      background-color: rgba(239, 68, 68, 0.2);
-      border: 1px solid #ef4444;
-      color: #fee2e2;
+      background-color: #ef4444;
+      border: 1px solid #dc2626;
+      color: #ffffff;
     }
 
     .chart-container {
@@ -458,6 +468,35 @@
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
     }
 
+    /* Custom dropdown styles */
+    .target-checkbox {
+      width: 1rem;
+      height: 1rem;
+      cursor: pointer;
+    }
+
+    [id$="Dropdown"] {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+    }
+
+    [id$="Dropdown"]::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    [id$="Dropdown"]::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    [id$="Dropdown"]::-webkit-scrollbar-thumb {
+      background-color: rgba(148, 163, 184, 0.3);
+      border-radius: 3px;
+    }
+
+    [id$="Dropdown"]::-webkit-scrollbar-thumb:hover {
+      background-color: rgba(148, 163, 184, 0.5);
+    }
+
     .post-modal-header {
       padding: 1.5rem;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -605,7 +644,7 @@
           <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
           </svg>
-          <h1 class="text-xl sm:text-2xl font-bold text-white" id="adminHeaderTitle">LocalPing Admin</h1>
+          <a href="/" class="text-xl sm:text-2xl font-bold text-white hover:text-cyan-400 transition-colors cursor-pointer no-underline" id="adminHeaderTitle" style="text-decoration: none; display: inline-block; pointer-events: auto; user-select: none;">LocalPing Admin</a>
         </div>
         <button onclick="logout()" class="logout-btn text-xs sm:text-sm">
           <i class="fas fa-sign-out-alt"></i><span class="hidden sm:inline sm:ml-2">Logout</span>
@@ -618,22 +657,25 @@
   <div class="border-b border-slate-700/30 bg-slate-900/30 backdrop-blur sticky top-[65px] sm:top-[73px] z-40">
     <div class="w-full px-4 sm:px-6 lg:px-8 overflow-x-auto">
       <div class="flex gap-4 sm:gap-8">
-        <button class="tab-button active text-sm sm:text-base" onclick="switchTab('monitors')">
+        <button class="tab-button active text-sm sm:text-base" onclick="switchTab('monitors', this)">
           <i class="fas fa-chart-line mr-1 sm:mr-2"></i><span class="hidden xs:inline">Monitors</span>
         </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('incidents')">
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('incidents', this)">
           <i class="fas fa-exclamation-triangle mr-1 sm:mr-2"></i><span class="hidden xs:inline">Incidents</span>
         </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('posts')">
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('event-rules', this)">
+          <i class="fas fa-bolt mr-1 sm:mr-2"></i><span class="hidden xs:inline">Event Rules</span>
+        </button>
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('posts', this)">
           <i class="fas fa-blog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Posts</span>
         </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('visibility')">
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('visibility', this)">
           <i class="fas fa-eye mr-1 sm:mr-2"></i><span class="hidden xs:inline">Visibility</span>
         </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('settings')">
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('settings', this)">
           <i class="fas fa-cog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Settings</span>
         </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('backup')">
+        <button class="tab-button text-sm sm:text-base" onclick="switchTab('backup', this)">
           <i class="fas fa-download mr-1 sm:mr-2"></i><span class="hidden xs:inline">Backup</span>
         </button>
       </div>
@@ -1041,6 +1083,21 @@
       </div>
     </div>
 
+    <!-- Event Rules Tab -->
+    <div id="event-rules" class="tab-content">
+      <div>
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Event Detection Rules</h2>
+          <button onclick="showCreateEventRuleModal()" class="btn-primary">
+            <i class="fas fa-plus mr-2"></i>Create Rule
+          </button>
+        </div>
+        <div id="eventRulesList" class="space-y-4">
+          <!-- Event rules will be populated here -->
+        </div>
+      </div>
+    </div>
+
     <!-- Posts Tab -->
     <div id="posts" class="tab-content">
       <div>
@@ -1266,6 +1323,94 @@
           </div>
         </div>
 
+        <!-- Notification Settings -->
+        <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700/30">
+          <h3 class="text-xl font-semibold mb-4">
+            <i class="fas fa-bell mr-2"></i>Notification Settings
+          </h3>
+          <form id="notificationSettingsForm" class="space-y-4">
+            <!-- Global Enable -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer mb-2">
+                <input type="checkbox" id="notificationEnabled" class="checkbox-input">
+                <span class="form-label mb-0 font-semibold">Enable Notifications</span>
+              </label>
+              <p class="form-help">Enable external notifications (Discord webhooks, etc.)</p>
+            </div>
+
+            <!-- Discord Settings -->
+            <div class="border-t border-slate-700/30 pt-4">
+              <h4 class="text-lg font-semibold mb-3 text-cyan-400">
+                <i class="fab fa-discord mr-2"></i>Discord Webhook
+              </h4>
+              <div class="space-y-4">
+                <div>
+                  <label class="flex items-center gap-2 cursor-pointer mb-2">
+                    <input type="checkbox" id="discordEnabled" class="checkbox-input">
+                    <span class="form-label mb-0">Enable Discord Notifications</span>
+                  </label>
+                </div>
+                <div>
+                  <label class="form-label">Webhook URL *</label>
+                  <input type="url" id="discordWebhookUrl" class="form-input" placeholder="https://discord.com/api/webhooks/...">
+                  <p class="form-help">Discord webhook URL. Create one in your Discord server settings.</p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="form-label">Username</label>
+                    <input type="text" id="discordUsername" class="form-input" placeholder="LocalPing">
+                    <p class="form-help">Bot username for Discord messages</p>
+                  </div>
+                  <div>
+                    <label class="form-label">Avatar URL</label>
+                    <input type="url" id="discordAvatarUrl" class="form-input" placeholder="https://example.com/avatar.png">
+                    <p class="form-help">Optional avatar image URL</p>
+                  </div>
+                </div>
+                <div>
+                  <button type="button" onclick="testDiscordNotification()" class="btn-secondary">
+                    <i class="fas fa-paper-plane mr-2"></i>Test Notification
+                  </button>
+                  <p class="form-help mt-2">Send a test notification to verify your webhook configuration</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Event Settings -->
+            <div class="border-t border-slate-700/30 pt-4">
+              <h4 class="text-lg font-semibold mb-3 text-cyan-400">
+                <i class="fas fa-list mr-2"></i>Event Notifications
+              </h4>
+              <p class="form-help mb-3">Choose which events should trigger notifications</p>
+              <div class="space-y-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" id="eventMonitorDown" class="checkbox-input" checked>
+                  <span class="text-sm text-slate-300">Monitor goes offline</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" id="eventMonitorUp" class="checkbox-input" checked>
+                  <span class="text-sm text-slate-300">Monitor comes back online</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" id="eventIncidentCreated" class="checkbox-input" checked>
+                  <span class="text-sm text-slate-300">New incident created</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" id="eventIncidentUpdated" class="checkbox-input" checked>
+                  <span class="text-sm text-slate-300">Incident updated</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Save Button -->
+            <div class="border-t border-slate-700/30 pt-4">
+              <button type="button" onclick="saveNotificationSettings()" class="btn-primary">
+                <i class="fas fa-save mr-2"></i>Save Notification Settings
+              </button>
+            </div>
+          </form>
+        </div>
+
         <!-- About -->
         <div class="bg-slate-900/50 backdrop-blur rounded-lg p-6 max-w-2xl border border-slate-700/30">
           <div class="border-t border-slate-700 pt-4">
@@ -1361,6 +1506,148 @@
               <i class="fas fa-save mr-2"></i>Save Post
             </button>
             <button type="button" onclick="closePostModal()" class="btn-secondary flex-1">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Incident Editor Modal -->
+  <div id="incidentModal" class="post-modal">
+    <div class="post-modal-content">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold" id="incidentModalTitle">Create New Incident</h3>
+        <button onclick="closeIncidentModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <form id="incidentForm">
+          <div class="space-y-4 mb-4">
+            <div>
+              <label class="form-label">Title *</label>
+              <input type="text" id="incidentTitle" class="form-input" placeholder="Enter incident title" required>
+            </div>
+            <div>
+              <label class="form-label">Description *</label>
+              <textarea id="incidentDescription" class="form-input" rows="4" placeholder="Describe the incident..." required></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="form-label">Severity *</label>
+                <select id="incidentSeverity" class="form-input" required>
+                  <option value="minor">Minor</option>
+                  <option value="major" selected>Major</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Status *</label>
+                <select id="incidentStatus" class="form-input" required>
+                  <option value="investigating" selected>Investigating</option>
+                  <option value="identified">Identified</option>
+                  <option value="monitoring">Monitoring</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+            <button type="submit" class="btn-primary flex-1">
+              <i class="fas fa-save mr-2"></i>Save Incident
+            </button>
+            <button type="button" onclick="closeIncidentModal()" class="btn-secondary flex-1">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Event Rule Editor Modal -->
+  <div id="eventRuleModal" class="post-modal">
+    <div class="post-modal-content" style="max-width: 800px;">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold" id="eventRuleModalTitle">Create New Event Rule</h3>
+        <button onclick="closeEventRuleModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <form id="eventRuleForm" onsubmit="saveEventRule(event)">
+          <div class="space-y-4 mb-4">
+            <div>
+              <label class="form-label">Rule Name *</label>
+              <input type="text" id="eventRuleName" class="form-input" placeholder="e.g., Critical Service Down" required>
+            </div>
+            <div>
+              <label class="form-label">Event Type *</label>
+              <select id="eventRuleType" class="form-input" required onchange="updateEventRuleConditions()">
+                <option value="">Select event type...</option>
+                <option value="monitor_down">Monitor Down</option>
+                <option value="monitor_up">Monitor Up</option>
+                <option value="multiple_monitors_down">Multiple Monitors Down</option>
+                <option value="monitor_response_time">Response Time Threshold</option>
+                <option value="uptime_threshold">Uptime Threshold</option>
+                <option value="custom_condition">Custom Condition</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Enabled</label>
+              <input type="checkbox" id="eventRuleEnabled" class="form-checkbox" checked>
+            </div>
+            <div id="eventRuleConditionsContainer">
+              <!-- Conditions will be populated based on event type -->
+            </div>
+            <div>
+              <label class="form-label">Incident Title *</label>
+              <input type="text" id="eventRuleIncidentTitle" class="form-input" placeholder="e.g., {{target.name}} is down" required>
+              <p class="text-xs text-slate-400 mt-1">Available variables: {{target.name}}, {{target.host}}, {{status}}, {{responseTime}}</p>
+            </div>
+            <div>
+              <label class="form-label">Incident Description *</label>
+              <textarea id="eventRuleIncidentDescription" class="form-input" rows="4" placeholder="Describe what happened..." required></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="form-label">Incident Severity *</label>
+                <select id="eventRuleIncidentSeverity" class="form-input" required>
+                  <option value="minor">Minor</option>
+                  <option value="major" selected>Major</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Initial Status *</label>
+                <select id="eventRuleIncidentStatus" class="form-input" required>
+                  <option value="investigating" selected>Investigating</option>
+                  <option value="identified">Identified</option>
+                  <option value="monitoring">Monitoring</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="form-label">Auto-Resolve</label>
+              <input type="checkbox" id="eventRuleAutoResolve" class="form-checkbox" onchange="toggleAutoResolveMessage()">
+            </div>
+            <div id="autoResolveMessageContainer" class="hidden">
+              <label class="form-label">Auto-Resolve Message</label>
+              <input type="text" id="eventRuleAutoResolveMessage" class="form-input" placeholder="Service restored - automatically resolved">
+            </div>
+            <div>
+              <label class="form-label">Cooldown (minutes)</label>
+              <input type="number" id="eventRuleCooldown" class="form-input" min="0" value="0" placeholder="0">
+              <p class="text-xs text-slate-400 mt-1">Prevent duplicate incidents within this time period</p>
+            </div>
+          </div>
+          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+            <button type="submit" class="btn-primary flex-1">
+              <i class="fas fa-save mr-2"></i>Save Rule
+            </button>
+            <button type="button" onclick="closeEventRuleModal()" class="btn-secondary flex-1">
               Cancel
             </button>
           </div>

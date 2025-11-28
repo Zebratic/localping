@@ -5,51 +5,74 @@ const cacheService = require('../services/cacheService');
 
 let pool = null;
 
-const connectDB = async () => {
-  try {
-    // Get database connection details from environment or use defaults
-    const dbConfig = {
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 5432,
-      database: process.env.DB_NAME || 'localping',
-      user: process.env.DB_USER || 'localping',
-      password: process.env.DB_PASSWORD || 'localping',
-      max: 20, // Maximum number of clients in the pool
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-    };
+const connectDB = async (retries = 5, delay = 2000) => {
+  // Get database connection details from environment or use defaults
+  const dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'localping',
+    user: process.env.DB_USER || 'localping',
+    password: process.env.DB_PASSWORD || 'localping',
+    max: 20, // Maximum number of clients in the pool
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  };
 
-    pool = new Pool(dbConfig);
-
-    // Test connection
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-
-    // Initialize tables
-    await initializeTables();
-
-    console.log(chalk.green('✓ PostgreSQL database connected'));
-
-    // Return a minimal object compatible with the rest of the code
-    return {
-      collection: (name) => createCollectionWrapper(name),
-      admin: () => ({
-        ping: async () => {
-          try {
-            const client = await pool.connect();
-            await client.query('SELECT 1');
-            client.release();
-            return true;
-          } catch (error) {
-            return false;
-          }
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      // Close existing pool if it exists
+      if (pool) {
+        try {
+          await pool.end();
+        } catch (e) {
+          // Ignore errors when closing
         }
-      })
-    };
-  } catch (error) {
-    console.error(chalk.red('✗ PostgreSQL connection failed:'), error.message);
-    process.exit(1);
+        pool = null;
+      }
+
+      pool = new Pool(dbConfig);
+
+      // Test connection
+      const client = await pool.connect();
+      await client.query('SELECT NOW()');
+      client.release();
+
+      // Initialize tables
+      await initializeTables();
+
+      console.log(chalk.green('✓ PostgreSQL database connected'));
+
+      // Return a minimal object compatible with the rest of the code
+      return {
+        collection: (name) => createCollectionWrapper(name),
+        admin: () => ({
+          ping: async () => {
+            try {
+              const client = await pool.connect();
+              await client.query('SELECT 1');
+              client.release();
+              return true;
+            } catch (error) {
+              return false;
+            }
+          }
+        })
+      };
+    } catch (error) {
+      if (attempt === retries) {
+        console.error(chalk.red('✗ PostgreSQL connection failed after'), retries, 'attempts:', error.message);
+        console.error(chalk.yellow('  Please check:'));
+        console.error(chalk.yellow('  - PostgreSQL is running: systemctl status postgresql'));
+        console.error(chalk.yellow('  - Database credentials in .env file'));
+        console.error(chalk.yellow('  - Connection settings:'), `host=${dbConfig.host}, port=${dbConfig.port}, database=${dbConfig.database}, user=${dbConfig.user}`);
+        process.exit(1);
+      } else {
+        const waitTime = delay * Math.pow(2, attempt - 1); // Exponential backoff
+        console.error(chalk.yellow(`⚠ PostgreSQL connection failed (attempt ${attempt}/${retries}):`), error.message);
+        console.error(chalk.yellow(`  Retrying in ${waitTime / 1000} seconds...`));
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
   }
 };
 
@@ -210,6 +233,26 @@ const initializeTables = async () => {
       // Column already exists, ignore
     }
 
+    // Event Rules table
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS "eventRules" (
+        _id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        "eventType" TEXT NOT NULL,
+        enabled BOOLEAN DEFAULT true,
+        conditions TEXT NOT NULL,
+        "incidentTitle" TEXT NOT NULL,
+        "incidentDescription" TEXT NOT NULL,
+        "incidentSeverity" TEXT DEFAULT 'major',
+        "incidentStatus" TEXT DEFAULT 'investigating',
+        "autoResolve" BOOLEAN DEFAULT false,
+        "autoResolveMessage" TEXT,
+        "cooldownMinutes" INTEGER DEFAULT 0,
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Actions table
     await executeQuery(`
       CREATE TABLE IF NOT EXISTS actions (
@@ -295,6 +338,17 @@ const initializeTables = async () => {
       ON CONFLICT (_id) DO NOTHING
     `);
 
+    // Notification Settings table
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS "notificationSettings" (
+        _id TEXT PRIMARY KEY DEFAULT 'settings',
+        enabled BOOLEAN DEFAULT false,
+        discord TEXT,
+        events TEXT,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create indices
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled)`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_pingResults_targetId ON "pingResults"("targetId")`);
@@ -304,6 +358,7 @@ const initializeTables = async () => {
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_statistics_targetId ON statistics("targetId")`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_statistics_date ON statistics(date)`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_eventRules_enabled ON "eventRules"(enabled)`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_actions_targetId ON actions("targetId")`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_posts_createdAt ON posts("createdAt")`);

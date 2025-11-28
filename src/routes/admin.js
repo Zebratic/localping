@@ -451,6 +451,185 @@ router.delete('/api/incidents/:id', async (req, res) => {
   }
 });
 
+// ============ EVENT RULES MANAGEMENT ROUTES ============
+
+// Get all event rules
+router.get('/api/event-rules', async (req, res) => {
+  try {
+    const db = getDB();
+    const rules = await db.collection('eventRules').find({}).sort({ createdAt: -1 }).toArray();
+    
+    // Parse conditions from JSON
+    const parsedRules = rules.map(rule => ({
+      ...rule,
+      conditions: typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions,
+    }));
+
+    res.json({ success: true, rules: parsedRules });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get single event rule
+router.get('/api/event-rules/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const rule = await db.collection('eventRules').findOne({ _id: req.params.id });
+
+    if (!rule) {
+      return res.status(404).json({ success: false, error: 'Event rule not found' });
+    }
+
+    // Parse conditions from JSON
+    rule.conditions = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
+
+    res.json({ success: true, rule });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create event rule
+router.post('/api/event-rules', async (req, res) => {
+  try {
+    const db = getDB();
+    const { v4: uuidv4 } = require('uuid');
+    const {
+      name,
+      eventType,
+      enabled,
+      conditions,
+      incidentTitle,
+      incidentDescription,
+      incidentSeverity,
+      incidentStatus,
+      autoResolve,
+      autoResolveMessage,
+      cooldownMinutes,
+    } = req.body;
+
+    if (!name || !eventType || !conditions || !incidentTitle || !incidentDescription) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name, eventType, conditions, incidentTitle, and incidentDescription are required',
+      });
+    }
+
+    const rule = {
+      _id: uuidv4(),
+      name,
+      eventType,
+      enabled: enabled !== false,
+      conditions: JSON.stringify(conditions),
+      incidentTitle,
+      incidentDescription,
+      incidentSeverity: incidentSeverity || 'major',
+      incidentStatus: incidentStatus || 'investigating',
+      autoResolve: autoResolve === true,
+      autoResolveMessage: autoResolveMessage || null,
+      cooldownMinutes: cooldownMinutes || 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await db.collection('eventRules').insertOne(rule);
+
+    res.json({ success: true, ruleId: rule._id, rule });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update event rule
+router.put('/api/event-rules/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const {
+      name,
+      eventType,
+      enabled,
+      conditions,
+      incidentTitle,
+      incidentDescription,
+      incidentSeverity,
+      incidentStatus,
+      autoResolve,
+      autoResolveMessage,
+      cooldownMinutes,
+    } = req.body;
+
+    const updateData = {
+      updatedAt: new Date(),
+    };
+
+    if (name !== undefined) updateData.name = name;
+    if (eventType !== undefined) updateData.eventType = eventType;
+    if (enabled !== undefined) updateData.enabled = enabled;
+    if (conditions !== undefined) updateData.conditions = JSON.stringify(conditions);
+    if (incidentTitle !== undefined) updateData.incidentTitle = incidentTitle;
+    if (incidentDescription !== undefined) updateData.incidentDescription = incidentDescription;
+    if (incidentSeverity !== undefined) updateData.incidentSeverity = incidentSeverity;
+    if (incidentStatus !== undefined) updateData.incidentStatus = incidentStatus;
+    if (autoResolve !== undefined) updateData.autoResolve = autoResolve;
+    if (autoResolveMessage !== undefined) updateData.autoResolveMessage = autoResolveMessage;
+    if (cooldownMinutes !== undefined) updateData.cooldownMinutes = cooldownMinutes;
+
+    const result = await db.collection('eventRules').updateOne(
+      { _id: req.params.id },
+      { $set: updateData }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ success: false, error: 'Event rule not found' });
+    }
+
+    res.json({ success: true, message: 'Event rule updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete event rule
+router.delete('/api/event-rules/:id', async (req, res) => {
+  try {
+    const db = getDB();
+    const result = await db.collection('eventRules').deleteOne({ _id: req.params.id });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, error: 'Event rule not found' });
+    }
+
+    res.json({ success: true, message: 'Event rule deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Test event rule (evaluate without creating incident)
+router.post('/api/event-rules/:id/test', async (req, res) => {
+  try {
+    const db = getDB();
+    const eventDetectionService = require('../services/eventDetectionService');
+    await eventDetectionService.initialize();
+    
+    const rule = await db.collection('eventRules').findOne({ _id: req.params.id });
+    if (!rule) {
+      return res.status(404).json({ success: false, error: 'Event rule not found' });
+    }
+
+    // Parse conditions
+    rule.conditions = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
+
+    const context = req.body.context || {};
+    const shouldTrigger = await eventDetectionService.evaluateRule(rule, context);
+
+    res.json({ success: true, shouldTrigger, context });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ============ TARGET MANAGEMENT ROUTES ============
 
 // Get all targets
@@ -1243,10 +1422,18 @@ router.post('/api/targets/:id/test', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Target not found' });
     }
 
+    // Merge test data from request body with target from database
+    // Request body values take precedence (for testing form values)
+    const testTarget = {
+      ...target,
+      ...req.body,
+      _id: target._id, // Always use the original ID
+    };
+
     const pingService = require('../services/pingService');
     
     // Execute ping with timeout
-    const pingPromise = pingService.ping(target);
+    const pingPromise = pingService.ping(testTarget);
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Ping timeout')), 55000); // 55 seconds
     });
@@ -1258,9 +1445,9 @@ router.post('/api/targets/:id/test', async (req, res) => {
     // Update status in monitorService to reflect the test result
     let newStatus = 'unknown';
     
-    // Determine status based on ping result and upside down mode
+    // Determine status based on ping result and upside down mode (use testTarget for upsideDown)
     let pingSuccess = result.success;
-    if (target.upsideDown === true) {
+    if (testTarget.upsideDown === true) {
       pingSuccess = !pingSuccess; // Invert the status
     }
     
@@ -1598,6 +1785,157 @@ router.put('/api/public-ui-settings', async (req, res) => {
     }
 
     res.json({ success: true, message: 'Public UI settings updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ NOTIFICATION SETTINGS ROUTES ============
+
+// Get notification settings
+router.get('/api/notification-settings', async (req, res) => {
+  try {
+    const db = getDB();
+    let settings = await db.collection('notificationSettings').findOne({ _id: 'settings' });
+
+    if (!settings) {
+      // Return defaults if not found
+      settings = {
+        _id: 'settings',
+        enabled: false,
+        discord: {
+          enabled: false,
+          webhookUrl: null,
+          username: 'LocalPing',
+          avatarUrl: null,
+        },
+        events: {
+          monitorDown: true,
+          monitorUp: true,
+          incidentCreated: true,
+          incidentUpdated: true,
+        },
+      };
+    } else {
+      // Parse JSON strings if they exist
+      if (settings.discord && typeof settings.discord === 'string') {
+        try {
+          settings.discord = JSON.parse(settings.discord);
+        } catch (e) {
+          settings.discord = {
+            enabled: false,
+            webhookUrl: null,
+            username: 'LocalPing',
+            avatarUrl: null,
+          };
+        }
+      }
+      
+      if (settings.events && typeof settings.events === 'string') {
+        try {
+          settings.events = JSON.parse(settings.events);
+        } catch (e) {
+          settings.events = {
+            monitorDown: true,
+            monitorUp: true,
+            incidentCreated: true,
+            incidentUpdated: true,
+          };
+        }
+      }
+    }
+
+    res.json({ success: true, settings });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update notification settings
+router.put('/api/notification-settings', async (req, res) => {
+  try {
+    const db = getDB();
+    const {
+      enabled,
+      discord,
+      events,
+    } = req.body;
+
+    const updateData = {
+      updatedAt: new Date(),
+    };
+
+    if (enabled !== undefined) {
+      updateData.enabled = enabled === true;
+    }
+
+    if (discord !== undefined) {
+      updateData.discord = {
+        enabled: discord.enabled === true,
+        webhookUrl: discord.webhookUrl || null,
+        username: discord.username || 'LocalPing',
+        avatarUrl: discord.avatarUrl || null,
+      };
+    }
+
+    if (events !== undefined) {
+      updateData.events = {
+        monitorDown: events.monitorDown !== false,
+        monitorUp: events.monitorUp !== false,
+        incidentCreated: events.incidentCreated !== false,
+        incidentUpdated: events.incidentUpdated !== false,
+      };
+    }
+
+    const existing = await db.collection('notificationSettings').findOne({ _id: 'settings' });
+
+    if (existing) {
+      await db.collection('notificationSettings').updateOne(
+        { _id: 'settings' },
+        { $set: updateData }
+      );
+    } else {
+      await db.collection('notificationSettings').insertOne({
+        _id: 'settings',
+        enabled: enabled !== undefined ? enabled === true : false,
+        discord: discord || {
+          enabled: false,
+          webhookUrl: null,
+          username: 'LocalPing',
+          avatarUrl: null,
+        },
+        events: events || {
+          monitorDown: true,
+          monitorUp: true,
+          incidentCreated: true,
+          incidentUpdated: true,
+        },
+        ...updateData,
+      });
+    }
+
+    // Invalidate notification service cache
+    const notificationService = require('../services/notificationService');
+    notificationService.invalidateCache();
+
+    res.json({ success: true, message: 'Notification settings updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Test notification
+router.post('/api/notification-settings/test', async (req, res) => {
+  try {
+    const { provider = 'discord' } = req.body;
+    const notificationService = require('../services/notificationService');
+    const result = await notificationService.testNotification(provider);
+
+    if (result.success) {
+      res.json({ success: true, message: 'Test notification sent successfully' });
+    } else {
+      res.status(400).json({ success: false, error: result.error || 'Failed to send test notification' });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

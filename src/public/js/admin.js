@@ -601,6 +601,14 @@ function showTestNotification(result, errorMessage) {
   const isSuccess = result && result.success;
   const targetName = allTargets.find(t => t._id === selectedTargetId)?.name || 'Target';
 
+  let container = document.getElementById('notificationContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'notificationContainer';
+    container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; max-width: 400px; pointer-events: none;';
+    document.body.appendChild(container);
+  }
+
   const notification = document.createElement('div');
   notification.id = notificationId;
   notification.className = `notification ${isSuccess ? 'success' : 'error'}`;
@@ -637,7 +645,7 @@ function showTestNotification(result, errorMessage) {
     `;
   }
 
-  document.body.appendChild(notification);
+  container.appendChild(notification);
 
   // Auto-remove after 5 seconds
   setTimeout(() => {
@@ -721,6 +729,15 @@ async function savePublicSettings() {
 
 function showSuccessNotification(message) {
   const notificationId = 'success-notification-' + Date.now();
+  
+  let container = document.getElementById('notificationContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'notificationContainer';
+    container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; max-width: 400px; pointer-events: none;';
+    document.body.appendChild(container);
+  }
+
   const notification = document.createElement('div');
   notification.id = notificationId;
   notification.className = 'notification success';
@@ -729,7 +746,7 @@ function showSuccessNotification(message) {
     <div class="notification-title">✓ ${message}</div>
   `;
 
-  document.body.appendChild(notification);
+  container.appendChild(notification);
 
   setTimeout(() => {
     const el = document.getElementById(notificationId);

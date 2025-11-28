@@ -6,6 +6,33 @@ let targetUptimeCache = {};
 let faviconCache = {}; // Cache for favicons in localStorage
 let previousIncidents = new Map(); // Track previous incidents for change detection
 
+// Load previous incidents from localStorage on page load
+function loadPreviousIncidents() {
+  try {
+    const stored = localStorage.getItem('previousIncidents');
+    if (stored) {
+      const data = JSON.parse(stored);
+      previousIncidents = new Map(Object.entries(data));
+    }
+  } catch (error) {
+    console.error('Error loading previous incidents from localStorage:', error);
+    previousIncidents = new Map();
+  }
+}
+
+// Save previous incidents to localStorage
+function savePreviousIncidents() {
+  try {
+    const data = Object.fromEntries(previousIncidents);
+    localStorage.setItem('previousIncidents', JSON.stringify(data));
+  } catch (error) {
+    console.error('Error saving previous incidents to localStorage:', error);
+  }
+}
+
+// Initialize previous incidents from localStorage
+loadPreviousIncidents();
+
 // Load on page load
 loadData();
 
@@ -113,6 +140,9 @@ async function loadData() {
         // Update stored incident
         previousIncidents.set(incident._id, { ...incident });
       });
+      
+      // Save to localStorage after processing all incidents
+      savePreviousIncidents();
     }
 
     // Display incidents
@@ -460,6 +490,55 @@ function buildAppCard(app) {
 function handleIconError(img, appName) {
   // Replace failed image with fallback icon
   const fallbackIcon = getIconForApp(appName);
+  img.outerHTML = `<i class="fas ${fallbackIcon}"></i>`;
+}
+
+// Get icon HTML for a service/monitor
+function getServiceIconHTML(target) {
+  let iconHTML = '';
+  
+  if (target.appIcon) {
+    // Use manually configured app icon - proxy it
+    const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(target.appIcon)}`;
+    iconHTML = `<img src="${proxyUrl}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+  } else if (target.appUrl) {
+    const cachedFavicon = faviconCache[target.appUrl];
+    
+    if (cachedFavicon) {
+      // If favicon is a data URL (base64), use it directly, otherwise proxy it
+      if (cachedFavicon.startsWith('data:')) {
+        iconHTML = `<img src="${cachedFavicon}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+      } else {
+        const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(cachedFavicon)}`;
+        iconHTML = `<img src="${proxyUrl}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+      }
+    } else if (target.favicon) {
+      faviconCache[target.appUrl] = target.favicon;
+      // If favicon is a data URL (base64), use it directly, otherwise proxy it
+      if (target.favicon.startsWith('data:')) {
+        iconHTML = `<img src="${target.favicon}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+      } else {
+        const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(target.favicon)}`;
+        iconHTML = `<img src="${proxyUrl}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+      }
+    } else {
+      // Fallback to Font Awesome icon
+      const fallbackIcon = getIconForApp(target.name);
+      iconHTML = `<i class="fas ${fallbackIcon}"></i>`;
+    }
+  } else {
+    // Fallback to Font Awesome icon
+    const fallbackIcon = getIconForApp(target.name);
+    iconHTML = `<i class="fas ${fallbackIcon}"></i>`;
+  }
+  
+  return iconHTML;
+}
+
+// Handle service icon loading errors
+function handleServiceIconError(img, serviceName) {
+  // Replace failed image with fallback icon
+  const fallbackIcon = getIconForApp(serviceName);
   img.outerHTML = `<i class="fas ${fallbackIcon}"></i>`;
 }
 
@@ -866,11 +945,18 @@ function updateServicesList(targets) {
       const badgeEl = row.querySelector('.status-badge');
       const wrapper = document.getElementById(`details-wrapper-${target._id}`);
       const icon = row.querySelector('.expand-icon');
+      const iconEl = row.querySelector('.service-icon');
+
+      // Update icon if it exists
+      if (iconEl) {
+        const newIconHTML = getServiceIconHTML(target);
+        iconEl.innerHTML = newIconHTML;
+      }
 
       // Update status badge only
       if (badgeEl) {
-        badgeEl.className = `status-badge ${statusBadgeClass}`;
-        badgeEl.innerHTML = `<span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block mr-1"></span>${statusText}`;
+        badgeEl.className = `service-status-badge status-badge ${statusBadgeClass}`;
+        badgeEl.innerHTML = `<span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block"></span>${statusText}`;
       }
 
       // CRITICAL: Always preserve expanded state - never close if it's expanded
@@ -928,23 +1014,29 @@ function createServiceElement(target) {
   const isExpanded = expandedServiceId === target._id;
   const showDetails = target.publicShowDetails === true;
 
+  // Get icon HTML for the service
+  const iconHTML = getServiceIconHTML(target);
+
   return `
     <div class="service-item bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 mb-3 overflow-hidden" id="service-${target._id}">
       <div class="service-row ${isExpanded ? 'expanded' : ''}" onclick="toggleServiceExpand('${target._id}')">
-        <div class="service-name flex-1 min-w-0">
-          <div class="font-semibold text-white">${target.name}</div>
-          ${showDetails ? `<div class="text-xs text-slate-400 mt-1">${target.host}${target.port ? ':' + target.port : ''} (${target.protocol})</div>` : ''}
+        <div class="service-icon">
+          ${iconHTML}
         </div>
-        <div class="ping-${target._id} text-yellow-400 font-semibold text-sm mx-2">-</div>
-        <div class="service-uptime uptime-${target._id} text-cyan-400 font-semibold text-sm mx-4">-</div>
-        <div class="service-bars flex-1 min-w-0 mx-4">
+        <div class="service-name">
+          <div class="font-semibold text-white text-sm sm:text-base">${target.name}</div>
+          ${showDetails ? `<div class="hidden sm:block text-xs text-slate-400 mt-1">${target.host}${target.port ? ':' + target.port : ''} (${target.protocol})</div>` : ''}
+        </div>
+        <div class="service-ping ping-${target._id} text-yellow-400 font-semibold">-</div>
+        <div class="service-uptime uptime-${target._id} text-cyan-400 font-semibold">-</div>
+        <div class="service-bars">
           ${generateUptimeBars(target._id)}
         </div>
-        <div class="status-badge ${statusBadgeClass} flex-shrink-0 mx-2">
-          <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block mr-1"></span>
+        <div class="service-status-badge status-badge ${statusBadgeClass}">
+          <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block"></span>
           ${statusText}
         </div>
-        <div class="expand-icon text-slate-400 flex-shrink-0 ml-2">${isExpanded ? '▼' : '▶'}</div>
+        <div class="service-expand-icon expand-icon text-slate-400">${isExpanded ? '▼' : '▶'}</div>
       </div>
 
       <div class="service-details-wrapper" id="details-wrapper-${target._id}">

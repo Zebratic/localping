@@ -26,7 +26,22 @@ class IncidentService {
       };
 
       const result = await this.db.collection('incidents').insertOne(incident);
-      return { success: true, incidentId: result.insertedId, incident: { ...incident, _id: result.insertedId } };
+      const createdIncident = { ...incident, _id: result.insertedId };
+
+      // Send external notifications (non-blocking)
+      setImmediate(async () => {
+        try {
+          const notificationService = require('./notificationService');
+          await notificationService.notifyIncident(createdIncident, false);
+        } catch (error) {
+          // Silently fail - notifications are not critical
+          if (process.env.NODE_ENV === 'development') {
+            console.error(chalk.yellow('Notification error for incident:'), error.message);
+          }
+        }
+      });
+
+      return { success: true, incidentId: result.insertedId, incident: createdIncident };
     } catch (error) {
       console.error(chalk.red('Error creating incident:'), error.message);
       throw error;
@@ -99,6 +114,24 @@ class IncidentService {
       const result = await this.db
         .collection('incidents')
         .updateOne({ _id: incidentId }, { $set: updateData });
+
+      if (result.modifiedCount > 0) {
+        // Send external notifications (non-blocking)
+        setImmediate(async () => {
+          try {
+            const updatedIncident = await this.getIncidentById(incidentId);
+            if (updatedIncident) {
+              const notificationService = require('./notificationService');
+              await notificationService.notifyIncident(updatedIncident, true);
+            }
+          } catch (error) {
+            // Silently fail - notifications are not critical
+            if (process.env.NODE_ENV === 'development') {
+              console.error(chalk.yellow('Notification error for incident update:'), error.message);
+            }
+          }
+        });
+      }
 
       return result.modifiedCount > 0;
     } catch (error) {

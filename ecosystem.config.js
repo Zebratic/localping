@@ -18,6 +18,7 @@ module.exports = {
       merge_logs: true,
       autorestart: true,
       watch: ['src'],
+      ignore_watch: ['logs', 'node_modules', 'data'],
       max_memory_restart: '512M',
     },
   ],

@@ -6,7 +6,7 @@ let currentStartDate = null;
 let currentEndDate = null;
 
 // Tab switching
-function switchTab(tabName) {
+function switchTab(tabName, eventElement) {
   // Hide all tabs
   document.querySelectorAll('.tab-content').forEach(tab => {
     tab.classList.remove('active');
@@ -20,14 +20,25 @@ function switchTab(tabName) {
   // Show selected tab
   document.getElementById(tabName).classList.add('active');
 
-  // Set active button
-  event.target.classList.add('active');
+  // Set active button - use eventElement if provided, otherwise find by tab name
+  if (eventElement) {
+    eventElement.classList.add('active');
+  } else {
+    // Find the button that corresponds to this tab
+    document.querySelectorAll('.tab-button').forEach(btn => {
+      if (btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(`'${tabName}'`)) {
+        btn.classList.add('active');
+      }
+    });
+  }
 
   // Load tab-specific data
   if (tabName === 'monitors') {
     loadMonitors();
   } else if (tabName === 'incidents') {
     loadIncidents();
+  } else if (tabName === 'event-rules') {
+    loadEventRules();
   } else if (tabName === 'posts') {
     loadPosts();
   } else if (tabName === 'visibility') {
@@ -1174,7 +1185,42 @@ async function testMonitor() {
   }
 
   try {
-    const response = await axios.post(`/admin/api/targets/${currentMonitorId}/test`);
+    // Collect form values from the modal
+    const testData = {
+      name: getFormElement('editName')?.value || '',
+      host: getFormElement('editHost')?.value || '',
+      protocol: getFormElement('editProtocol')?.value || 'ICMP',
+      port: getFormElement('editPort')?.value ? parseInt(getFormElement('editPort').value) : null,
+      timeout: parseInt(getFormElement('editTimeout')?.value) || 30,
+      httpMethod: getFormElement('editHttpMethod')?.value || 'GET',
+      statusCodes: getFormElement('editStatusCodes')?.value || '200-299',
+      maxRedirects: parseInt(getFormElement('editMaxRedirects')?.value) || 5,
+      ignoreSsl: getFormElement('editIgnoreSsl')?.checked || false,
+      upsideDown: getFormElement('editUpsideDown')?.checked || false,
+    };
+
+    // Add authentication if set
+    const authMethod = getFormElement('editAuthMethod')?.value;
+    if (authMethod === 'basic') {
+      testData.auth = {
+        type: 'basic',
+        username: getFormElement('editAuthUsername')?.value || '',
+        password: getFormElement('editAuthPassword')?.value || ''
+      };
+    } else if (authMethod === 'bearer') {
+      testData.auth = {
+        type: 'bearer',
+        token: getFormElement('editAuthToken')?.value || ''
+      };
+    }
+
+    // Validate required fields
+    if (!testData.host) {
+      showNotification('Please enter a host address', 'error');
+      return;
+    }
+
+    const response = await axios.post(`/admin/api/targets/${currentMonitorId}/test`, testData);
     const result = response.data.result;
 
     // Update status immediately
@@ -1264,16 +1310,43 @@ async function loadIncidents() {
       return;
     }
 
+    const severityColors = {
+      minor: 'bg-blue-900 text-blue-200',
+      major: 'bg-yellow-900 text-yellow-200',
+      critical: 'bg-red-900 text-red-200'
+    };
+
+    const statusColors = {
+      investigating: 'bg-yellow-900 text-yellow-200',
+      identified: 'bg-orange-900 text-orange-200',
+      monitoring: 'bg-blue-900 text-blue-200',
+      resolved: 'bg-green-900 text-green-200'
+    };
+
     incidents.forEach(incident => {
       const card = document.createElement('div');
       card.className = 'bg-slate-900/50 backdrop-blur rounded-lg p-4 border border-slate-700/30';
+      const date = new Date(incident.createdAt).toLocaleString();
       card.innerHTML = `
         <div class="flex justify-between items-start mb-2">
-          <h4 class="font-semibold">${incident.title}</h4>
-          <span class="text-xs bg-yellow-900 text-yellow-200 px-2 py-1 rounded">${incident.status}</span>
+          <h4 class="font-semibold text-lg">${incident.title}</h4>
+          <div class="flex gap-2">
+            <span class="text-xs ${severityColors[incident.severity] || 'bg-slate-700 text-slate-300'} px-2 py-1 rounded">${incident.severity.toUpperCase()}</span>
+            <span class="text-xs ${statusColors[incident.status] || 'bg-slate-700 text-slate-300'} px-2 py-1 rounded">${incident.status.toUpperCase()}</span>
+          </div>
         </div>
-        <p class="text-sm text-slate-400 mb-2">${incident.description}</p>
-        <p class="text-xs text-slate-500">${new Date(incident.createdAt).toLocaleString()}</p>
+        <p class="text-sm text-slate-400 mb-3">${incident.description}</p>
+        <div class="flex justify-between items-center">
+          <p class="text-xs text-slate-500">${date}</p>
+          <div class="flex gap-2">
+            <button onclick="editIncident('${incident._id}')" class="btn-secondary text-xs px-3 py-1">
+              <i class="fas fa-edit mr-1"></i>Edit
+            </button>
+            <button onclick="deleteIncident('${incident._id}')" class="btn-danger text-xs px-3 py-1">
+              <i class="fas fa-trash mr-1"></i>Delete
+            </button>
+          </div>
+        </div>
       `;
       incidentsList.appendChild(card);
     });
@@ -1283,9 +1356,112 @@ async function loadIncidents() {
   }
 }
 
+let currentIncidentId = null;
+
 // Show create incident modal
 function showCreateIncidentModal() {
-  showNotification('Incident creation not yet implemented', 'error');
+  currentIncidentId = null;
+  document.getElementById('incidentModalTitle').textContent = 'Create New Incident';
+  document.getElementById('incidentTitle').value = '';
+  document.getElementById('incidentDescription').value = '';
+  document.getElementById('incidentSeverity').value = 'major';
+  document.getElementById('incidentStatus').value = 'investigating';
+  document.getElementById('incidentModal').classList.add('active');
+  
+  // Focus on title input
+  setTimeout(() => {
+    document.getElementById('incidentTitle').focus();
+  }, 100);
+}
+
+// Close incident modal
+function closeIncidentModal() {
+  document.getElementById('incidentModal').classList.remove('active');
+  currentIncidentId = null;
+  document.getElementById('incidentForm').reset();
+}
+
+// Edit incident
+async function editIncident(incidentId) {
+  try {
+    const response = await axios.get(`/admin/api/incidents/${incidentId}`);
+    const incident = response.data.incident;
+
+    currentIncidentId = incidentId;
+    document.getElementById('incidentModalTitle').textContent = 'Edit Incident';
+    document.getElementById('incidentTitle').value = incident.title;
+    document.getElementById('incidentDescription').value = incident.description;
+    document.getElementById('incidentSeverity').value = incident.severity || 'major';
+    document.getElementById('incidentStatus').value = incident.status || 'investigating';
+    document.getElementById('incidentModal').classList.add('active');
+    
+    // Focus on title input
+    setTimeout(() => {
+      document.getElementById('incidentTitle').focus();
+    }, 100);
+  } catch (error) {
+    console.error('Error loading incident:', error);
+    showNotification('Error loading incident: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// Save incident
+async function saveIncident(event) {
+  if (event) {
+    event.preventDefault();
+  }
+
+  const title = document.getElementById('incidentTitle').value.trim();
+  const description = document.getElementById('incidentDescription').value.trim();
+  const severity = document.getElementById('incidentSeverity').value;
+  const status = document.getElementById('incidentStatus').value;
+
+  if (!title || !description) {
+    showNotification('Title and description are required', 'error');
+    return;
+  }
+
+  try {
+    if (currentIncidentId) {
+      // Update existing incident
+      await axios.put(`/admin/api/incidents/${currentIncidentId}`, {
+        title,
+        description,
+        severity,
+        status
+      });
+      showNotification('Incident updated successfully', 'success');
+    } else {
+      // Create new incident
+      await axios.post('/admin/api/incidents', {
+        title,
+        description,
+        severity,
+        status
+      });
+      showNotification('Incident created successfully', 'success');
+    }
+
+    closeIncidentModal();
+    loadIncidents();
+  } catch (error) {
+    console.error('Error saving incident:', error);
+    showNotification('Error saving incident: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// Delete incident
+async function deleteIncident(incidentId) {
+  if (!confirm('Are you sure you want to delete this incident?')) return;
+
+  try {
+    await axios.delete(`/admin/api/incidents/${incidentId}`);
+    showNotification('Incident deleted successfully', 'success');
+    loadIncidents();
+  } catch (error) {
+    console.error('Error deleting incident:', error);
+    showNotification('Error deleting incident: ' + (error.response?.data?.error || error.message), 'error');
+  }
 }
 
 // Load posts
@@ -1483,6 +1659,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const postForm = document.getElementById('postForm');
   if (postForm) {
     postForm.addEventListener('submit', savePost);
+  }
+  
+  const incidentForm = document.getElementById('incidentForm');
+  if (incidentForm) {
+    incidentForm.addEventListener('submit', saveIncident);
   }
 });
 
@@ -1941,8 +2122,9 @@ async function loadPublicUISettings() {
       updateAdminHeaderTitle('LocalPing');
     }
 
-    // Also load admin settings
+    // Also load admin settings and notification settings
     await loadAdminSettings();
+    await loadNotificationSettings();
   } catch (error) {
     console.error('Error loading public UI settings:', error);
     // Don't show notification on initial load error, just use default
@@ -2061,6 +2243,143 @@ async function savePublicUISettings() {
 // Preview public UI
 function previewPublicUI() {
   window.open('/', '_blank');
+}
+
+// Load notification settings
+async function loadNotificationSettings() {
+  try {
+    const response = await axios.get('/admin/api/notification-settings');
+    const settings = response.data.settings;
+
+    if (settings) {
+      const enabledEl = document.getElementById('notificationEnabled');
+      if (enabledEl) {
+        enabledEl.checked = settings.enabled === true;
+      }
+
+      const discordEnabledEl = document.getElementById('discordEnabled');
+      if (discordEnabledEl) {
+        discordEnabledEl.checked = settings.discord?.enabled === true;
+      }
+
+      const discordWebhookEl = document.getElementById('discordWebhookUrl');
+      if (discordWebhookEl) {
+        discordWebhookEl.value = settings.discord?.webhookUrl || '';
+      }
+
+      const discordUsernameEl = document.getElementById('discordUsername');
+      if (discordUsernameEl) {
+        discordUsernameEl.value = settings.discord?.username || 'LocalPing';
+      }
+
+      const discordAvatarEl = document.getElementById('discordAvatarUrl');
+      if (discordAvatarEl) {
+        discordAvatarEl.value = settings.discord?.avatarUrl || '';
+      }
+
+      const eventMonitorDownEl = document.getElementById('eventMonitorDown');
+      if (eventMonitorDownEl) {
+        eventMonitorDownEl.checked = settings.events?.monitorDown !== false;
+      }
+
+      const eventMonitorUpEl = document.getElementById('eventMonitorUp');
+      if (eventMonitorUpEl) {
+        eventMonitorUpEl.checked = settings.events?.monitorUp !== false;
+      }
+
+      const eventIncidentCreatedEl = document.getElementById('eventIncidentCreated');
+      if (eventIncidentCreatedEl) {
+        eventIncidentCreatedEl.checked = settings.events?.incidentCreated !== false;
+      }
+
+      const eventIncidentUpdatedEl = document.getElementById('eventIncidentUpdated');
+      if (eventIncidentUpdatedEl) {
+        eventIncidentUpdatedEl.checked = settings.events?.incidentUpdated !== false;
+      }
+    }
+  } catch (error) {
+    console.error('Error loading notification settings:', error);
+  }
+}
+
+// Save notification settings
+async function saveNotificationSettings() {
+  try {
+    const enabled = document.getElementById('notificationEnabled').checked;
+    const discordEnabled = document.getElementById('discordEnabled').checked;
+    const discordWebhookUrl = document.getElementById('discordWebhookUrl').value.trim();
+    const discordUsername = document.getElementById('discordUsername').value.trim() || 'LocalPing';
+    const discordAvatarUrl = document.getElementById('discordAvatarUrl').value.trim() || null;
+
+    // Validate Discord webhook URL if Discord is enabled
+    if (discordEnabled && !discordWebhookUrl) {
+      showNotification('Discord webhook URL is required when Discord notifications are enabled', 'error');
+      return;
+    }
+
+    if (discordWebhookUrl && !discordWebhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+      showNotification('Invalid Discord webhook URL. It should start with https://discord.com/api/webhooks/', 'error');
+      return;
+    }
+
+    const data = {
+      enabled: enabled,
+      discord: {
+        enabled: discordEnabled,
+        webhookUrl: discordWebhookUrl || null,
+        username: discordUsername,
+        avatarUrl: discordAvatarUrl,
+      },
+      events: {
+        monitorDown: document.getElementById('eventMonitorDown').checked,
+        monitorUp: document.getElementById('eventMonitorUp').checked,
+        incidentCreated: document.getElementById('eventIncidentCreated').checked,
+        incidentUpdated: document.getElementById('eventIncidentUpdated').checked,
+      },
+    };
+
+    await axios.put('/admin/api/notification-settings', data);
+    showNotification('Notification settings saved successfully', 'success');
+  } catch (error) {
+    console.error('Error saving notification settings:', error);
+    showNotification(error.response?.data?.error || 'Error saving notification settings', 'error');
+  }
+}
+
+// Test Discord notification
+async function testDiscordNotification() {
+  try {
+    const discordEnabled = document.getElementById('discordEnabled').checked;
+    const discordWebhookUrl = document.getElementById('discordWebhookUrl').value.trim();
+
+    if (!discordEnabled) {
+      showNotification('Please enable Discord notifications first', 'error');
+      return;
+    }
+
+    if (!discordWebhookUrl) {
+      showNotification('Please enter a Discord webhook URL first', 'error');
+      return;
+    }
+
+    // Save settings first to ensure webhook URL is saved
+    await saveNotificationSettings();
+
+    showNotification('Sending test notification...', 'success');
+
+    const response = await axios.post('/admin/api/notification-settings/test', {
+      provider: 'discord',
+    });
+
+    if (response.data.success) {
+      showNotification('Test notification sent successfully! Check your Discord channel.', 'success');
+    } else {
+      showNotification(response.data.error || 'Failed to send test notification', 'error');
+    }
+  } catch (error) {
+    console.error('Error testing Discord notification:', error);
+    showNotification(error.response?.data?.error || 'Error testing notification', 'error');
+  }
 }
 
 // Show clear ping data warning modal
@@ -2306,6 +2625,445 @@ window.importBackup = async function importBackup() {
     console.error('Error importing backup:', error);
     showNotification(error.response?.data?.error || 'Error importing backup', 'error');
   }
+}
+
+// ============ EVENT RULES MANAGEMENT ============
+let currentEventRuleId = null;
+let allTargets = [];
+
+// Load event rules
+async function loadEventRules() {
+  try {
+    const response = await axios.get('/admin/api/event-rules');
+    const rules = response.data.rules || [];
+    
+    const rulesList = document.getElementById('eventRulesList');
+    rulesList.innerHTML = '';
+    
+    if (rules.length === 0) {
+      rulesList.innerHTML = '<p class="text-slate-400 text-center py-8">No event rules configured. Create one to automatically detect incidents.</p>';
+      return;
+    }
+    
+    for (const rule of rules) {
+      const ruleCard = document.createElement('div');
+      ruleCard.className = 'bg-slate-800/50 rounded-lg p-4 border border-slate-700';
+      ruleCard.innerHTML = `
+        <div class="flex justify-between items-start mb-2">
+          <div class="flex-1">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+              ${rule.name}
+              ${rule.enabled ? '<span class="status-badge up text-xs">Enabled</span>' : '<span class="status-badge down text-xs">Disabled</span>'}
+            </h3>
+            <p class="text-slate-400 text-sm mt-1">Type: ${rule.eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</p>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="editEventRule('${rule._id}')" class="btn-secondary text-xs px-3 py-1">
+              <i class="fas fa-edit mr-1"></i>Edit
+            </button>
+            <button onclick="deleteEventRule('${rule._id}')" class="btn-secondary text-xs px-3 py-1 text-red-400">
+              <i class="fas fa-trash mr-1"></i>Delete
+            </button>
+          </div>
+        </div>
+        <div class="text-sm text-slate-300 mt-2">
+          <p><strong>Incident:</strong> ${rule.incidentTitle}</p>
+          <p class="text-slate-400 text-xs mt-1">${rule.incidentDescription}</p>
+        </div>
+      `;
+      rulesList.appendChild(ruleCard);
+    }
+  } catch (error) {
+    console.error('Error loading event rules:', error);
+    showNotification('Error loading event rules: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// Show create event rule modal
+async function showCreateEventRuleModal() {
+  currentEventRuleId = null;
+  document.getElementById('eventRuleModalTitle').textContent = 'Create New Event Rule';
+  document.getElementById('eventRuleForm').reset();
+  document.getElementById('eventRuleEnabled').checked = true;
+  document.getElementById('eventRuleAutoResolve').checked = false;
+  document.getElementById('autoResolveMessageContainer').classList.add('hidden');
+  document.getElementById('eventRuleConditionsContainer').innerHTML = '';
+  document.getElementById('eventRuleModal').classList.add('active');
+  
+  // Load targets for selection
+  try {
+    const response = await axios.get('/admin/api/targets');
+    allTargets = response.data.targets || [];
+  } catch (error) {
+    console.error('Error loading targets:', error);
+  }
+}
+
+// Edit event rule
+async function editEventRule(ruleId) {
+  try {
+    const response = await axios.get(`/admin/api/event-rules/${ruleId}`);
+    const rule = response.data.rule;
+    
+    currentEventRuleId = ruleId;
+    document.getElementById('eventRuleModalTitle').textContent = 'Edit Event Rule';
+    document.getElementById('eventRuleName').value = rule.name;
+    document.getElementById('eventRuleType').value = rule.eventType;
+    document.getElementById('eventRuleEnabled').checked = rule.enabled !== false;
+    document.getElementById('eventRuleIncidentTitle').value = rule.incidentTitle;
+    document.getElementById('eventRuleIncidentDescription').value = rule.incidentDescription;
+    document.getElementById('eventRuleIncidentSeverity').value = rule.incidentSeverity || 'major';
+    document.getElementById('eventRuleIncidentStatus').value = rule.incidentStatus || 'investigating';
+    document.getElementById('eventRuleAutoResolve').checked = rule.autoResolve === true;
+    document.getElementById('eventRuleAutoResolveMessage').value = rule.autoResolveMessage || '';
+    document.getElementById('eventRuleCooldown').value = rule.cooldownMinutes || 0;
+    
+    toggleAutoResolveMessage();
+    updateEventRuleConditions();
+    
+    // Load targets for selection
+    try {
+      const response = await axios.get('/admin/api/targets');
+      allTargets = response.data.targets || [];
+    } catch (error) {
+      console.error('Error loading targets:', error);
+    }
+    
+    // Set condition values after loading
+    setTimeout(() => {
+      const conditions = rule.conditions;
+      const currentEventType = document.getElementById('eventRuleType').value;
+      
+      // Handle both old format (targetId) and new format (targetIds) for monitor_down/monitor_up
+      if ((currentEventType === 'monitor_down' || currentEventType === 'monitor_up')) {
+        const targetIds = conditions.targetIds && Array.isArray(conditions.targetIds) 
+          ? conditions.targetIds 
+          : (conditions.targetId ? [conditions.targetId] : []);
+        
+        targetIds.forEach(targetId => {
+          const checkbox = document.querySelector(`#conditionTargetIdsDropdown .target-checkbox[value="${targetId}"]`);
+          if (checkbox) {
+            checkbox.checked = true;
+          }
+        });
+        
+        updateTargetDisplay('conditionTargetIds');
+      }
+      // Handle targetIds for multiple_monitors_down
+      if (currentEventType === 'multiple_monitors_down') {
+        if (conditions.targetIds && Array.isArray(conditions.targetIds)) {
+          conditions.targetIds.forEach(targetId => {
+            const checkbox = document.querySelector(`#conditionTargetIdsDropdown .target-checkbox[value="${targetId}"]`);
+            if (checkbox) {
+              checkbox.checked = true;
+            }
+          });
+          updateTargetDisplay('conditionTargetIds');
+        }
+      }
+      if (conditions.count !== undefined) {
+        const input = document.getElementById('conditionCount');
+        if (input) input.value = conditions.count;
+      }
+      if (conditions.threshold !== undefined) {
+        const input = document.getElementById('conditionThreshold');
+        if (input) input.value = conditions.threshold;
+      }
+      if (conditions.operator) {
+        const select = document.getElementById('conditionOperator');
+        if (select) select.value = conditions.operator;
+      }
+      if (conditions.period) {
+        const input = document.getElementById('conditionPeriod');
+        if (input) input.value = conditions.period;
+      }
+      if (conditions.expression) {
+        const textarea = document.getElementById('conditionExpression');
+        if (textarea) textarea.value = conditions.expression;
+      }
+    }, 100);
+    
+    document.getElementById('eventRuleModal').classList.add('active');
+  } catch (error) {
+    console.error('Error loading event rule:', error);
+    showNotification('Error loading event rule: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// Update event rule conditions UI based on event type
+function updateEventRuleConditions() {
+  const eventType = document.getElementById('eventRuleType').value;
+  const container = document.getElementById('eventRuleConditionsContainer');
+  
+  if (!eventType) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  let html = '<div class="space-y-4 border-t border-slate-700 pt-4 mt-4">';
+  html += '<h4 class="font-semibold text-slate-300">Conditions</h4>';
+  
+  switch (eventType) {
+    case 'monitor_down':
+    case 'monitor_up':
+      html += `
+        <div>
+          <label class="form-label">Select Monitors</label>
+          <div class="relative">
+            <button type="button" id="conditionTargetIdsToggle" class="form-input w-full text-left flex justify-between items-center" onclick="toggleTargetDropdown('conditionTargetIds')">
+              <span id="conditionTargetIdsDisplay">Select monitors...</span>
+              <i class="fas fa-chevron-down"></i>
+            </button>
+            <div id="conditionTargetIdsDropdown" class="hidden absolute z-10 w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+              ${allTargets.map(t => `
+                <label class="flex items-center px-4 py-2 hover:bg-slate-700 cursor-pointer">
+                  <input type="checkbox" class="target-checkbox mr-3" value="${t._id}" data-name="${t.name}" onchange="updateTargetDisplay('conditionTargetIds')">
+                  <span class="text-slate-300">${t.name}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Click to select/deselect monitors</p>
+        </div>
+      `;
+      break;
+    case 'multiple_monitors_down':
+      html += `
+        <div>
+          <label class="form-label">Select Monitors</label>
+          <div class="relative">
+            <button type="button" id="conditionTargetIdsToggle" class="form-input w-full text-left flex justify-between items-center" onclick="toggleTargetDropdown('conditionTargetIds')">
+              <span id="conditionTargetIdsDisplay">Select monitors...</span>
+              <i class="fas fa-chevron-down"></i>
+            </button>
+            <div id="conditionTargetIdsDropdown" class="hidden absolute z-10 w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+              ${allTargets.map(t => `
+                <label class="flex items-center px-4 py-2 hover:bg-slate-700 cursor-pointer">
+                  <input type="checkbox" class="target-checkbox mr-3" value="${t._id}" data-name="${t.name}" onchange="updateTargetDisplay('conditionTargetIds')">
+                  <span class="text-slate-300">${t.name}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Select monitors to check. The rule triggers when the specified count of these monitors are down.</p>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Count</label>
+            <input type="number" id="conditionCount" class="form-input" min="1" value="2">
+          </div>
+          <div>
+            <label class="form-label">Operator</label>
+            <select id="conditionOperator" class="form-input">
+              <option value="gte">Greater than or equal (≥)</option>
+              <option value="gt">Greater than (>)</option>
+              <option value="eq">Equal (=)</option>
+            </select>
+          </div>
+        </div>
+      `;
+      break;
+    case 'monitor_response_time':
+      html += `
+        <div>
+          <label class="form-label">Target</label>
+          <select id="conditionTargetId" class="form-input">
+            <option value="">Select target...</option>
+            ${allTargets.map(t => `<option value="${t._id}">${t.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Threshold (ms)</label>
+            <input type="number" id="conditionThreshold" class="form-input" min="0" value="1000">
+          </div>
+          <div>
+            <label class="form-label">Operator</label>
+            <select id="conditionOperator" class="form-input">
+              <option value="gt">Greater than (>)</option>
+              <option value="gte">Greater than or equal (≥)</option>
+              <option value="lt">Less than (<)</option>
+              <option value="lte">Less than or equal (≤)</option>
+            </select>
+          </div>
+        </div>
+      `;
+      break;
+    case 'uptime_threshold':
+      html += `
+        <div>
+          <label class="form-label">Target</label>
+          <select id="conditionTargetId" class="form-input">
+            <option value="">Select target...</option>
+            ${allTargets.map(t => `<option value="${t._id}">${t.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Threshold (%)</label>
+            <input type="number" id="conditionThreshold" class="form-input" min="0" max="100" value="95">
+          </div>
+          <div>
+            <label class="form-label">Period</label>
+            <input type="text" id="conditionPeriod" class="form-input" placeholder="24h or 7d" value="24h">
+          </div>
+        </div>
+      `;
+      break;
+    case 'custom_condition':
+      html += `
+        <div>
+          <label class="form-label">JavaScript Expression</label>
+          <textarea id="conditionExpression" class="form-input" rows="5" placeholder="return await getTargetStatus('target-id') === 'down';"></textarea>
+          <p class="text-xs text-slate-400 mt-1">Available functions: getTargetStatus(id), getLatestResponseTime(id), getUptimePercentage(id, period)</p>
+        </div>
+      `;
+      break;
+  }
+  
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// Toggle auto-resolve message field
+function toggleAutoResolveMessage() {
+  const autoResolve = document.getElementById('eventRuleAutoResolve').checked;
+  const container = document.getElementById('autoResolveMessageContainer');
+  if (autoResolve) {
+    container.classList.remove('hidden');
+  } else {
+    container.classList.add('hidden');
+  }
+}
+
+// Save event rule
+async function saveEventRule(event) {
+  if (event) {
+    event.preventDefault();
+  }
+  
+  const eventType = document.getElementById('eventRuleType').value;
+  const conditions = {};
+  
+  // Build conditions based on event type
+  switch (eventType) {
+    case 'monitor_down':
+    case 'monitor_up':
+      {
+        const checkboxes = document.querySelectorAll('#conditionTargetIdsDropdown .target-checkbox:checked');
+        if (checkboxes.length > 0) {
+          conditions.targetIds = Array.from(checkboxes).map(cb => cb.value);
+        }
+      }
+      break;
+    case 'multiple_monitors_down':
+      {
+        const checkboxes = document.querySelectorAll('#conditionTargetIdsDropdown .target-checkbox:checked');
+        if (checkboxes.length > 0) {
+          conditions.targetIds = Array.from(checkboxes).map(cb => cb.value);
+        }
+        conditions.count = parseInt(document.getElementById('conditionCount')?.value || '2');
+        conditions.operator = document.getElementById('conditionOperator')?.value || 'gte';
+      }
+      break;
+    case 'monitor_response_time':
+      conditions.targetId = document.getElementById('conditionTargetId')?.value;
+      conditions.threshold = parseInt(document.getElementById('conditionThreshold')?.value || '1000');
+      conditions.operator = document.getElementById('conditionOperator')?.value || 'gt';
+      break;
+    case 'uptime_threshold':
+      conditions.targetId = document.getElementById('conditionTargetId')?.value;
+      conditions.threshold = parseFloat(document.getElementById('conditionThreshold')?.value || '95');
+      conditions.period = document.getElementById('conditionPeriod')?.value || '24h';
+      break;
+    case 'custom_condition':
+      conditions.expression = document.getElementById('conditionExpression')?.value || '';
+      break;
+  }
+  
+  const ruleData = {
+    name: document.getElementById('eventRuleName').value.trim(),
+    eventType: eventType,
+    enabled: document.getElementById('eventRuleEnabled').checked,
+    conditions: conditions,
+    incidentTitle: document.getElementById('eventRuleIncidentTitle').value.trim(),
+    incidentDescription: document.getElementById('eventRuleIncidentDescription').value.trim(),
+    incidentSeverity: document.getElementById('eventRuleIncidentSeverity').value,
+    incidentStatus: document.getElementById('eventRuleIncidentStatus').value,
+    autoResolve: document.getElementById('eventRuleAutoResolve').checked,
+    autoResolveMessage: document.getElementById('eventRuleAutoResolveMessage').value.trim() || null,
+    cooldownMinutes: parseInt(document.getElementById('eventRuleCooldown').value || '0'),
+  };
+  
+  try {
+    if (currentEventRuleId) {
+      await axios.put(`/admin/api/event-rules/${currentEventRuleId}`, ruleData);
+      showNotification('Event rule updated successfully', 'success');
+    } else {
+      await axios.post('/admin/api/event-rules', ruleData);
+      showNotification('Event rule created successfully', 'success');
+    }
+    
+    closeEventRuleModal();
+    loadEventRules();
+  } catch (error) {
+    console.error('Error saving event rule:', error);
+    showNotification('Error saving event rule: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// Delete event rule
+async function deleteEventRule(ruleId) {
+  if (!confirm('Are you sure you want to delete this event rule?')) return;
+  
+  try {
+    await axios.delete(`/admin/api/event-rules/${ruleId}`);
+    showNotification('Event rule deleted successfully', 'success');
+    loadEventRules();
+  } catch (error) {
+    console.error('Error deleting event rule:', error);
+    showNotification('Error deleting event rule: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// Close event rule modal
+function closeEventRuleModal() {
+  document.getElementById('eventRuleModal').classList.remove('active');
+  currentEventRuleId = null;
+}
+
+// Toggle target dropdown
+function toggleTargetDropdown(id) {
+  const dropdown = document.getElementById(`${id}Dropdown`);
+  if (dropdown) {
+    dropdown.classList.toggle('hidden');
+  }
+}
+
+// Update target display text
+function updateTargetDisplay(id) {
+  const checkboxes = document.querySelectorAll(`#${id}Dropdown .target-checkbox:checked`);
+  const display = document.getElementById(`${id}Display`);
+  
+  if (checkboxes.length === 0) {
+    display.textContent = 'Select monitors...';
+  } else if (checkboxes.length === 1) {
+    display.textContent = checkboxes[0].getAttribute('data-name');
+  } else {
+    display.textContent = `${checkboxes.length} monitors selected`;
+  }
+}
+
+// Close dropdowns when clicking outside (only if already initialized)
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    // Check if click is outside any dropdown container
+    if (!e.target.closest('.relative') && !e.target.closest('[id$="Dropdown"]')) {
+      document.querySelectorAll('[id$="Dropdown"]').forEach(dropdown => {
+        dropdown.classList.add('hidden');
+      });
+    }
+  });
 }
 
 // Initialize on page load

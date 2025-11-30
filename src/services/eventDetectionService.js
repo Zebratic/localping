@@ -1,11 +1,11 @@
-const { getDB } = require('../config/db');
+const { getPrisma } = require('../config/prisma');
 const IncidentService = require('./incidentService');
 const chalk = require('../utils/colors');
 const { v4: uuidv4 } = require('uuid');
 
 class EventDetectionService {
   constructor() {
-    this.db = null;
+    this.prisma = null;
     this.incidentService = null;
     this.activeIncidents = new Map(); // Track incidents created by events to avoid duplicates
   }
@@ -14,8 +14,8 @@ class EventDetectionService {
    * Initialize the service
    */
   async initialize() {
-    this.db = getDB();
-    this.incidentService = new IncidentService(this.db);
+    this.prisma = getPrisma();
+    this.incidentService = new IncidentService(this.prisma);
   }
 
   /**
@@ -23,14 +23,13 @@ class EventDetectionService {
    */
   async evaluateRules(context = {}) {
     try {
-      if (!this.db) {
+      if (!this.prisma) {
         await this.initialize();
       }
 
-      const rules = await this.db
-        .collection('eventRules')
-        .find({ enabled: true })
-        .toArray();
+      const rules = await this.prisma.eventRule.findMany({
+        where: { enabled: true },
+      });
 
       for (const rule of rules) {
         try {
@@ -134,10 +133,9 @@ class EventDetectionService {
     }
 
     if (targetGroups && targetGroups.length > 0) {
-      const targets = await this.db
-        .collection('targets')
-        .find({ group: { $in: targetGroups }, enabled: true })
-        .toArray();
+      const targets = await this.prisma.target.findMany({
+        where: { group: { in: targetGroups }, enabled: true },
+      });
       
       for (const target of targets) {
         const status = await this.getTargetStatus(target._id);
@@ -202,18 +200,16 @@ class EventDetectionService {
     const targetsToCheck = [];
 
     if (targetIds && targetIds.length > 0) {
-      const targets = await this.db
-        .collection('targets')
-        .find({ _id: { $in: targetIds }, enabled: true })
-        .toArray();
+      const targets = await this.prisma.target.findMany({
+        where: { id: { in: targetIds }, enabled: true },
+      });
       targetsToCheck.push(...targets);
     }
 
     if (targetGroups && targetGroups.length > 0) {
-      const targets = await this.db
-        .collection('targets')
-        .find({ group: { $in: targetGroups }, enabled: true })
-        .toArray();
+      const targets = await this.prisma.target.findMany({
+        where: { group: { in: targetGroups }, enabled: true },
+      });
       targetsToCheck.push(...targets);
     }
 
@@ -425,14 +421,12 @@ class EventDetectionService {
    */
   async getLatestResponseTime(targetId) {
     try {
-      const result = await this.db
-        .collection('pingResults')
-        .find({ targetId })
-        .sort({ timestamp: -1 })
-        .limit(1)
-        .toArray();
-      
-      return result[0]?.responseTime || null;
+      const result = await this.prisma.pingResult.findFirst({
+        where: { targetId },
+        orderBy: { timestamp: 'desc' },
+      });
+
+      return result?.responseTime || null;
     } catch (error) {
       return null;
     }
@@ -445,14 +439,13 @@ class EventDetectionService {
     try {
       const hours = this.parsePeriod(period);
       const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-      
-      const results = await this.db
-        .collection('pingResults')
-        .find({ targetId, timestamp: { $gte: since } })
-        .toArray();
-      
+
+      const results = await this.prisma.pingResult.findMany({
+        where: { targetId, timestamp: { gte: since } },
+      });
+
       if (results.length === 0) return null;
-      
+
       const successful = results.filter(r => r.success).length;
       return (successful / results.length) * 100;
     } catch (error) {
@@ -478,11 +471,11 @@ class EventDetectionService {
    */
   async getAffectedServices(rule, context) {
     const services = [];
-    
+
     if (context.target) {
       services.push(context.target.name);
     } else if (context.targetId) {
-      const target = await this.db.collection('targets').findOne({ _id: context.targetId });
+      const target = await this.prisma.target.findUnique({ where: { id: context.targetId } });
       if (target) {
         services.push(target.name);
       }
@@ -499,7 +492,7 @@ class EventDetectionService {
 
     if (conditions.targetIds) {
       for (const id of conditions.targetIds) {
-        const target = await this.db.collection('targets').findOne({ _id: id });
+        const target = await this.prisma.target.findUnique({ where: { id } });
         if (target && !services.includes(target.name)) {
           services.push(target.name);
         }

@@ -1,15 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const { getDB } = require('../config/db');
+const { getPrisma } = require('../config/prisma');
 const monitorService = require('../services/monitorService');
 const IncidentService = require('../services/incidentService');
 const { adminPageAuth } = require('../middleware/auth');
 const chalk = require('../utils/colors');
+const { v4: uuidv4 } = require('uuid');
 
 // Admin login page (GET)
 router.get('/login', (req, res) => {
-  // If already authenticated, redirect to admin
   if (req.session && req.session.adminAuthenticated) {
     return res.redirect('/admin');
   }
@@ -23,49 +23,37 @@ router.post('/login', async (req, res) => {
   const adminPassword = process.env.ADMIN_PASSWORD;
 
   if (!adminUsername || !adminPassword) {
-    return res.status(401).json({
-      success: false,
-      error: 'Admin authentication not configured',
-    });
+    return res.status(401).json({ success: false, error: 'Admin authentication not configured' });
   }
 
-  // Trim whitespace from both sides for comparison
   const providedUsername = (username || '').trim();
   const providedPassword = (password || '').trim();
   const storedUsername = (adminUsername || '').trim();
   const storedPassword = (adminPassword || '').trim();
 
-  // Check both username and password
   if (providedUsername === storedUsername && providedPassword === storedPassword) {
-    // Get session duration from settings
-    const db = getDB();
-    let sessionDurationDays = 30; // Default
+    const prisma = getPrisma();
+    let sessionDurationDays = 30;
     try {
-      const settings = await db.collection('adminSettings').findOne({ _id: 'settings' });
-      if (settings && settings.sessionDurationDays) {
+      const settings = await prisma.adminSettings.findUnique({ where: { id: 'settings' } });
+      if (settings?.sessionDurationDays) {
         sessionDurationDays = settings.sessionDurationDays;
       }
     } catch (error) {
       console.error('Error loading session duration:', error);
     }
 
-    // Set session data - this marks the session as modified
     req.session.adminAuthenticated = true;
     req.session.loginTime = new Date();
     req.session.username = providedUsername;
 
-    // Update cookie maxAge based on settings
-    const maxAge = sessionDurationDays * 24 * 60 * 60 * 1000; // Convert days to milliseconds
+    const maxAge = sessionDurationDays * 24 * 60 * 60 * 1000;
     req.session.cookie.maxAge = maxAge;
     req.session.cookie.expires = new Date(Date.now() + maxAge);
 
-    // Send response - middleware will add Set-Cookie header automatically
     return res.json({ success: true, message: 'Authenticated' });
   } else {
-    return res.status(401).json({
-      success: false,
-      error: 'Invalid username or password',
-    });
+    return res.status(401).json({ success: false, error: 'Invalid username or password' });
   }
 });
 
@@ -73,28 +61,22 @@ router.post('/login', async (req, res) => {
 router.get('/logout', (req, res) => {
   req.session.adminAuthenticated = false;
   req.session.destroy((err) => {
-    if (err) {
-      console.error('Error destroying session:', err);
-    }
+    if (err) console.error('Error destroying session:', err);
     res.redirect('/admin/login');
   });
 });
 
-// Admin dashboard - Protected by auth middleware
+// Admin dashboard
 router.get('/', adminPageAuth, (req, res) => {
   res.render('admin/index');
 });
 
-// Proxy endpoint for icons (handles local network URLs) - public access
+// Proxy endpoint for icons
 router.get('/api/proxy-icon', async (req, res) => {
   try {
     const { url } = req.query;
+    if (!url) return res.status(400).json({ success: false, error: 'URL parameter is required' });
 
-    if (!url) {
-      return res.status(400).json({ success: false, error: 'URL parameter is required' });
-    }
-
-    // Validate URL
     let targetUrl;
     try {
       targetUrl = new URL(url);
@@ -102,33 +84,23 @@ router.get('/api/proxy-icon', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid URL' });
     }
 
-    // Fetch the icon - allow self-signed certificates for local networks
     const https = require('https');
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 10000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-      validateStatus: (status) => status < 500, // Accept 4xx but not 5xx
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: false, // Allow self-signed certificates
-      }),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      validateStatus: (status) => status < 500,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
     });
 
     if (response.status >= 400) {
       return res.status(404).json({ success: false, error: 'Icon not found' });
     }
 
-    // Determine content type
     const contentType = response.headers['content-type'] || 'image/png';
-    
-    // Set appropriate headers
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     res.setHeader('Access-Control-Allow-Origin', '*');
-
-    // Send the image data
     res.send(Buffer.from(response.data));
   } catch (error) {
     console.error('Error proxying icon:', error.message);
@@ -138,86 +110,55 @@ router.get('/api/proxy-icon', async (req, res) => {
 
 // Apply auth middleware to all admin API routes (except proxy-icon)
 router.use('/api', (req, res, next) => {
-  if (req.path === '/proxy-icon') {
-    return next(); // Skip auth for proxy-icon
-  }
+  if (req.path === '/proxy-icon') return next();
   adminPageAuth(req, res, next);
 });
 
-// Admin API endpoints
+// Dashboard API
 router.get('/api/dashboard', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const faviconService = require('../services/faviconService');
 
-    const targets = await db.collection('targets').find({}).toArray();
-    
-    // Fetch favicons for targets with appUrl
+    const targets = await prisma.target.findMany();
+
     const targetsWithStatus = await Promise.all(targets.map(async (target) => {
       let favicon = null;
 
-      // If this is an app (has appUrl), try to fetch favicon
       if (target.appUrl) {
-        // Check if we have a cached favicon
-        let cachedFavicon = await db.collection('favicons').findOne({ appUrl: target.appUrl });
-
+        let cachedFavicon = await prisma.favicon.findUnique({ where: { appUrl: target.appUrl } });
         if (cachedFavicon) {
           favicon = cachedFavicon.favicon;
         } else {
-          // Fetch favicon and cache it
           favicon = await faviconService.getFavicon(target.appUrl);
           if (favicon) {
-            await db.collection('favicons').updateOne(
-              { appUrl: target.appUrl },
-              {
-                $set: {
-                  appUrl: target.appUrl,
-                  favicon: favicon,
-                  updatedAt: new Date(),
-                },
-              },
-              { upsert: true }
-            );
+            await prisma.favicon.upsert({
+              where: { appUrl: target.appUrl },
+              update: { favicon, updatedAt: new Date() },
+              create: { appUrl: target.appUrl, favicon, updatedAt: new Date() },
+            });
           }
         }
       }
 
-      // Parse JSON fields
-      const parsedTarget = { ...target };
-      if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
-        try {
-          parsedTarget.auth = JSON.parse(parsedTarget.auth);
-        } catch (e) {
-          parsedTarget.auth = null;
-        }
-      }
-      if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
-        try {
-          parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
-        } catch (e) {
-          parsedTarget.quickCommands = [];
-        }
-      }
-
       return {
-        ...parsedTarget,
-        favicon: favicon,
-        currentStatus: monitorService.getTargetStatus(target._id),
+        ...target,
+        _id: target.id,
+        favicon,
+        currentStatus: monitorService.getTargetStatus(target.id),
       };
     }));
 
-    const alerts = await db
-      .collection('alerts')
-      .find({})
-      .sort({ timestamp: -1 })
-      .limit(20)
-      .toArray();
+    const alerts = await prisma.alert.findMany({
+      orderBy: { timestamp: 'desc' },
+      take: 20,
+    });
 
     res.json({
       success: true,
       dashboard: {
         targets: targetsWithStatus,
-        recentAlerts: alerts,
+        recentAlerts: alerts.map(a => ({ ...a, _id: a.id })),
         timestamp: new Date(),
       },
     });
@@ -226,441 +167,256 @@ router.get('/api/dashboard', async (req, res) => {
   }
 });
 
-// List all actions
+// ============ ACTIONS ============
 router.get('/api/actions', async (req, res) => {
   try {
-    const db = getDB();
-    const actions = await db.collection('actions').find({}).toArray();
-
-    res.json({ success: true, actions });
+    const prisma = getPrisma();
+    const actions = await prisma.action.findMany();
+    res.json({ success: true, actions: actions.map(a => ({ ...a, _id: a.id })) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get single action
 router.get('/api/actions/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const actionId = req.params.id;
-    const action = await db.collection('actions').findOne({ _id: actionId });
-
-    if (!action) {
-      return res.status(404).json({ success: false, error: 'Action not found' });
-    }
-
-    res.json({ success: true, action });
+    const prisma = getPrisma();
+    const action = await prisma.action.findUnique({ where: { id: req.params.id } });
+    if (!action) return res.status(404).json({ success: false, error: 'Action not found' });
+    res.json({ success: true, action: { ...action, _id: action.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Create action
 router.post('/api/actions', async (req, res) => {
   try {
-    const { name, description, type, targetId, ...actionData } = req.body;
+    const { name, type, targetId, command } = req.body;
+    if (!name || !type) return res.status(400).json({ success: false, error: 'Missing required fields' });
 
-    if (!name || !type) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields',
-      });
-    }
-
-    const db = getDB();
-    const action = {
-      name,
-      description: description || '',
-      type,
-      targetId: targetId ? targetId : null,
-      ...actionData,
-      createdAt: new Date(),
-    };
-
-    const result = await db.collection('actions').insertOne(action);
-
-    res.json({
-      success: true,
-      actionId: result.insertedId,
-      action: { ...action, _id: result.insertedId },
+    const prisma = getPrisma();
+    const action = await prisma.action.create({
+      data: { name, type, targetId: targetId || null, command: command || null },
     });
+
+    res.json({ success: true, actionId: action.id, action: { ...action, _id: action.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Update action
 router.put('/api/actions/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const actionId = req.params.id;
-
-    const result = await db.collection('actions').updateOne(
-      { _id: actionId },
-      { $set: { ...req.body, updatedAt: new Date() } }
-    );
-
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Action not found' });
-    }
-
+    const prisma = getPrisma();
+    await prisma.action.update({ where: { id: req.params.id }, data: req.body });
     res.json({ success: true, message: 'Action updated' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Action not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Delete action
 router.delete('/api/actions/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const actionId = req.params.id;
-
-    const result = await db.collection('actions').deleteOne({ _id: actionId });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Action not found' });
-    }
-
+    const prisma = getPrisma();
+    await prisma.action.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: 'Action deleted' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Action not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Aliases for API routes (support both paths for backward compatibility)
 router.post('/api/actions/:id/execute', async (req, res) => {
   try {
-    const db = getDB();
-    const actionId = req.params.id;
-    const action = await db.collection('actions').findOne({ _id: actionId });
-
-    if (!action) {
-      return res.status(404).json({ success: false, error: 'Action not found' });
-    }
+    const prisma = getPrisma();
+    const action = await prisma.action.findUnique({ where: { id: req.params.id } });
+    if (!action) return res.status(404).json({ success: false, error: 'Action not found' });
 
     const actionService = require('../services/actionService');
     const result = await actionService.executeAction(action);
-
     res.json({ success: true, result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ============ INCIDENT MANAGEMENT ROUTES ============
-
-// Get all incidents
+// ============ INCIDENTS ============
 router.get('/api/incidents', async (req, res) => {
   try {
-    const db = getDB();
-    const incidentService = new IncidentService(db);
+    const prisma = getPrisma();
+    const incidentService = new IncidentService(prisma);
     const incidents = await incidentService.getIncidents();
-
-    res.json({ success: true, incidents });
+    res.json({ success: true, incidents: incidents.map(i => ({ ...i, _id: i.id })) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get single incident
 router.get('/api/incidents/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const incidentService = new IncidentService(db);
+    const prisma = getPrisma();
+    const incidentService = new IncidentService(prisma);
     const incident = await incidentService.getIncidentById(req.params.id);
-
-    if (!incident) {
-      return res.status(404).json({ success: false, error: 'Incident not found' });
-    }
-
-    res.json({ success: true, incident });
+    if (!incident) return res.status(404).json({ success: false, error: 'Incident not found' });
+    res.json({ success: true, incident: { ...incident, _id: incident.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Create incident
 router.post('/api/incidents', async (req, res) => {
   try {
-    const db = getDB();
-    const incidentService = new IncidentService(db);
+    const prisma = getPrisma();
+    const incidentService = new IncidentService(prisma);
     const { title, description, status, severity, affectedServices } = req.body;
 
     if (!title || !description) {
-      return res.status(400).json({
-        success: false,
-        error: 'Title and description are required',
-      });
+      return res.status(400).json({ success: false, error: 'Title and description are required' });
     }
 
-    const result = await incidentService.createIncident({
-      title,
-      description,
-      status,
-      severity,
-      affectedServices,
-    });
-
+    const result = await incidentService.createIncident({ title, description, status, severity, affectedServices });
     res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Update incident
 router.put('/api/incidents/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const incidentService = new IncidentService(db);
+    const prisma = getPrisma();
+    const incidentService = new IncidentService(prisma);
     const { title, description, status, severity, affectedServices, updateMessage } = req.body;
 
     const updated = await incidentService.updateIncident(req.params.id, {
-      title,
-      description,
-      status,
-      severity,
-      affectedServices,
-      updateMessage,
+      title, description, status, severity, affectedServices, updateMessage,
     });
 
-    if (!updated) {
-      return res.status(404).json({ success: false, error: 'Incident not found' });
-    }
-
+    if (!updated) return res.status(404).json({ success: false, error: 'Incident not found' });
     res.json({ success: true, message: 'Incident updated' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Delete incident
 router.delete('/api/incidents/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const incidentService = new IncidentService(db);
+    const prisma = getPrisma();
+    const incidentService = new IncidentService(prisma);
     const deleted = await incidentService.deleteIncident(req.params.id);
-
-    if (!deleted) {
-      return res.status(404).json({ success: false, error: 'Incident not found' });
-    }
-
+    if (!deleted) return res.status(404).json({ success: false, error: 'Incident not found' });
     res.json({ success: true, message: 'Incident deleted' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ============ EVENT RULES MANAGEMENT ROUTES ============
-
-// Get all event rules
+// ============ EVENT RULES ============
 router.get('/api/event-rules', async (req, res) => {
   try {
-    const db = getDB();
-    const rules = await db.collection('eventRules').find({}).sort({ createdAt: -1 }).toArray();
-    
-    // Parse conditions from JSON
-    const parsedRules = rules.map(rule => ({
-      ...rule,
-      conditions: typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions,
-    }));
-
-    res.json({ success: true, rules: parsedRules });
+    const prisma = getPrisma();
+    const rules = await prisma.eventRule.findMany({ orderBy: { createdAt: 'desc' } });
+    res.json({ success: true, rules: rules.map(r => ({ ...r, _id: r.id })) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get single event rule
 router.get('/api/event-rules/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const rule = await db.collection('eventRules').findOne({ _id: req.params.id });
-
-    if (!rule) {
-      return res.status(404).json({ success: false, error: 'Event rule not found' });
-    }
-
-    // Parse conditions from JSON
-    rule.conditions = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
-
-    res.json({ success: true, rule });
+    const prisma = getPrisma();
+    const rule = await prisma.eventRule.findUnique({ where: { id: req.params.id } });
+    if (!rule) return res.status(404).json({ success: false, error: 'Event rule not found' });
+    res.json({ success: true, rule: { ...rule, _id: rule.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Create event rule
 router.post('/api/event-rules', async (req, res) => {
   try {
-    const db = getDB();
-    const { v4: uuidv4 } = require('uuid');
+    const prisma = getPrisma();
     const {
-      name,
-      eventType,
-      enabled,
-      conditions,
-      incidentTitle,
-      incidentDescription,
-      incidentSeverity,
-      incidentStatus,
-      autoResolve,
-      autoResolveMessage,
-      cooldownMinutes,
+      name, eventType, enabled, conditions, incidentTitle, incidentDescription,
+      incidentSeverity, incidentStatus, autoResolve, autoResolveMessage, cooldownMinutes,
     } = req.body;
 
     if (!name || !eventType || !conditions || !incidentTitle || !incidentDescription) {
-      return res.status(400).json({
-        success: false,
-        error: 'Name, eventType, conditions, incidentTitle, and incidentDescription are required',
-      });
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
 
-    const rule = {
-      _id: uuidv4(),
-      name,
-      eventType,
-      enabled: enabled !== false,
-      conditions: JSON.stringify(conditions),
-      incidentTitle,
-      incidentDescription,
-      incidentSeverity: incidentSeverity || 'major',
-      incidentStatus: incidentStatus || 'investigating',
-      autoResolve: autoResolve === true,
-      autoResolveMessage: autoResolveMessage || null,
-      cooldownMinutes: cooldownMinutes || 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    const rule = await prisma.eventRule.create({
+      data: {
+        name, eventType, enabled: enabled !== false, conditions,
+        incidentTitle, incidentDescription,
+        incidentSeverity: incidentSeverity || 'major',
+        incidentStatus: incidentStatus || 'investigating',
+        autoResolve: autoResolve === true,
+        autoResolveMessage: autoResolveMessage || null,
+        cooldownMinutes: cooldownMinutes || 0,
+      },
+    });
 
-    await db.collection('eventRules').insertOne(rule);
-
-    res.json({ success: true, ruleId: rule._id, rule });
+    res.json({ success: true, ruleId: rule.id, rule: { ...rule, _id: rule.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Update event rule
 router.put('/api/event-rules/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const {
-      name,
-      eventType,
-      enabled,
-      conditions,
-      incidentTitle,
-      incidentDescription,
-      incidentSeverity,
-      incidentStatus,
-      autoResolve,
-      autoResolveMessage,
-      cooldownMinutes,
-    } = req.body;
+    const prisma = getPrisma();
+    const updateData = { ...req.body };
+    delete updateData.id;
+    delete updateData._id;
 
-    const updateData = {
-      updatedAt: new Date(),
-    };
-
-    if (name !== undefined) updateData.name = name;
-    if (eventType !== undefined) updateData.eventType = eventType;
-    if (enabled !== undefined) updateData.enabled = enabled;
-    if (conditions !== undefined) updateData.conditions = JSON.stringify(conditions);
-    if (incidentTitle !== undefined) updateData.incidentTitle = incidentTitle;
-    if (incidentDescription !== undefined) updateData.incidentDescription = incidentDescription;
-    if (incidentSeverity !== undefined) updateData.incidentSeverity = incidentSeverity;
-    if (incidentStatus !== undefined) updateData.incidentStatus = incidentStatus;
-    if (autoResolve !== undefined) updateData.autoResolve = autoResolve;
-    if (autoResolveMessage !== undefined) updateData.autoResolveMessage = autoResolveMessage;
-    if (cooldownMinutes !== undefined) updateData.cooldownMinutes = cooldownMinutes;
-
-    const result = await db.collection('eventRules').updateOne(
-      { _id: req.params.id },
-      { $set: updateData }
-    );
-
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Event rule not found' });
-    }
-
+    await prisma.eventRule.update({ where: { id: req.params.id }, data: updateData });
     res.json({ success: true, message: 'Event rule updated' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Event rule not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Delete event rule
 router.delete('/api/event-rules/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const result = await db.collection('eventRules').deleteOne({ _id: req.params.id });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Event rule not found' });
-    }
-
+    const prisma = getPrisma();
+    await prisma.eventRule.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: 'Event rule deleted' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Event rule not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Test event rule (evaluate without creating incident)
 router.post('/api/event-rules/:id/test', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const eventDetectionService = require('../services/eventDetectionService');
     await eventDetectionService.initialize();
-    
-    const rule = await db.collection('eventRules').findOne({ _id: req.params.id });
-    if (!rule) {
-      return res.status(404).json({ success: false, error: 'Event rule not found' });
-    }
 
-    // Parse conditions
-    rule.conditions = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
+    const rule = await prisma.eventRule.findUnique({ where: { id: req.params.id } });
+    if (!rule) return res.status(404).json({ success: false, error: 'Event rule not found' });
 
     const context = req.body.context || {};
     const shouldTrigger = await eventDetectionService.evaluateRule(rule, context);
-
     res.json({ success: true, shouldTrigger, context });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ============ TARGET MANAGEMENT ROUTES ============
-
-// Get all targets
+// ============ TARGETS ============
 router.get('/api/targets', async (req, res) => {
   try {
-    const db = getDB();
-    const targets = await db.collection('targets').find({}).toArray();
+    const prisma = getPrisma();
+    const targets = await prisma.target.findMany();
 
-    const targetsWithStatus = targets.map((target) => {
-      // Parse JSON fields stored as strings in SQLite
-      const parsedTarget = { ...target };
-      if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
-        try {
-          parsedTarget.auth = JSON.parse(parsedTarget.auth);
-        } catch (e) {
-          parsedTarget.auth = null;
-        }
-      }
-      if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
-        try {
-          parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
-        } catch (e) {
-          parsedTarget.quickCommands = [];
-        }
-      }
-
-      return {
-        ...parsedTarget,
-        currentStatus: monitorService.getTargetStatus(target._id),
-      };
-    });
+    const targetsWithStatus = targets.map((target) => ({
+      ...target,
+      _id: target.id,
+      currentStatus: monitorService.getTargetStatus(target.id),
+    }));
 
     res.json({ success: true, targets: targetsWithStatus });
   } catch (error) {
@@ -668,244 +424,77 @@ router.get('/api/targets', async (req, res) => {
   }
 });
 
-// Get single target
 router.get('/api/targets/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const target = await db.collection('targets').findOne({ _id: req.params.id });
-
-    if (!target) {
-      return res.status(404).json({ success: false, error: 'Target not found' });
-    }
-
-    // Parse JSON fields stored as strings in SQLite
-    const parsedTarget = { ...target };
-    if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
-      try {
-        parsedTarget.auth = JSON.parse(parsedTarget.auth);
-      } catch (e) {
-        parsedTarget.auth = null;
-      }
-    }
-    if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
-      try {
-        parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
-      } catch (e) {
-        parsedTarget.quickCommands = [];
-      }
-    }
+    const prisma = getPrisma();
+    const target = await prisma.target.findUnique({ where: { id: req.params.id } });
+    if (!target) return res.status(404).json({ success: false, error: 'Target not found' });
 
     res.json({
       success: true,
-      target: {
-        ...parsedTarget,
-        currentStatus: monitorService.getTargetStatus(target._id),
-      },
+      target: { ...target, _id: target.id, currentStatus: monitorService.getTargetStatus(target.id) },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Create target
 router.post('/api/targets', async (req, res) => {
   try {
     const {
-      name,
-      host,
-      port,
-      protocol,
-      path,
-      interval,
-      enabled,
-      publicVisible,
-      publicShowDetails,
-      publicShowStatus,
-      publicShowAppLink,
-      appUrl,
-      appIcon,
-      retries,
-      retryInterval,
-      timeout,
-      httpMethod,
-      statusCodes,
-      maxRedirects,
-      ignoreSsl,
-      upsideDown,
-      auth,
-      position,
-      group,
-      quickCommands,
+      name, host, port, protocol, path, interval, enabled, publicVisible,
+      publicShowDetails, publicShowStatus, publicShowAppLink, appUrl, appIcon,
+      retries, retryInterval, timeout, httpMethod, statusCodes, maxRedirects,
+      ignoreSsl, upsideDown, auth, position, group, quickCommands,
     } = req.body;
 
     if (!name || !host || !protocol) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: name, host, protocol',
-      });
+      return res.status(400).json({ success: false, error: 'Missing required fields: name, host, protocol' });
     }
 
-    const db = getDB();
-    const faviconService = require('../services/faviconService');
-    
-    // Build target URL for favicon fetching
-    const protocolLower = protocol.toUpperCase();
-    const defaultPort = protocolLower === 'HTTPS' ? 443 : protocolLower === 'HTTP' ? 80 : null;
-    const targetPort = port || defaultPort;
-    const targetPath = path || '/';
-    const targetUrl = targetPort && targetPort !== defaultPort
-      ? `${protocolLower.toLowerCase()}://${host}:${targetPort}${targetPath}`
-      : `${protocolLower.toLowerCase()}://${host}${targetPath}`;
-
-    // Auto-fetch favicon for HTTP/HTTPS if appIcon not provided
-    let fetchedAppIcon = appIcon;
-    let finalAppUrl = appUrl;
-    if ((protocolLower === 'HTTP' || protocolLower === 'HTTPS') && !appIcon) {
-      try {
-        // Parse auth if it's a string
-        let authObj = auth;
-        if (auth && typeof auth === 'string') {
-          try {
-            authObj = JSON.parse(auth);
-          } catch (e) {
-            authObj = null;
-          }
-        }
-
-        const faviconUrl = await faviconService.getFaviconUrlFromHtml(targetUrl, {
-          timeout: (timeout || 30) * 1000,
-          maxRedirects: maxRedirects !== undefined ? maxRedirects : 5,
-          ignoreSsl: ignoreSsl === true,
-          auth: authObj,
-        });
-
-        if (faviconUrl) {
-          fetchedAppIcon = faviconUrl;
-          // Also set appUrl if not provided
-          if (!finalAppUrl) {
-            finalAppUrl = targetUrl;
-          }
-        }
-      } catch (error) {
-        // Silently fail - favicon fetching is optional
-        console.error(`Failed to fetch favicon for ${targetUrl}:`, error.message);
-      }
-    }
-
-    const target = {
-      name,
-      host,
-      port: port || null,
-      protocol: protocol.toUpperCase(),
-      path: path || null,
-      interval: interval || 60,
-      enabled: enabled !== false,
-      publicVisible: publicVisible !== false,
-      publicShowDetails: publicShowDetails === true,
-      publicShowStatus: publicShowStatus !== false, // Default to true
-      publicShowAppLink: publicShowAppLink !== false, // Default to true
-      appUrl: finalAppUrl || null,
-      appIcon: fetchedAppIcon || null,
-      retries: retries !== undefined ? retries : 0,
-      retryInterval: retryInterval !== undefined ? retryInterval : 5,
-      timeout: timeout !== undefined ? timeout : 30,
-      httpMethod: httpMethod || 'GET',
-      statusCodes: statusCodes || '200-299',
-      maxRedirects: maxRedirects !== undefined ? maxRedirects : 5,
-      ignoreSsl: ignoreSsl === true,
-      upsideDown: upsideDown === true,
-      auth: auth || null,
-      position: position !== undefined ? position : 0,
-      group: group || null,
-      quickCommands: quickCommands || [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const result = await db.collection('targets').insertOne(target);
+    const prisma = getPrisma();
+    const target = await prisma.target.create({
+      data: {
+        name, host, port: port || null, protocol: protocol.toUpperCase(), path: path || null,
+        interval: interval || 60, enabled: enabled !== false, publicVisible: publicVisible !== false,
+        publicShowDetails: publicShowDetails === true, publicShowStatus: publicShowStatus !== false,
+        publicShowAppLink: publicShowAppLink !== false, appUrl: appUrl || null, appIcon: appIcon || null,
+        retries: retries || 0, retryInterval: retryInterval || 5, timeout: timeout || 30,
+        httpMethod: httpMethod || 'GET', statusCodes: statusCodes || '200-299',
+        maxRedirects: maxRedirects !== undefined ? maxRedirects : 5, ignoreSsl: ignoreSsl === true,
+        upsideDown: upsideDown === true, auth: auth || null, position: position || 0,
+        group: group || null, quickCommands: quickCommands || null,
+      },
+    });
 
     if (target.enabled) {
-      monitorService.startTargetMonitor({ ...target, _id: result.insertedId });
+      monitorService.startTargetMonitor({ ...target, _id: target.id });
     }
 
-    res.json({
-      success: true,
-      targetId: result.insertedId,
-      target: { ...target, _id: result.insertedId },
-    });
+    res.json({ success: true, targetId: target.id, target: { ...target, _id: target.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Update target positions (bulk) - MUST be before /api/targets/:id route
 router.put('/api/targets/positions', async (req, res) => {
   try {
-    const db = getDB();
-    const { positions } = req.body; // Array of { targetId, position }
+    const prisma = getPrisma();
+    const { positions } = req.body;
 
     if (!Array.isArray(positions)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Positions must be an array',
-      });
+      return res.status(400).json({ success: false, error: 'Positions must be an array' });
     }
 
-    // Validate all targetIds are provided and trim them
-    const missingIds = positions.filter(p => !p.targetId);
-    if (missingIds.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid targetId provided',
-      });
-    }
-
-    // Invalidate cache to ensure fresh data
     const cacheService = require('../services/cacheService');
     cacheService.invalidateCollection('targets');
 
-    // Validate all targetIds exist by querying them all at once using direct SQL
-    // Trim IDs to handle any whitespace issues
-    const targetIds = positions.map(p => String(p.targetId).trim()).filter(id => id);
-    
-    if (targetIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No target IDs provided',
+    for (const { targetId, position } of positions) {
+      await prisma.target.update({
+        where: { id: String(targetId).trim() },
+        data: { position: position || 0 },
       });
     }
-    
-    const placeholders = targetIds.map((_, i) => `$${i + 1}`).join(', ');
-    const query = `SELECT _id FROM targets WHERE _id IN (${placeholders})`;
-    const result = await db.query(query, targetIds);
-    
-    const existingIds = new Set(result.rows.map(r => r._id));
-    const missingTargetIds = targetIds.filter(id => !existingIds.has(id));
-    
-    if (missingTargetIds.length > 0) {
-      console.error('Missing target IDs:', missingTargetIds);
-      console.error('Requested IDs:', targetIds);
-      console.error('Found IDs:', Array.from(existingIds));
-      return res.status(404).json({
-        success: false,
-        error: `Target not found: ${missingTargetIds[0]}`,
-        details: {
-          missing: missingTargetIds,
-          requested: targetIds.length,
-          found: existingIds.size
-        }
-      });
-    }
-
-    // Update all positions (use trimmed IDs)
-    const updatePromises = positions.map(({ targetId, position }) =>
-      db.collection('targets').updateOne(
-        { _id: String(targetId).trim() },
-        { $set: { position: position || 0, updatedAt: new Date() } }
-      )
-    );
-
-    await Promise.all(updatePromises);
 
     res.json({ success: true, message: 'Positions updated' });
   } catch (error) {
@@ -914,567 +503,240 @@ router.put('/api/targets/positions', async (req, res) => {
   }
 });
 
-// Update target
 router.put('/api/targets/:id', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const targetId = req.params.id;
-    const {
-      name,
-      host,
-      port,
-      protocol,
-      interval,
-      enabled,
-      publicVisible,
-      publicShowDetails,
-      publicShowStatus,
-      publicShowAppLink,
-      appUrl,
-      appIcon,
-      retries,
-      retryInterval,
-      timeout,
-      httpMethod,
-      statusCodes,
-      maxRedirects,
-      ignoreSsl,
-      upsideDown,
-      auth,
-      position,
-      group,
-      quickCommands,
-    } = req.body;
+    const { enabled, ...updateData } = req.body;
 
-    const updateData = {};
-    if (name !== undefined) updateData.name = name;
-    if (host !== undefined) updateData.host = host;
-    if (port !== undefined) updateData.port = port;
-    if (protocol !== undefined) updateData.protocol = protocol.toUpperCase();
-    if (interval !== undefined) updateData.interval = interval;
-    if (publicVisible !== undefined) updateData.publicVisible = Boolean(publicVisible);
-    if (publicShowDetails !== undefined) updateData.publicShowDetails = Boolean(publicShowDetails);
-    if (publicShowStatus !== undefined) updateData.publicShowStatus = publicShowStatus !== false; // Default to true
-    if (publicShowAppLink !== undefined) updateData.publicShowAppLink = publicShowAppLink !== false; // Default to true
-    if (appUrl !== undefined) updateData.appUrl = appUrl;
-    if (appIcon !== undefined) updateData.appIcon = appIcon;
-    if (retries !== undefined) updateData.retries = retries;
-    if (retryInterval !== undefined) updateData.retryInterval = retryInterval;
-    if (timeout !== undefined) updateData.timeout = timeout;
-    if (httpMethod !== undefined) updateData.httpMethod = httpMethod;
-    if (statusCodes !== undefined) updateData.statusCodes = statusCodes;
-    if (maxRedirects !== undefined) updateData.maxRedirects = maxRedirects;
-    if (ignoreSsl !== undefined) updateData.ignoreSsl = ignoreSsl === true;
-    if (upsideDown !== undefined) updateData.upsideDown = upsideDown === true;
-    if (auth !== undefined) updateData.auth = auth;
-    if (position !== undefined) updateData.position = position;
-    if (group !== undefined) updateData.group = group;
-    if (quickCommands !== undefined) updateData.quickCommands = quickCommands;
-    updateData.updatedAt = new Date();
+    delete updateData.id;
+    delete updateData._id;
 
-    const result = await db.collection('targets').updateOne({ _id: targetId }, { $set: updateData });
+    if (updateData.protocol) updateData.protocol = updateData.protocol.toUpperCase();
 
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Target not found' });
-    }
+    await prisma.target.update({ where: { id: targetId }, data: updateData });
 
-    // Handle enabled status change
     if (enabled !== undefined) {
       if (enabled) {
-        const target = await db.collection('targets').findOne({ _id: targetId });
-        monitorService.startTargetMonitor(target);
+        const target = await prisma.target.findUnique({ where: { id: targetId } });
+        monitorService.startTargetMonitor({ ...target, _id: target.id });
       } else {
         monitorService.stopTargetMonitor(targetId);
       }
-      await db.collection('targets').updateOne({ _id: targetId }, { $set: { enabled } });
+      await prisma.target.update({ where: { id: targetId }, data: { enabled } });
     } else {
-      // Restart monitoring with updated config if enabled
-      const target = await db.collection('targets').findOne({ _id: targetId });
-      if (target && target.enabled) {
+      const target = await prisma.target.findUnique({ where: { id: targetId } });
+      if (target?.enabled) {
         monitorService.stopTargetMonitor(targetId);
-        monitorService.startTargetMonitor(target);
+        monitorService.startTargetMonitor({ ...target, _id: target.id });
       }
     }
 
     res.json({ success: true, message: 'Target updated' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Target not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Delete target
 router.delete('/api/targets/:id', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const targetId = req.params.id;
 
-    // Stop monitoring
     monitorService.stopTargetMonitor(targetId);
-
-    // Delete target
-    const result = await db.collection('targets').deleteOne({ _id: targetId });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Target not found' });
-    }
-
-    // Clean up related data
-    await db.collection('pingResults').deleteMany({ targetId });
-    await db.collection('alerts').deleteMany({ targetId });
-    await db.collection('statistics').deleteMany({ targetId });
+    await prisma.target.delete({ where: { id: targetId } });
+    // Related data is cascade deleted by Prisma schema
 
     res.json({ success: true, message: 'Target deleted' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Target not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get target statistics (admin - works for all targets)
 router.get('/api/targets/:id/statistics', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const targetId = req.params.id;
-    
-    // Get target details
-    const target = await db.collection('targets').findOne({ _id: targetId });
-    if (!target) {
-      return res.status(404).json({ success: false, error: 'Target not found' });
-    }
-    
-    // Parse JSON fields
-    const parsedTarget = { ...target };
-    if (parsedTarget.auth && typeof parsedTarget.auth === 'string') {
-      try {
-        parsedTarget.auth = JSON.parse(parsedTarget.auth);
-      } catch (e) {
-        parsedTarget.auth = null;
-      }
-    }
-    if (parsedTarget.quickCommands && typeof parsedTarget.quickCommands === 'string') {
-      try {
-        parsedTarget.quickCommands = JSON.parse(parsedTarget.quickCommands);
-      } catch (e) {
-        parsedTarget.quickCommands = [];
-      }
-    }
-    
+
+    const target = await prisma.target.findUnique({ where: { id: targetId } });
+    if (!target) return res.status(404).json({ success: false, error: 'Target not found' });
+
     const targetWithStatus = {
-      ...parsedTarget,
+      ...target, _id: target.id,
       currentStatus: monitorService.getTargetStatus(targetId),
     };
-    const period = req.query.period || null;
-    const days = parseFloat(req.query.days) || null;
-    const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
-    const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
 
-    let startDateObj;
-    let endDateObj;
-    let groupByTrunc;
-    let timePeriod;
-    let maxPoints;
-    let intervalMinutes;
+    const period = req.query.period || '24h';
+    let startDateObj = new Date();
+    let endDateObj = new Date();
+    let intervalMinutes = 30;
+    let maxPoints = 48;
 
-    // Determine time period and grouping
-    if (startDate && endDate) {
-      // Custom date range
-      startDateObj = startDate;
-      endDateObj = endDate;
-      const diffDays = (endDate - startDate) / (1000 * 60 * 60 * 24);
-      
-      if (diffDays <= 1) {
-        intervalMinutes = 60;
-        timePeriod = 'hour';
-        maxPoints = 24;
-      } else if (diffDays <= 7) {
-        intervalMinutes = 60;
-        timePeriod = 'hour';
-        maxPoints = 168;
-      } else {
-        intervalMinutes = 1440; // 1 day
-        timePeriod = 'day';
-        maxPoints = diffDays;
-      }
-    } else if (period) {
-      // Use period parameter
-      endDateObj = new Date();
-      
-      if (period === '1h') {
-        // 1H: 60 data points (one per minute)
-        startDateObj = new Date();
-        startDateObj.setHours(startDateObj.getHours() - 1);
-        intervalMinutes = 1;
-        timePeriod = 'minute';
-        maxPoints = 60;
-      } else if (period === '24h') {
-        // 24H: 48 data points (every 30 minutes)
-        startDateObj = new Date();
-        startDateObj.setHours(startDateObj.getHours() - 24);
-        intervalMinutes = 30;
-        timePeriod = '30min';
-        maxPoints = 48;
-      } else if (period === '7d') {
-        // 7D: 56 data points (every 3 hours)
-        startDateObj = new Date();
-        startDateObj.setDate(startDateObj.getDate() - 7);
-        intervalMinutes = 180; // 3 hours
-        timePeriod = '3hour';
-        maxPoints = 56;
-      } else if (period === '30d') {
-        // 30D: 60 data points (every 12 hours)
-        startDateObj = new Date();
-        startDateObj.setDate(startDateObj.getDate() - 30);
-        intervalMinutes = 720; // 12 hours
-        timePeriod = '12hour';
-        maxPoints = 60;
-      } else if (period === 'all') {
-        // ALL: 60 data points spread evenly since monitor creation
-        const firstPingResult = await db.query(`
-          SELECT MIN(timestamp) as first_timestamp
-          FROM "pingResults"
-          WHERE "targetId" = $1
-        `, [targetId]);
-        
-        if (firstPingResult.rows[0] && firstPingResult.rows[0].first_timestamp) {
-          startDateObj = new Date(firstPingResult.rows[0].first_timestamp);
-          const totalSeconds = Math.floor((endDateObj - startDateObj) / 1000);
-          // Calculate interval to get exactly 60 points
-          intervalMinutes = Math.max(1, Math.floor(totalSeconds / 60 / 60));
-          timePeriod = 'custom';
-          maxPoints = 60;
-        } else {
-          // No data, return empty
-          return res.json({ success: true, statistics: [] });
-        }
-      } else {
-        // Unknown period, default to 24h
-        startDateObj = new Date();
-        startDateObj.setHours(startDateObj.getHours() - 24);
-        intervalMinutes = 30;
-        timePeriod = '30min';
-        maxPoints = 48;
-      }
-    } else if (days) {
-      // Fixed period using days (backward compatibility)
-      endDateObj = new Date();
-      startDateObj = new Date();
-      startDateObj.setDate(startDateObj.getDate() - days);
-      
-      if (days <= 1) {
-        intervalMinutes = 60;
-        timePeriod = 'hour';
-        maxPoints = 24;
-      } else if (days <= 7) {
-        intervalMinutes = 60;
-        timePeriod = 'hour';
-        maxPoints = 168;
-      } else {
-        intervalMinutes = 1440; // 1 day
-        timePeriod = 'day';
-        maxPoints = days;
-      }
-    } else {
-      // Default to last 24h
-      endDateObj = new Date();
-      startDateObj = new Date();
+    if (period === '1h') {
+      startDateObj.setHours(startDateObj.getHours() - 1);
+      intervalMinutes = 1;
+      maxPoints = 60;
+    } else if (period === '24h') {
       startDateObj.setHours(startDateObj.getHours() - 24);
       intervalMinutes = 30;
-      timePeriod = '30min';
       maxPoints = 48;
+    } else if (period === '7d') {
+      startDateObj.setDate(startDateObj.getDate() - 7);
+      intervalMinutes = 180;
+      maxPoints = 56;
+    } else if (period === '30d') {
+      startDateObj.setDate(startDateObj.getDate() - 30);
+      intervalMinutes = 720;
+      maxPoints = 60;
     }
 
-    // Generate evenly spaced time buckets and aggregate data into them
-    // This ensures we always get the exact number of points requested
     const intervalSeconds = intervalMinutes * 60;
     const startEpoch = Math.floor(startDateObj.getTime() / 1000);
     const endEpoch = Math.floor(endDateObj.getTime() / 1000);
-    
-    // Debug: Check if we have any ping results in the time range
-    // Convert dates to ISO strings for PostgreSQL
-    const startDateStr = startDateObj.toISOString().replace('T', ' ').substring(0, 19);
-    const endDateStr = endDateObj.toISOString().replace('T', ' ').substring(0, 19);
-    
-    const debugCheck = await db.query(`
-      SELECT COUNT(*) as count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
-      FROM "pingResults"
-      WHERE "targetId" = $1 AND timestamp >= $2::timestamp AND timestamp <= $3::timestamp
-    `, [targetId, startDateStr, endDateStr]);
-    
-    // Also check all ping results for this target
-    const allPingsCheck = await db.query(`
-      SELECT COUNT(*) as count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
-      FROM "pingResults"
-      WHERE "targetId" = $1
-    `, [targetId]);
-    
-    // Check admin settings for debug logging
-    const adminSettings = await db.collection('adminSettings').findOne({ _id: 'settings' });
-    const debugLogging = adminSettings?.debugLogging === true;
-    
-    if (debugLogging || process.env.DEBUG_STATS || process.env.NODE_ENV === 'development') {
-      console.log(chalk.cyan(`[Stats Debug] Target: ${targetId}, Period: ${period || 'default'}`));
-      console.log(chalk.gray(`  Time range: ${startDateObj.toISOString()} to ${endDateObj.toISOString()}`));
-      console.log(chalk.gray(`  Epoch range: ${startEpoch} to ${endEpoch}, interval: ${intervalSeconds}s`));
-      console.log(chalk.gray(`  All ping results for target: ${allPingsCheck.rows[0]?.count || 0}`));
-      if (allPingsCheck.rows[0]?.min_ts) {
-        console.log(chalk.gray(`  All pings - Min: ${allPingsCheck.rows[0].min_ts}, Max: ${allPingsCheck.rows[0].max_ts}`));
-      }
-      console.log(chalk.gray(`  Ping results in query range: ${debugCheck.rows[0]?.count || 0}`));
-      if (debugCheck.rows[0]?.min_ts) {
-        console.log(chalk.gray(`  Query range - Min: ${debugCheck.rows[0].min_ts}, Max: ${debugCheck.rows[0].max_ts}`));
-      }
-    }
-    
-    // Generate time buckets using generate_series
-    // Use AT TIME ZONE 'UTC' to ensure bucket_time is in UTC before casting to timestamp
-    const result = await db.query(`
+
+    const result = await prisma.$queryRaw`
       WITH time_buckets AS (
-        SELECT 
-          (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
-        FROM generate_series($2::bigint, $3::bigint, $5::bigint) as bucket_epoch
+        SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
+        FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
         ORDER BY bucket_epoch
-        LIMIT $4
+        LIMIT ${maxPoints}
       )
-      SELECT 
+      SELECT
         time_buckets.bucket_time::text as date,
-        COALESCE(COUNT(pr._id), 0)::integer as "totalPings",
+        COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
         COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
-        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime",
-        MIN(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "minResponseTime",
-        MAX(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "maxResponseTime"
+        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
       FROM time_buckets
-      LEFT JOIN "pingResults" pr ON 
-        pr."targetId" = $1 
+      LEFT JOIN "pingResults" pr ON
+        pr."targetId" = ${targetId}
         AND pr.timestamp >= time_buckets.bucket_time
-        AND pr.timestamp < (time_buckets.bucket_time + ($5 || ' seconds')::interval)
+        AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
       GROUP BY time_buckets.bucket_time
       ORDER BY time_buckets.bucket_time ASC
-    `, [targetId, startEpoch, endEpoch, maxPoints, intervalSeconds]);
-    
-    // Get last response time separately
-    const lastResponseResult = await db.query(`
-      SELECT "responseTime" FROM "pingResults" 
-      WHERE "targetId" = $1 AND timestamp >= $2::timestamp AND timestamp <= $3::timestamp
-      ORDER BY timestamp DESC LIMIT 1
-    `, [targetId, startDateStr, endDateStr]);
+    `;
 
-    const results = result.rows; // Already in chronological order
-    const lastResponse = lastResponseResult.rows[0] || null;
-    
-    // Debug: Log query results
-    if (debugLogging || process.env.DEBUG_STATS || process.env.NODE_ENV === 'development') {
-      console.log(chalk.gray(`  Query returned ${results.length} time buckets`));
-      if (results.length > 0) {
-        const bucketsWithData = results.filter(r => r.totalPings > 0);
-        console.log(chalk.gray(`  Buckets with data: ${bucketsWithData.length}`));
-        if (bucketsWithData.length > 0) {
-          console.log(chalk.gray(`  First bucket with data: ${bucketsWithData[0].date}, pings: ${bucketsWithData[0].totalPings}`));
-        }
-      }
-    }
-
-    const stats = results.map(r => ({
+    const stats = result.map(r => ({
       date: r.date,
-      totalPings: r.totalPings || 0,
-      successfulPings: r.successfulPings || 0,
-      failedPings: (r.totalPings || 0) - (r.successfulPings || 0),
+      totalPings: Number(r.totalPings) || 0,
+      successfulPings: Number(r.successfulPings) || 0,
+      failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),
       uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
-      avgResponseTime: r.avgResponseTime || 0,
-      minResponseTime: r.minResponseTime || null,
-      maxResponseTime: r.maxResponseTime || null,
-      lastResponseTime: lastResponse?.responseTime || 0,
+      avgResponseTime: Number(r.avgResponseTime) || 0,
     }));
 
-    // Get uptime data for 24h and 30d, plus daily stats for blocks
+    // Get uptime data
     const uptime24hStart = new Date();
     uptime24hStart.setDate(uptime24hStart.getDate() - 1);
-    uptime24hStart.setHours(0, 0, 0, 0);
-    
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
-    uptime30dStart.setHours(0, 0, 0, 0);
 
-    // Get 24h uptime
-    const uptime24hResult = await db.query(`
-      SELECT 
-        SUM("totalPings")::bigint as "totalPings",
-        SUM("successfulPings")::bigint as "successfulPings"
-      FROM statistics
-      WHERE "targetId" = $1 AND date >= $2
-    `, [targetId, uptime24hStart]);
-    
-    const uptime24hData = uptime24hResult.rows[0] || { totalPings: 0, successfulPings: 0 };
-    const uptime24h = uptime24hData.totalPings > 0 
-      ? (uptime24hData.successfulPings / uptime24hData.totalPings) * 100 
-      : 0;
+    const dailyStats = await prisma.statistic.findMany({
+      where: { targetId, date: { gte: uptime30dStart } },
+      orderBy: { date: 'asc' },
+    });
 
-    // Get 30d uptime and daily stats
-    const uptime30dResult = await db.query(`
-      SELECT 
-        date::date as date,
-        "totalPings",
-        "successfulPings",
-        "failedPings",
-        uptime
-      FROM statistics
-      WHERE "targetId" = $1 AND date >= $2
-      ORDER BY date ASC
-    `, [targetId, uptime30dStart]);
+    let totalPings24h = 0, successfulPings24h = 0;
+    let totalPings30d = 0, successfulPings30d = 0;
 
-    const dailyStats = uptime30dResult.rows;
-    let totalPings30d = 0;
-    let successfulPings30d = 0;
     dailyStats.forEach(stat => {
       totalPings30d += stat.totalPings || 0;
       successfulPings30d += stat.successfulPings || 0;
+      if (new Date(stat.date) >= uptime24hStart) {
+        totalPings24h += stat.totalPings || 0;
+        successfulPings24h += stat.successfulPings || 0;
+      }
     });
-    const uptime30d = totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0;
 
-    return res.json({ 
-      success: true, 
-      target: targetWithStatus, // Include target details
+    res.json({
+      success: true,
+      target: targetWithStatus,
       statistics: stats,
       uptime: {
         '24h': {
-          uptime: uptime24h,
-          totalPings: uptime24hData.totalPings || 0,
-          successfulPings: uptime24hData.successfulPings || 0,
-          failedPings: (uptime24hData.totalPings || 0) - (uptime24hData.successfulPings || 0)
+          uptime: totalPings24h > 0 ? (successfulPings24h / totalPings24h) * 100 : 0,
+          totalPings: totalPings24h,
+          successfulPings: successfulPings24h,
+          failedPings: totalPings24h - successfulPings24h,
         },
         '30d': {
-          uptime: uptime30d,
+          uptime: totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0,
           totalPings: totalPings30d,
           successfulPings: successfulPings30d,
-          failedPings: totalPings30d - successfulPings30d
-        }
+          failedPings: totalPings30d - successfulPings30d,
+        },
       },
-      dailyStats: dailyStats // For uptime blocks
+      dailyStats: dailyStats.map(s => ({ ...s, _id: s.id })),
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get target uptime (admin - works for all targets)
 router.get('/api/targets/:id/uptime', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const targetId = req.params.id;
     const days = parseInt(req.query.days) || 30;
 
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
 
-    // Query daily statistics from PostgreSQL
-    const statsResult = await db.query(`
-      SELECT 
-        date::date as date,
-        "totalPings",
-        "successfulPings",
-        "failedPings",
-        uptime
-      FROM statistics
-      WHERE "targetId" = $1 AND date >= $2
-      ORDER BY date ASC
-    `, [targetId, startDate]);
+    const stats = await prisma.statistic.findMany({
+      where: { targetId, date: { gte: startDate } },
+      orderBy: { date: 'asc' },
+    });
 
-    const stats = statsResult.rows;
-    let totalPings = 0;
-    let successfulPings = 0;
-
+    let totalPings = 0, successfulPings = 0;
     stats.forEach(stat => {
       totalPings += stat.totalPings || 0;
       successfulPings += stat.successfulPings || 0;
     });
 
-    const uptime = totalPings > 0 ? (successfulPings / totalPings) * 100 : 0;
-
-    res.json({ 
-      success: true, 
-      uptime,
+    res.json({
+      success: true,
+      uptime: totalPings > 0 ? (successfulPings / totalPings) * 100 : 0,
       totalPings,
       successfulPings,
       failedPings: totalPings - successfulPings,
-      dailyStats: stats // Include daily stats for blocks
+      dailyStats: stats.map(s => ({ ...s, _id: s.id })),
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Test target (admin)
 router.post('/api/targets/:id/test', async (req, res) => {
-  // Set timeout for the request (60 seconds max)
   const timeout = setTimeout(() => {
-    if (!res.headersSent) {
-      res.status(504).json({ success: false, error: 'Test timeout - ping took too long' });
-    }
+    if (!res.headersSent) res.status(504).json({ success: false, error: 'Test timeout' });
   }, 60000);
 
   try {
-    const db = getDB();
-    const targetId = req.params.id;
-
-    const target = await db.collection('targets').findOne({ _id: targetId });
-
+    const prisma = getPrisma();
+    const target = await prisma.target.findUnique({ where: { id: req.params.id } });
     if (!target) {
       clearTimeout(timeout);
       return res.status(404).json({ success: false, error: 'Target not found' });
     }
 
-    // Merge test data from request body with target from database
-    // Request body values take precedence (for testing form values)
-    const testTarget = {
-      ...target,
-      ...req.body,
-      _id: target._id, // Always use the original ID
-    };
-
+    const testTarget = { ...target, ...req.body, _id: target.id };
     const pingService = require('../services/pingService');
-    
-    // Execute ping with timeout
-    const pingPromise = pingService.ping(testTarget);
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Ping timeout')), 55000); // 55 seconds
-    });
-    
-    const result = await Promise.race([pingPromise, timeoutPromise]);
+    const result = await pingService.ping(testTarget);
 
     clearTimeout(timeout);
 
-    // Update status in monitorService to reflect the test result
-    let newStatus = 'unknown';
-    
-    // Determine status based on ping result and upside down mode (use testTarget for upsideDown)
     let pingSuccess = result.success;
-    if (testTarget.upsideDown === true) {
-      pingSuccess = !pingSuccess; // Invert the status
-    }
-    
-    if (pingSuccess) {
-      newStatus = 'up';
-    } else {
-      newStatus = 'down';
-    }
-    
-    // Update the status in monitorService
-    monitorService.setTargetStatus(targetId, newStatus);
+    if (testTarget.upsideDown === true) pingSuccess = !pingSuccess;
+    monitorService.setTargetStatus(target.id, pingSuccess ? 'up' : 'down');
 
-    if (!res.headersSent) {
-      res.json({
-        success: result.success,
-        result,
-      });
-    }
+    if (!res.headersSent) res.json({ success: result.success, result });
   } catch (error) {
     clearTimeout(timeout);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, error: error.message });
-    }
+    if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Clear cache
 router.post('/api/cache/clear', async (req, res) => {
   try {
     const cacheService = require('../services/cacheService');
@@ -1485,181 +747,108 @@ router.post('/api/cache/clear', async (req, res) => {
   }
 });
 
-// ============ POSTS MANAGEMENT ROUTES ============
-
-// Get all posts
+// ============ POSTS ============
 router.get('/api/posts', async (req, res) => {
   try {
-    const db = getDB();
-    const posts = await db.collection('posts').find({}).sort({ createdAt: -1 }).toArray();
-
-    res.json({ success: true, posts });
+    const prisma = getPrisma();
+    const posts = await prisma.post.findMany({ orderBy: { createdAt: 'desc' } });
+    res.json({ success: true, posts: posts.map(p => ({ ...p, _id: p.id })) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get single post
 router.get('/api/posts/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const post = await db.collection('posts').findOne({ _id: req.params.id });
-
-    if (!post) {
-      return res.status(404).json({ success: false, error: 'Post not found' });
-    }
-
-    res.json({ success: true, post });
+    const prisma = getPrisma();
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
+    if (!post) return res.status(404).json({ success: false, error: 'Post not found' });
+    res.json({ success: true, post: { ...post, _id: post.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Create post
 router.post('/api/posts', async (req, res) => {
   try {
     const { title, content, published } = req.body;
+    if (!title || !content) return res.status(400).json({ success: false, error: 'Title and content are required' });
 
-    if (!title || !content) {
-      return res.status(400).json({
-        success: false,
-        error: 'Title and content are required',
-      });
-    }
+    const prisma = getPrisma();
+    const post = await prisma.post.create({
+      data: { title, content, published: published !== false },
+    });
 
-    const db = getDB();
-    const uuid = require('uuid');
-    const post = {
-      _id: uuid.v4(),
-      title,
-      content,
-      published: published !== false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    await db.collection('posts').insertOne(post);
-
-    res.json({ success: true, post });
+    res.json({ success: true, post: { ...post, _id: post.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Update post
 router.put('/api/posts/:id', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const { title, content, published } = req.body;
-
-    const updateData = {
-      updatedAt: new Date(),
-    };
-
+    const updateData = {};
     if (title !== undefined) updateData.title = title;
     if (content !== undefined) updateData.content = content;
     if (published !== undefined) updateData.published = published === true;
 
-    const result = await db.collection('posts').updateOne(
-      { _id: req.params.id },
-      { $set: updateData }
-    );
-
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Post not found' });
-    }
-
+    await prisma.post.update({ where: { id: req.params.id }, data: updateData });
     res.json({ success: true, message: 'Post updated' });
   } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Post not found' });
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Delete post
 router.delete('/api/posts/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const result = await db.collection('posts').deleteOne({ _id: req.params.id });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Post not found' });
-    }
-
+    const prisma = getPrisma();
+    await prisma.post.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: 'Post deleted' });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Post not found' });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ DATA MANAGEMENT ============
+router.post('/api/clear-ping-data', async (req, res) => {
+  try {
+    const prisma = getPrisma();
+    const pingResults = await prisma.pingResult.deleteMany({});
+    const statistics = await prisma.statistic.deleteMany({});
+
+    res.json({
+      success: true,
+      message: 'All ping data cleared',
+      details: { pingResults: pingResults.count, statistics: statistics.count },
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ============ DATA MANAGEMENT ROUTES ============
-
-// Clear all ping data
-router.post('/api/clear-ping-data', async (req, res) => {
-  try {
-    const db = getDB();
-
-    // Clear pingResults from database
-    const pingResultsDeleted = await db.collection('pingResults').deleteMany({});
-    
-    // Clear statistics from database
-    const statisticsDeleted = await db.collection('statistics').deleteMany({});
-
-    res.json({ 
-      success: true, 
-      message: 'All ping data cleared successfully',
-      details: {
-        pingResults: pingResultsDeleted.deletedCount || 0,
-        statistics: statisticsDeleted.deletedCount || 0
-      }
-    });
-  } catch (error) {
-    console.error('Error clearing ping data:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============ ADMIN SETTINGS ROUTES ============
-
-// Get admin settings
+// ============ ADMIN SETTINGS ============
 router.get('/api/admin-settings', async (req, res) => {
   try {
-    const db = getDB();
-    let settings = await db.collection('adminSettings').findOne({ _id: 'settings' });
+    const prisma = getPrisma();
+    let settings = await prisma.adminSettings.findUnique({ where: { id: 'settings' } });
 
     if (!settings) {
-      // Return defaults if not found
-      settings = {
-        _id: 'settings',
-        sessionDurationDays: 30,
-        dataRetentionDays: 30,
-      };
+      settings = { id: 'settings', _id: 'settings', sessionDurationDays: 30, dataRetentionDays: 30, debugLogging: false };
+    } else {
+      settings = { ...settings, _id: settings.id };
     }
 
-    // Ensure dataRetentionDays exists (for migration)
-    if (!settings.dataRetentionDays) {
-      settings.dataRetentionDays = 30;
-    }
-
-    // Ensure debugLogging exists (for migration)
-    if (settings.debugLogging === undefined) {
-      settings.debugLogging = false;
-    }
-
-    // Get database file size
-    const fs = require('fs');
-    const path = require('path');
-    const dbPath = path.join(process.cwd(), 'data', 'localping.db');
+    // Get database size
     let dbSize = 0;
     try {
-      if (fs.existsSync(dbPath)) {
-        const stats = fs.statSync(dbPath);
-        dbSize = stats.size;
-      }
-    } catch (error) {
-      console.error('Error getting database file size:', error);
+      const result = await prisma.$queryRaw`SELECT pg_database_size(current_database()) as size`;
+      dbSize = Number(result[0]?.size) || 0;
+    } catch (dbSizeError) {
+      console.error('Error getting database size:', dbSizeError.message);
     }
 
     res.json({ success: true, settings, dbSize });
@@ -1668,64 +857,21 @@ router.get('/api/admin-settings', async (req, res) => {
   }
 });
 
-// Update admin settings
 router.put('/api/admin-settings', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const { sessionDurationDays, dataRetentionDays, debugLogging } = req.body;
 
-    if (sessionDurationDays !== undefined) {
-      const days = parseInt(sessionDurationDays, 10);
-      if (isNaN(days) || days < 1 || days > 365) {
-        return res.status(400).json({
-          success: false,
-          error: 'Session duration must be between 1 and 365 days',
-        });
-      }
-    }
+    const updateData = {};
+    if (sessionDurationDays !== undefined) updateData.sessionDurationDays = parseInt(sessionDurationDays, 10);
+    if (dataRetentionDays !== undefined) updateData.dataRetentionDays = parseInt(dataRetentionDays, 10);
+    if (debugLogging !== undefined) updateData.debugLogging = debugLogging === true || debugLogging === 'true';
 
-    if (dataRetentionDays !== undefined) {
-      const days = parseInt(dataRetentionDays, 10);
-      if (isNaN(days) || days < 1 || days > 3650) {
-        return res.status(400).json({
-          success: false,
-          error: 'Data retention must be between 1 and 3650 days (10 years)',
-        });
-      }
-    }
-
-    const updateData = {
-      updatedAt: new Date(),
-    };
-
-    if (sessionDurationDays !== undefined) {
-      updateData.sessionDurationDays = parseInt(sessionDurationDays, 10);
-    }
-
-    if (dataRetentionDays !== undefined) {
-      updateData.dataRetentionDays = parseInt(dataRetentionDays, 10);
-    }
-
-    if (debugLogging !== undefined) {
-      updateData.debugLogging = debugLogging === true || debugLogging === 'true';
-    }
-
-    const existing = await db.collection('adminSettings').findOne({ _id: 'settings' });
-
-    if (existing) {
-      await db.collection('adminSettings').updateOne(
-        { _id: 'settings' },
-        { $set: updateData }
-      );
-    } else {
-      await db.collection('adminSettings').insertOne({
-        _id: 'settings',
-        sessionDurationDays: sessionDurationDays !== undefined ? parseInt(sessionDurationDays, 10) : 30,
-        dataRetentionDays: dataRetentionDays !== undefined ? parseInt(dataRetentionDays, 10) : 30,
-        debugLogging: debugLogging !== undefined ? (debugLogging === true || debugLogging === 'true') : false,
-        ...updateData,
-      });
-    }
+    await prisma.adminSettings.upsert({
+      where: { id: 'settings' },
+      update: updateData,
+      create: { id: 'settings', sessionDurationDays: 30, dataRetentionDays: 30, debugLogging: false, ...updateData },
+    });
 
     res.json({ success: true, message: 'Admin settings updated' });
   } catch (error) {
@@ -1733,22 +879,16 @@ router.put('/api/admin-settings', async (req, res) => {
   }
 });
 
-// ============ PUBLIC UI SETTINGS ROUTES ============
-
-// Get public UI settings
+// ============ PUBLIC UI SETTINGS ============
 router.get('/api/public-ui-settings', async (req, res) => {
   try {
-    const db = getDB();
-    let settings = await db.collection('publicUISettings').findOne({ _id: 'settings' });
+    const prisma = getPrisma();
+    let settings = await prisma.publicUISettings.findUnique({ where: { id: 'settings' } });
 
     if (!settings) {
-      // Return defaults if not found
-      settings = {
-        _id: 'settings',
-        title: 'Homelab',
-        subtitle: 'System Status & Application Dashboard',
-        customCSS: null,
-      };
+      settings = { id: 'settings', _id: 'settings', title: 'Homelab', subtitle: 'System Status & Application Dashboard', customCSS: null };
+    } else {
+      settings = { ...settings, _id: settings.id };
     }
 
     res.json({ success: true, settings });
@@ -1757,32 +897,16 @@ router.get('/api/public-ui-settings', async (req, res) => {
   }
 });
 
-// Update public UI settings
 router.put('/api/public-ui-settings', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const { title, subtitle, customCSS } = req.body;
 
-    const settings = {
-      title: title || 'Homelab',
-      subtitle: subtitle || 'System Status & Application Dashboard',
-      customCSS: customCSS || null,
-      updatedAt: new Date(),
-    };
-
-    const existing = await db.collection('publicUISettings').findOne({ _id: 'settings' });
-
-    if (existing) {
-      await db.collection('publicUISettings').updateOne(
-        { _id: 'settings' },
-        { $set: settings }
-      );
-    } else {
-      await db.collection('publicUISettings').insertOne({
-        _id: 'settings',
-        ...settings,
-      });
-    }
+    await prisma.publicUISettings.upsert({
+      where: { id: 'settings' },
+      update: { title: title || 'Homelab', subtitle: subtitle || 'System Status & Application Dashboard', customCSS: customCSS || null },
+      create: { id: 'settings', title: title || 'Homelab', subtitle: subtitle || 'System Status & Application Dashboard', customCSS: customCSS || null },
+    });
 
     res.json({ success: true, message: 'Public UI settings updated' });
   } catch (error) {
@@ -1790,59 +914,20 @@ router.put('/api/public-ui-settings', async (req, res) => {
   }
 });
 
-// ============ NOTIFICATION SETTINGS ROUTES ============
-
-// Get notification settings
+// ============ NOTIFICATION SETTINGS ============
 router.get('/api/notification-settings', async (req, res) => {
   try {
-    const db = getDB();
-    let settings = await db.collection('notificationSettings').findOne({ _id: 'settings' });
+    const prisma = getPrisma();
+    let settings = await prisma.notificationSettings.findUnique({ where: { id: 'settings' } });
 
     if (!settings) {
-      // Return defaults if not found
       settings = {
-        _id: 'settings',
-        enabled: false,
-        discord: {
-          enabled: false,
-          webhookUrl: null,
-          username: 'LocalPing',
-          avatarUrl: null,
-        },
-        events: {
-          monitorDown: true,
-          monitorUp: true,
-          incidentCreated: true,
-          incidentUpdated: true,
-        },
+        id: 'settings', _id: 'settings', enabled: false,
+        discord: { enabled: false, webhookUrl: null, username: 'LocalPing', avatarUrl: null },
+        events: { monitorDown: true, monitorUp: true, incidentCreated: true, incidentUpdated: true },
       };
     } else {
-      // Parse JSON strings if they exist
-      if (settings.discord && typeof settings.discord === 'string') {
-        try {
-          settings.discord = JSON.parse(settings.discord);
-        } catch (e) {
-          settings.discord = {
-            enabled: false,
-            webhookUrl: null,
-            username: 'LocalPing',
-            avatarUrl: null,
-          };
-        }
-      }
-      
-      if (settings.events && typeof settings.events === 'string') {
-        try {
-          settings.events = JSON.parse(settings.events);
-        } catch (e) {
-          settings.events = {
-            monitorDown: true,
-            monitorUp: true,
-            incidentCreated: true,
-            incidentUpdated: true,
-          };
-        }
-      }
+      settings = { ...settings, _id: settings.id };
     }
 
     res.json({ success: true, settings });
@@ -1851,70 +936,22 @@ router.get('/api/notification-settings', async (req, res) => {
   }
 });
 
-// Update notification settings
 router.put('/api/notification-settings', async (req, res) => {
   try {
-    const db = getDB();
-    const {
-      enabled,
-      discord,
-      events,
-    } = req.body;
+    const prisma = getPrisma();
+    const { enabled, discord, events } = req.body;
 
-    const updateData = {
-      updatedAt: new Date(),
-    };
+    const updateData = {};
+    if (enabled !== undefined) updateData.enabled = enabled === true;
+    if (discord !== undefined) updateData.discord = discord;
+    if (events !== undefined) updateData.events = events;
 
-    if (enabled !== undefined) {
-      updateData.enabled = enabled === true;
-    }
+    await prisma.notificationSettings.upsert({
+      where: { id: 'settings' },
+      update: updateData,
+      create: { id: 'settings', enabled: false, discord: null, events: null, ...updateData },
+    });
 
-    if (discord !== undefined) {
-      updateData.discord = {
-        enabled: discord.enabled === true,
-        webhookUrl: discord.webhookUrl || null,
-        username: discord.username || 'LocalPing',
-        avatarUrl: discord.avatarUrl || null,
-      };
-    }
-
-    if (events !== undefined) {
-      updateData.events = {
-        monitorDown: events.monitorDown !== false,
-        monitorUp: events.monitorUp !== false,
-        incidentCreated: events.incidentCreated !== false,
-        incidentUpdated: events.incidentUpdated !== false,
-      };
-    }
-
-    const existing = await db.collection('notificationSettings').findOne({ _id: 'settings' });
-
-    if (existing) {
-      await db.collection('notificationSettings').updateOne(
-        { _id: 'settings' },
-        { $set: updateData }
-      );
-    } else {
-      await db.collection('notificationSettings').insertOne({
-        _id: 'settings',
-        enabled: enabled !== undefined ? enabled === true : false,
-        discord: discord || {
-          enabled: false,
-          webhookUrl: null,
-          username: 'LocalPing',
-          avatarUrl: null,
-        },
-        events: events || {
-          monitorDown: true,
-          monitorUp: true,
-          incidentCreated: true,
-          incidentUpdated: true,
-        },
-        ...updateData,
-      });
-    }
-
-    // Invalidate notification service cache
     const notificationService = require('../services/notificationService');
     notificationService.invalidateCache();
 
@@ -1924,7 +961,6 @@ router.put('/api/notification-settings', async (req, res) => {
   }
 });
 
-// Test notification
 router.post('/api/notification-settings/test', async (req, res) => {
   try {
     const { provider = 'discord' } = req.body;
@@ -1941,66 +977,28 @@ router.post('/api/notification-settings/test', async (req, res) => {
   }
 });
 
-// ============ BACKUP/EXPORT ROUTES ============
-
-// Export data
+// ============ BACKUP/EXPORT ============
 router.post('/api/backup/export', async (req, res) => {
   try {
     const backupService = require('../services/backupService');
-    const {
-      full,
-      monitors,
-      incidents,
-      posts,
-      dataPoints,
-      actions,
-      alerts,
-      settings,
-      favicons,
-    } = req.body;
-
-    const exportData = await backupService.exportData({
-      full: full === true,
-      monitors: monitors === true,
-      incidents: incidents === true,
-      posts: posts === true,
-      dataPoints: dataPoints === true,
-      actions: actions === true,
-      alerts: alerts === true,
-      settings: settings === true,
-      favicons: favicons === true,
-    });
-
-    res.json({
-      success: true,
-      data: exportData,
-    });
+    const exportData = await backupService.exportData(req.body);
+    res.json({ success: true, data: exportData });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Import data
 router.post('/api/backup/import', async (req, res) => {
   try {
     const backupService = require('../services/backupService');
     const { importData, overwrite } = req.body;
 
-    if (!importData || !importData.data) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid import data format',
-      });
+    if (!importData?.data) {
+      return res.status(400).json({ success: false, error: 'Invalid import data format' });
     }
 
-    const results = await backupService.importData(importData, {
-      overwrite: overwrite === true,
-    });
-
-    res.json({
-      success: true,
-      results,
-    });
+    const results = await backupService.importData(importData, { overwrite: overwrite === true });
+    res.json({ success: true, results });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

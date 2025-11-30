@@ -17,7 +17,11 @@
     "test:coverage": "jest --coverage",
     "test:backup": "jest __tests__/services/backupService.test.js",
     "test:backup:watch": "jest __tests__/services/backupService.test.js --watch",
-    "verify:ping": "node scripts/verify-ping-data.js"
+    "verify:ping": "node scripts/verify-ping-data.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio",
+    "postinstall": "prisma generate"
   },
   "keywords": [
     "uptime",
@@ -32,6 +36,7 @@
     "node": ">=16.0.0"
   },
   "dependencies": {
+    "@prisma/client": "^6.8.2",
     "axios": "^1.13.2",
     "better-sqlite3": "^12.4.5",
     "chalk": "^5.6.2",
@@ -56,6 +61,7 @@
   "devDependencies": {
     "@babel/preset-env": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "prisma": "^6.8.2"
   }
 }

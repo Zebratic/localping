@@ -1,0 +1,205 @@
+// Prisma Schema for LocalPing
+// Run `npx prisma generate` after changes
+// Run `npx prisma db push` to sync with database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Target {
+  id                String   @id @default(uuid()) @map("_id")
+  name              String   @unique
+  host              String
+  protocol          String
+  port              Int?
+  path              String?
+  enabled           Boolean  @default(true)
+  publicVisible     Boolean  @default(true)
+  publicShowDetails Boolean  @default(false)
+  publicShowStatus  Boolean  @default(true)
+  publicShowAppLink Boolean  @default(true)
+  interval          Int      @default(60)
+  retries           Int      @default(0)
+  retryInterval     Int      @default(5)
+  timeout           Int      @default(30)
+  httpMethod        String   @default("GET")
+  statusCodes       String   @default("200-299")
+  maxRedirects      Int      @default(5)
+  ignoreSsl         Boolean  @default(false)
+  upsideDown        Boolean  @default(false)
+  auth              Json?
+  appUrl            String?
+  appIcon           String?
+  position          Int      @default(0)
+  group             String?
+  quickCommands     Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  pingResults PingResult[]
+  alerts      Alert[]
+  statistics  Statistic[]
+  actions     Action[]
+
+  @@map("targets")
+}
+
+model PingResult {
+  id           String   @id @default(uuid()) @map("_id")
+  targetId     String
+  success      Boolean
+  responseTime Int?
+  timestamp    DateTime @default(now())
+  statusCode   Int?
+  error        String?
+  protocol     String?
+
+  target Target @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId])
+  @@index([timestamp])
+  @@map("pingResults")
+}
+
+model Alert {
+  id        String   @id @default(uuid()) @map("_id")
+  targetId  String
+  type      String
+  timestamp DateTime @default(now())
+  message   String?
+
+  target Target @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId])
+  @@index([timestamp])
+  @@map("alerts")
+}
+
+model Statistic {
+  id               String   @id @default(uuid()) @map("_id")
+  targetId         String
+  date             DateTime @db.Date
+  totalPings       Int      @default(0)
+  successfulPings  Int      @default(0)
+  failedPings      Int      @default(0)
+  uptime           Float    @default(0)
+  lastResponseTime Int      @default(0)
+  avgResponseTime  Float    @default(0)
+  minResponseTime  Int?
+  maxResponseTime  Int?
+
+  target Target @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([targetId, date])
+  @@index([targetId])
+  @@index([date])
+  @@map("statistics")
+}
+
+model Incident {
+  id               String    @id @default(uuid()) @map("_id")
+  title            String
+  description      String?
+  severity         String    @default("major")
+  status           String    @default("investigating")
+  affectedServices Json?
+  updates          Json?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@map("incidents")
+}
+
+model EventRule {
+  id                  String   @id @default(uuid()) @map("_id")
+  name                String
+  eventType           String
+  enabled             Boolean  @default(true)
+  conditions          Json
+  incidentTitle       String
+  incidentDescription String
+  incidentSeverity    String   @default("major")
+  incidentStatus      String   @default("investigating")
+  autoResolve         Boolean  @default(false)
+  autoResolveMessage  String?
+  cooldownMinutes     Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("eventRules")
+}
+
+model Action {
+  id        String   @id @default(uuid()) @map("_id")
+  targetId  String
+  name      String
+  type      String
+  command   String?
+  createdAt DateTime @default(now())
+
+  target Target @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([targetId, name])
+  @@index([targetId])
+  @@map("actions")
+}
+
+model Favicon {
+  id        String   @id @default(uuid()) @map("_id")
+  appUrl    String   @unique
+  favicon   String?
+  updatedAt DateTime @updatedAt
+
+  @@map("favicons")
+}
+
+model PublicUISettings {
+  id        String   @id @default("settings") @map("_id")
+  title     String   @default("Homelab")
+  subtitle  String   @default("System Status & Application Dashboard")
+  customCSS String?
+  updatedAt DateTime @updatedAt
+
+  @@map("publicUISettings")
+}
+
+model AdminSettings {
+  id                  String   @id @default("settings") @map("_id")
+  sessionDurationDays Int      @default(30)
+  dataRetentionDays   Int      @default(30)
+  debugLogging        Boolean  @default(false)
+  updatedAt           DateTime @updatedAt
+
+  @@map("adminSettings")
+}
+
+model NotificationSettings {
+  id        String   @id @default("settings") @map("_id")
+  enabled   Boolean  @default(false)
+  discord   Json?
+  events    Json?
+  updatedAt DateTime @updatedAt
+
+  @@map("notificationSettings")
+}
+
+model Post {
+  id        String   @id @default(uuid()) @map("_id")
+  title     String
+  content   String
+  published Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published])
+  @@index([createdAt])
+  @@map("posts")
+}

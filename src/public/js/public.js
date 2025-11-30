@@ -925,8 +925,8 @@ function updateServicesList(targets) {
         
         if (wrapper) wrapper.classList.add('open');
         if (row) row.classList.add('expanded');
-        if (icon) icon.textContent = '▼';
-        
+        if (icon) icon.classList.add('rotated');
+
         // Load details if not already loaded
         const contentEl = document.getElementById(`service-content-${target._id}`);
         if (contentEl && contentEl.innerHTML.includes('Loading details...')) {
@@ -965,7 +965,7 @@ function updateServicesList(targets) {
         // Force open state - don't check, just ensure it's open
         if (wrapper) wrapper.classList.add('open');
         if (row) row.classList.add('expanded');
-        if (icon) icon.textContent = '▼';
+        if (icon) icon.classList.add('rotated');
       } else {
         // Only close if it's not supposed to be expanded
         if (wrapper && wrapper.classList.contains('open')) {
@@ -974,9 +974,7 @@ function updateServicesList(targets) {
         if (row && row.classList.contains('expanded')) {
           row.classList.remove('expanded');
         }
-        if (icon && icon.textContent !== '▶') {
-          icon.textContent = '▶';
-        }
+        if (icon) icon.classList.remove('rotated');
       }
 
       // Reload uptime data
@@ -1036,7 +1034,7 @@ function createServiceElement(target) {
           <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block"></span>
           ${statusText}
         </div>
-        <div class="service-expand-icon expand-icon text-slate-400">${isExpanded ? '▼' : '▶'}</div>
+        <div class="service-expand-icon expand-icon text-slate-400${isExpanded ? ' rotated' : ''}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></div>
       </div>
 
       <div class="service-details-wrapper" id="details-wrapper-${target._id}">
@@ -1115,7 +1113,7 @@ function toggleServiceExpand(serviceId) {
       row.classList.remove('expanded');
     }
     if (icon) {
-      icon.textContent = '▶';
+      icon.classList.remove('rotated');
     }
   } else {
     // Close previous expanded service
@@ -1131,7 +1129,7 @@ function toggleServiceExpand(serviceId) {
         prevRow.classList.remove('expanded');
       }
       if (prevIcon) {
-        prevIcon.textContent = '▶';
+        prevIcon.classList.remove('rotated');
       }
     }
 
@@ -1148,7 +1146,7 @@ function toggleServiceExpand(serviceId) {
       row.classList.add('expanded');
     }
     if (icon) {
-      icon.textContent = '▼';
+      icon.classList.add('rotated');
     }
 
     // Load the details

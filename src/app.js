@@ -8,7 +8,7 @@ const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
 const chalk = require('./utils/colors');
 
-const { connectDB, closeDB, getDB } = require('./config/db');
+const { connectDB, disconnectDB, getPrisma } = require('./config/prisma');
 const SQLiteSessionStore = require('./config/sessionStore');
 const monitorService = require('./services/monitorService');
 const gatewayService = require('./services/gatewayService');
@@ -40,8 +40,8 @@ const sessionStore = new SQLiteSessionStore();
 // Helper function to get session duration from database (defaults to 30 days)
 const getSessionDuration = async () => {
   try {
-    const db = getDB();
-    const settings = await db.collection('adminSettings').findOne({ _id: 'settings' });
+    const prisma = getPrisma();
+    const settings = await prisma.adminSettings.findUnique({ where: { id: 'settings' } });
     const days = settings?.sessionDurationDays || 30;
     return days * 24 * 60 * 60 * 1000; // Convert days to milliseconds
   } catch (error) {
@@ -111,13 +111,12 @@ console.log(chalk.cyan('✓ Setup routes loaded'));
 app.use(setupCheckMiddleware);
 
 // Initialize database
-let db = null;
+let prisma = null;
 
 const startServer = async () => {
   try {
-    // Connect to PostgreSQL database
-    db = await connectDB();
-    console.log(chalk.green('✓ Connected to database'));
+    // Connect to PostgreSQL database via Prisma
+    prisma = await connectDB();
 
     // Detect gateway
     await gatewayService.detectAllGateways();
@@ -184,7 +183,7 @@ const shutdown = async (signal) => {
     monitorService.stopAllMonitoring();
     const pingService = require('./services/pingService');
     await pingService.shutdown();
-    await closeDB();
+    await disconnectDB();
     console.log(chalk.green('✓ Server shut down successfully'));
     process.exit(0);
   } catch (error) {

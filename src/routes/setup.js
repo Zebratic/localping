@@ -3,28 +3,21 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const chalk = require('../utils/colors');
-const Database = require('better-sqlite3');
+const { getPrisma } = require('../config/prisma');
 const { isSetupComplete } = require('../middleware/setupCheck');
 
 const router = express.Router();
 
-// Get database instance
-function getDatabase() {
-  const dbPath = path.join(process.cwd(), 'data', 'localping.db');
-  const db = new Database(dbPath);
-  db.pragma('foreign_keys = ON');
-  return db;
-}
-
 // Get gateway IP using default-gateway package
 async function detectGateway() {
   try {
-    const { getDefaultGateway } = require('default-gateway');
-    const gateway = await getDefaultGateway();
+    const defaultGateway = require('default-gateway');
+    // The package exports gateway4 and gateway6 for IPv4/IPv6
+    const result = await defaultGateway.gateway4async();
 
-    if (gateway && gateway.gateway) {
-      console.log(chalk.cyan(`Detected gateway: ${gateway.gateway}`));
-      return gateway.gateway;
+    if (result && result.gateway) {
+      console.log(chalk.cyan(`Detected gateway: ${result.gateway}`));
+      return result.gateway;
     }
 
     console.warn(chalk.yellow('Could not detect gateway, no gateway found'));
@@ -132,10 +125,10 @@ router.post('/', async (req, res) => {
     process.env.ADMIN_PASSWORD = adminPassword;
     process.env.ADMIN_USERNAME = adminUsername;
 
-    // Create default monitors in database
-    const db = getDatabase();
-
+    // Create default monitors in database using Prisma
     try {
+      const prisma = getPrisma();
+
       // Create default targets
       const targets = [
         {
@@ -154,39 +147,29 @@ router.post('/', async (req, res) => {
         },
       ];
 
-      const stmt = db.prepare(`
-        INSERT INTO targets (
-          _id, name, host, protocol, port, enabled, interval,
-          timeout, "group", position, createdAt, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-      `);
-
-      targets.forEach((target) => {
+      for (const target of targets) {
         try {
-          stmt.run(
-            uuidv4(),
-            target.name,
-            target.host,
-            target.protocol,
-            null, // port
-            1, // enabled
-            60, // interval
-            30, // timeout
-            target.group,
-            target.position
-          );
+          await prisma.target.create({
+            data: {
+              name: target.name,
+              host: target.host,
+              protocol: target.protocol,
+              group: target.group,
+              position: target.position,
+              enabled: true,
+              interval: 60,
+              timeout: 30,
+            },
+          });
         } catch (err) {
-          // Ignore duplicate key errors
-          if (!err.message.includes('UNIQUE constraint failed')) {
+          // Ignore duplicate key errors (P2002 is Prisma's unique constraint error)
+          if (err.code !== 'P2002') {
             console.error(chalk.yellow(`Warning creating ${target.name}:`), err.message);
           }
         }
-      });
-
-      db.close();
+      }
     } catch (err) {
       console.error(chalk.red('Database error during setup:'), err.message);
-      db.close();
     }
 
     console.log(chalk.green('✓ Setup completed successfully'));

@@ -1,6 +1,5 @@
-const { getDB } = require('../config/db');
+const { getPrisma } = require('../config/prisma');
 const pingService = require('./pingService');
-// sqliteService removed - using PostgreSQL via db.js now
 const chalk = require('../utils/colors');
 const { v4: uuidv4 } = require('uuid');
 
@@ -21,8 +20,8 @@ class MonitorService {
     // Run in background to avoid blocking webserver startup
     setImmediate(async () => {
       try {
-        const db = getDB();
-        const targets = await db.collection('targets').find({ enabled: true }).toArray();
+        const prisma = getPrisma();
+        const targets = await prisma.target.findMany({ where: { enabled: true } });
 
         console.log(chalk.green(`✓ Starting monitor for ${targets.length} targets`));
 
@@ -53,7 +52,8 @@ class MonitorService {
    * Start monitoring a single target
    */
   startTargetMonitor(target) {
-    const targetIdStr = target._id.toString();
+    // Support both Prisma's 'id' and legacy '_id'
+    const targetIdStr = (target.id || target._id).toString();
 
     // Clear existing interval if any
     if (this.intervals.has(targetIdStr)) {
@@ -80,11 +80,15 @@ class MonitorService {
    */
   async pingTarget(target) {
     try {
+      // Support both Prisma's 'id' and legacy '_id'
+      const targetId = target.id || target._id;
+      const targetIdStr = targetId.toString();
+
       // Check debug logging setting (cache it, check every 60 seconds)
       if (!this.debugLoggingChecked || Date.now() - (this.debugLoggingLastCheck || 0) > 60000) {
         try {
-          const db = getDB();
-          const settings = await db.collection('adminSettings').findOne({ _id: 'settings' });
+          const prisma = getPrisma();
+          const settings = await prisma.adminSettings.findUnique({ where: { id: 'settings' } });
           this.debugLogging = settings?.debugLogging === true;
           this.debugLoggingChecked = true;
           this.debugLoggingLastCheck = Date.now();
@@ -96,7 +100,6 @@ class MonitorService {
 
       // Ping is now non-blocking via worker threads
       const result = await pingService.ping(target);
-      const targetIdStr = target._id.toString();
 
       // Debug logging
       if (this.debugLogging) {
@@ -150,14 +153,20 @@ class MonitorService {
       // Defer database operations to next tick to avoid blocking
       setImmediate(async () => {
         try {
-          const db = getDB();
+          const prisma = getPrisma();
           const timestamp = new Date();
 
           // Store ping result in database (non-blocking)
-          db.collection('pingResults').insertOne({
-            targetId: target._id,
-            ...result,
-            timestamp,
+          prisma.pingResult.create({
+            data: {
+              targetId: targetId,
+              success: result.success,
+              responseTime: result.responseTime || null,
+              timestamp,
+              statusCode: result.statusCode || null,
+              error: result.error || null,
+              protocol: result.protocol || null,
+            },
           }).then(() => {
             // Debug logging for successful DB write
             if (this.debugLogging) {
@@ -168,8 +177,6 @@ class MonitorService {
             console.error(chalk.red(`✗ DB write error for ${target.name}:`), err.message);
             console.error(chalk.gray('  Error details:'), err);
           });
-
-          // Ping results are stored via db.collection('pingResults').insertOne() above
 
           // Update statistics (non-blocking)
           this.updateStatistics(target, result).then(() => {
@@ -204,7 +211,7 @@ class MonitorService {
               try {
                 const eventDetectionService = require('./eventDetectionService');
                 await eventDetectionService.evaluateRules({
-                  targetId: target._id.toString(),
+                  targetId: targetIdStr,
                   target: target,
                   status: newStatus,
                   responseTime: result.responseTime,
@@ -234,22 +241,26 @@ class MonitorService {
    * Handle target going down
    */
   async handleTargetDown(target, responseTime = null) {
-    const db = getDB();
+    const prisma = getPrisma();
+    const targetId = target.id || target._id;
+    const targetIdStr = targetId.toString();
     const now = Date.now();
-    const lastAlertTime = this.lastAlertTime.get(target._id.toString()) || 0;
+    const lastAlertTime = this.lastAlertTime.get(targetIdStr) || 0;
     const alertCooldown = (process.env.ALERT_COOLDOWN || 300) * 1000; // 5 minutes default
 
     // Create alert
-    await db.collection('alerts').insertOne({
-      targetId: target._id,
-      type: 'down',
-      timestamp: new Date(),
-      message: `${target.name} is DOWN (${target.host} - ${target.protocol})`,
+    await prisma.alert.create({
+      data: {
+        targetId: targetId,
+        type: 'down',
+        timestamp: new Date(),
+        message: `${target.name} is DOWN (${target.host} - ${target.protocol})`,
+      },
     });
 
     // Log alert if cooldown passed
     if (now - lastAlertTime > alertCooldown) {
-      this.lastAlertTime.set(target._id.toString(), now);
+      this.lastAlertTime.set(targetIdStr, now);
       console.log(chalk.red(`✗ ${target.name} is DOWN`));
     }
 
@@ -271,14 +282,17 @@ class MonitorService {
    * Handle target coming back up
    */
   async handleTargetUp(target, responseTime = null) {
-    const db = getDB();
+    const prisma = getPrisma();
+    const targetId = target.id || target._id;
 
     // Create alert
-    await db.collection('alerts').insertOne({
-      targetId: target._id,
-      type: 'up',
-      timestamp: new Date(),
-      message: `${target.name} is UP (${target.host} - ${target.protocol})`,
+    await prisma.alert.create({
+      data: {
+        targetId: targetId,
+        type: 'up',
+        timestamp: new Date(),
+        message: `${target.name} is UP (${target.host} - ${target.protocol})`,
+      },
     });
 
     // Log recovery
@@ -303,78 +317,49 @@ class MonitorService {
    */
   async updateStatistics(target, pingResult) {
     try {
-      const db = getDB();
+      const prisma = getPrisma();
+      const targetId = target.id || target._id;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Try to update first (most common case)
-      const stats = await db.collection('statistics').findOne({
-        targetId: target._id,
-        date: today,
+      // Use upsert for atomic update or insert
+      const stats = await prisma.statistic.findUnique({
+        where: {
+          targetId_date: {
+            targetId: targetId,
+            date: today,
+          },
+        },
       });
 
       if (stats) {
         // Update existing stats
-        const updateData = {
-          totalPings: stats.totalPings + 1,
-          successfulPings: pingResult.success ? stats.successfulPings + 1 : stats.successfulPings,
-          failedPings: !pingResult.success ? stats.failedPings + 1 : stats.failedPings,
-          uptime: ((pingResult.success ? stats.successfulPings + 1 : stats.successfulPings) / (stats.totalPings + 1)) * 100,
-          lastResponseTime: pingResult.responseTime || 0,
-          avgResponseTime:
-            (stats.avgResponseTime * stats.totalPings + (pingResult.responseTime || 0)) /
-            (stats.totalPings + 1),
-        };
+        const newTotalPings = stats.totalPings + 1;
+        const newSuccessfulPings = pingResult.success ? stats.successfulPings + 1 : stats.successfulPings;
+        const newFailedPings = !pingResult.success ? stats.failedPings + 1 : stats.failedPings;
 
-        const result = await db.collection('statistics').updateOne(
-          { targetId: target._id, date: today },
-          { $set: updateData }
-        );
-
-        // If update didn't modify any rows, try insert (race condition)
-        if (result.modifiedCount === 0) {
-          try {
-            await db.collection('statistics').insertOne({
-              targetId: target._id,
+        await prisma.statistic.update({
+          where: {
+            targetId_date: {
+              targetId: targetId,
               date: today,
-              totalPings: 1,
-              successfulPings: pingResult.success ? 1 : 0,
-              failedPings: pingResult.success ? 0 : 1,
-              uptime: pingResult.success ? 100 : 0,
-              lastResponseTime: pingResult.responseTime || 0,
-              avgResponseTime: pingResult.responseTime || 0,
-            });
-          } catch (insertError) {
-            // If insert also fails, another process inserted - retry update
-            if (insertError.message && insertError.message.includes('UNIQUE constraint')) {
-              const retryStats = await db.collection('statistics').findOne({
-                targetId: target._id,
-                date: today,
-              });
-              if (retryStats) {
-                const retryUpdateData = {
-                  totalPings: retryStats.totalPings + 1,
-                  successfulPings: pingResult.success ? retryStats.successfulPings + 1 : retryStats.successfulPings,
-                  failedPings: !pingResult.success ? retryStats.failedPings + 1 : retryStats.failedPings,
-                  uptime: ((pingResult.success ? retryStats.successfulPings + 1 : retryStats.successfulPings) / (retryStats.totalPings + 1)) * 100,
-                  lastResponseTime: pingResult.responseTime || 0,
-                  avgResponseTime:
-                    (retryStats.avgResponseTime * retryStats.totalPings + (pingResult.responseTime || 0)) /
-                    (retryStats.totalPings + 1),
-                };
-                await db.collection('statistics').updateOne(
-                  { targetId: target._id, date: today },
-                  { $set: retryUpdateData }
-                );
-              }
-            }
-          }
-        }
+            },
+          },
+          data: {
+            totalPings: newTotalPings,
+            successfulPings: newSuccessfulPings,
+            failedPings: newFailedPings,
+            uptime: (newSuccessfulPings / newTotalPings) * 100,
+            lastResponseTime: pingResult.responseTime || 0,
+            avgResponseTime:
+              (stats.avgResponseTime * stats.totalPings + (pingResult.responseTime || 0)) / newTotalPings,
+          },
+        });
       } else {
-        // No stats exist, try to insert
-        try {
-          await db.collection('statistics').insertOne({
-            targetId: target._id,
+        // Create new stats
+        await prisma.statistic.create({
+          data: {
+            targetId: targetId,
             date: today,
             totalPings: 1,
             successfulPings: pingResult.success ? 1 : 0,
@@ -382,35 +367,55 @@ class MonitorService {
             uptime: pingResult.success ? 100 : 0,
             lastResponseTime: pingResult.responseTime || 0,
             avgResponseTime: pingResult.responseTime || 0,
-          });
-        } catch (insertError) {
-          // If insert failed due to race condition, retry with update
-          if (insertError.message && insertError.message.includes('UNIQUE constraint')) {
-            const existingStats = await db.collection('statistics').findOne({
-              targetId: target._id,
-              date: today,
-            });
-            if (existingStats) {
-              const updateData = {
-                totalPings: existingStats.totalPings + 1,
-                successfulPings: pingResult.success ? existingStats.successfulPings + 1 : existingStats.successfulPings,
-                failedPings: !pingResult.success ? existingStats.failedPings + 1 : existingStats.failedPings,
-                uptime: ((pingResult.success ? existingStats.successfulPings + 1 : existingStats.successfulPings) / (existingStats.totalPings + 1)) * 100,
-                lastResponseTime: pingResult.responseTime || 0,
-                avgResponseTime:
-                  (existingStats.avgResponseTime * existingStats.totalPings + (pingResult.responseTime || 0)) /
-                  (existingStats.totalPings + 1),
-              };
-              await db.collection('statistics').updateOne(
-                { targetId: target._id, date: today },
-                { $set: updateData }
-              );
-            }
-          }
-        }
+          },
+        });
       }
     } catch (error) {
-      // Silently ignore statistics errors to avoid log spam
+      // Handle unique constraint violation (race condition) - retry
+      if (error.code === 'P2002') {
+        try {
+          const prisma = getPrisma();
+          const targetId = target.id || target._id;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const existingStats = await prisma.statistic.findUnique({
+            where: {
+              targetId_date: {
+                targetId: targetId,
+                date: today,
+              },
+            },
+          });
+
+          if (existingStats) {
+            const newTotalPings = existingStats.totalPings + 1;
+            const newSuccessfulPings = pingResult.success ? existingStats.successfulPings + 1 : existingStats.successfulPings;
+            const newFailedPings = !pingResult.success ? existingStats.failedPings + 1 : existingStats.failedPings;
+
+            await prisma.statistic.update({
+              where: {
+                targetId_date: {
+                  targetId: targetId,
+                  date: today,
+                },
+              },
+              data: {
+                totalPings: newTotalPings,
+                successfulPings: newSuccessfulPings,
+                failedPings: newFailedPings,
+                uptime: (newSuccessfulPings / newTotalPings) * 100,
+                lastResponseTime: pingResult.responseTime || 0,
+                avgResponseTime:
+                  (existingStats.avgResponseTime * existingStats.totalPings + (pingResult.responseTime || 0)) / newTotalPings,
+              },
+            });
+          }
+        } catch (retryError) {
+          // Silently ignore retry errors
+        }
+      }
+      // Silently ignore other statistics errors to avoid log spam
       // They're not critical for core functionality
     }
   }

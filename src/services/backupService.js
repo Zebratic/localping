@@ -1,5 +1,4 @@
-const { getDB } = require('../config/db');
-// sqliteService removed - using PostgreSQL via db.js now
+const { getPrisma } = require('../config/prisma');
 const path = require('path');
 const fs = require('fs');
 
@@ -18,8 +17,8 @@ const fs = require('fs');
  * @returns {Promise<Object>} Exported data
  */
 async function exportData(options = {}) {
-  const db = getDB();
-  const exportData = {
+  const prisma = getPrisma();
+  const exportResult = {
     version: '1.0.0',
     exportDate: new Date().toISOString(),
     data: {}
@@ -39,77 +38,67 @@ async function exportData(options = {}) {
 
   // Export monitors (targets)
   if (options.monitors) {
-    const targets = await db.collection('targets').find({}).toArray();
-    // Parse JSON fields
-    exportData.data.targets = targets.map(target => {
-      const parsed = { ...target };
-      if (parsed.auth && typeof parsed.auth === 'string') {
-        try {
-          parsed.auth = JSON.parse(parsed.auth);
-        } catch (e) {
-          parsed.auth = null;
-        }
-      }
-      if (parsed.quickCommands && typeof parsed.quickCommands === 'string') {
-        try {
-          parsed.quickCommands = JSON.parse(parsed.quickCommands);
-        } catch (e) {
-          parsed.quickCommands = [];
-        }
-      }
-      return parsed;
-    });
+    const targets = await prisma.target.findMany();
+    // Map id to _id for compatibility
+    exportResult.data.targets = targets.map(target => ({
+      ...target,
+      _id: target.id,
+    }));
   }
 
   // Export incidents
   if (options.incidents) {
-    exportData.data.incidents = await db.collection('incidents').find({}).toArray();
+    const incidents = await prisma.incident.findMany();
+    exportResult.data.incidents = incidents.map(inc => ({ ...inc, _id: inc.id }));
   }
 
   // Export posts
   if (options.posts) {
-    exportData.data.posts = await db.collection('posts').find({}).toArray();
+    const posts = await prisma.post.findMany();
+    exportResult.data.posts = posts.map(post => ({ ...post, _id: post.id }));
   }
 
   // Export data points (ping results and statistics)
   if (options.dataPoints) {
-    // Export pingResults from main DB
-    exportData.data.pingResults = await db.collection('pingResults').find({}).toArray();
-    
-    // Export statistics from main DB
-    exportData.data.statistics = await db.collection('statistics').find({}).toArray();
-    
-    // Export pingResults from PostgreSQL (legacy format name for compatibility)
-    exportData.data.ping_results = await db.collection('pingResults').find({}).toArray();
-    
-    // Export statistics as daily_stats (legacy format name for compatibility)
-    exportData.data.daily_stats = await db.collection('statistics').find({}).toArray();
+    const pingResults = await prisma.pingResult.findMany();
+    const statistics = await prisma.statistic.findMany();
+
+    // Map id to _id for compatibility
+    exportResult.data.pingResults = pingResults.map(pr => ({ ...pr, _id: pr.id }));
+    exportResult.data.statistics = statistics.map(s => ({ ...s, _id: s.id }));
+
+    // Legacy format names for compatibility
+    exportResult.data.ping_results = exportResult.data.pingResults;
+    exportResult.data.daily_stats = exportResult.data.statistics;
   }
 
   // Export actions
   if (options.actions) {
-    exportData.data.actions = await db.collection('actions').find({}).toArray();
+    const actions = await prisma.action.findMany();
+    exportResult.data.actions = actions.map(a => ({ ...a, _id: a.id }));
   }
 
   // Export alerts
   if (options.alerts) {
-    exportData.data.alerts = await db.collection('alerts').find({}).toArray();
+    const alerts = await prisma.alert.findMany();
+    exportResult.data.alerts = alerts.map(a => ({ ...a, _id: a.id }));
   }
 
   // Export settings
   if (options.settings) {
-    const adminSettings = await db.collection('adminSettings').findOne({ _id: 'settings' });
-    const publicUISettings = await db.collection('publicUISettings').findOne({ _id: 'settings' });
-    exportData.data.adminSettings = adminSettings || null;
-    exportData.data.publicUISettings = publicUISettings || null;
+    const adminSettings = await prisma.adminSettings.findUnique({ where: { id: 'settings' } });
+    const publicUISettings = await prisma.publicUISettings.findUnique({ where: { id: 'settings' } });
+    exportResult.data.adminSettings = adminSettings ? { ...adminSettings, _id: adminSettings.id } : null;
+    exportResult.data.publicUISettings = publicUISettings ? { ...publicUISettings, _id: publicUISettings.id } : null;
   }
 
   // Export favicons
   if (options.favicons) {
-    exportData.data.favicons = await db.collection('favicons').find({}).toArray();
+    const favicons = await prisma.favicon.findMany();
+    exportResult.data.favicons = favicons.map(f => ({ ...f, _id: f.id }));
   }
 
-  return exportData;
+  return exportResult;
 }
 
 /**
@@ -119,8 +108,8 @@ async function exportData(options = {}) {
  * @param {boolean} options.overwrite - Overwrite existing data
  * @returns {Promise<Object>} Import result
  */
-async function importData(importData, options = {}) {
-  const db = getDB();
+async function importData(importDataObj, options = {}) {
+  const prisma = getPrisma();
   const results = {
     imported: {},
     errors: []
@@ -128,71 +117,60 @@ async function importData(importData, options = {}) {
 
   try {
     // Validate import data structure
-    if (!importData.data || typeof importData.data !== 'object') {
+    if (!importDataObj.data || typeof importDataObj.data !== 'object') {
       throw new Error('Invalid import data format');
     }
 
     // Import targets (monitors)
-    if (importData.data.targets && Array.isArray(importData.data.targets)) {
+    if (importDataObj.data.targets && Array.isArray(importDataObj.data.targets)) {
       try {
         let imported = 0;
         let updated = 0;
         let skipped = 0;
-        for (const target of importData.data.targets) {
+        for (const target of importDataObj.data.targets) {
           try {
-            // Check if target exists by _id
-            const existingById = await db.collection('targets').findOne({ _id: target._id });
+            const targetId = target.id || target._id;
+            // Check if target exists by id
+            const existingById = await prisma.target.findUnique({ where: { id: targetId } });
             if (existingById) {
               if (options.overwrite) {
-                // Convert auth and quickCommands back to JSON strings if needed
-                const updateData = { ...target };
-                if (updateData.auth && typeof updateData.auth === 'object') {
-                  updateData.auth = JSON.stringify(updateData.auth);
-                }
-                if (updateData.quickCommands && Array.isArray(updateData.quickCommands)) {
-                  updateData.quickCommands = JSON.stringify(updateData.quickCommands);
-                }
-                await db.collection('targets').updateOne({ _id: target._id }, { $set: updateData });
+                const { id, _id, ...updateData } = target;
+                await prisma.target.update({
+                  where: { id: targetId },
+                  data: updateData,
+                });
                 updated++;
               } else {
                 skipped++;
               }
             } else {
               // Check if target with same name exists (UNIQUE constraint on name)
-              const existingByName = await db.collection('targets').findOne({ name: target.name });
+              const existingByName = await prisma.target.findUnique({ where: { name: target.name } });
               if (existingByName) {
                 if (options.overwrite) {
-                  // Update the existing target with the same name
-                  const updateData = { ...target };
-                  if (updateData.auth && typeof updateData.auth === 'object') {
-                    updateData.auth = JSON.stringify(updateData.auth);
-                  }
-                  if (updateData.quickCommands && Array.isArray(updateData.quickCommands)) {
-                    updateData.quickCommands = JSON.stringify(updateData.quickCommands);
-                  }
-                  // Keep the existing _id to avoid conflicts
-                  updateData._id = existingByName._id;
-                  await db.collection('targets').updateOne({ _id: existingByName._id }, { $set: updateData });
+                  const { id, _id, ...updateData } = target;
+                  await prisma.target.update({
+                    where: { id: existingByName.id },
+                    data: updateData,
+                  });
                   updated++;
                 } else {
                   skipped++;
                 }
               } else {
-                // Convert auth and quickCommands to JSON strings if needed
-                const insertData = { ...target };
-                if (insertData.auth && typeof insertData.auth === 'object') {
-                  insertData.auth = JSON.stringify(insertData.auth);
-                }
-                if (insertData.quickCommands && Array.isArray(insertData.quickCommands)) {
-                  insertData.quickCommands = JSON.stringify(insertData.quickCommands);
-                }
-                await db.collection('targets').insertOne(insertData);
+                const { _id, ...insertData } = target;
+                await prisma.target.create({
+                  data: {
+                    id: targetId,
+                    ...insertData,
+                  },
+                });
                 imported++;
               }
             }
           } catch (error) {
             // Handle individual target errors (e.g., UNIQUE constraint)
-            if (error.message.includes('UNIQUE constraint')) {
+            if (error.code === 'P2002') {
               skipped++;
             } else {
               throw error;
@@ -206,19 +184,22 @@ async function importData(importData, options = {}) {
     }
 
     // Import incidents
-    if (importData.data.incidents && Array.isArray(importData.data.incidents)) {
+    if (importDataObj.data.incidents && Array.isArray(importDataObj.data.incidents)) {
       try {
         let imported = 0;
         let updated = 0;
-        for (const incident of importData.data.incidents) {
-          const existing = await db.collection('incidents').findOne({ _id: incident._id });
+        for (const incident of importDataObj.data.incidents) {
+          const incidentId = incident.id || incident._id;
+          const existing = await prisma.incident.findUnique({ where: { id: incidentId } });
           if (existing) {
             if (options.overwrite) {
-              await db.collection('incidents').updateOne({ _id: incident._id }, { $set: incident });
+              const { id, _id, ...updateData } = incident;
+              await prisma.incident.update({ where: { id: incidentId }, data: updateData });
               updated++;
             }
           } else {
-            await db.collection('incidents').insertOne(incident);
+            const { _id, ...insertData } = incident;
+            await prisma.incident.create({ data: { id: incidentId, ...insertData } });
             imported++;
           }
         }
@@ -229,19 +210,22 @@ async function importData(importData, options = {}) {
     }
 
     // Import posts
-    if (importData.data.posts && Array.isArray(importData.data.posts)) {
+    if (importDataObj.data.posts && Array.isArray(importDataObj.data.posts)) {
       try {
         let imported = 0;
         let updated = 0;
-        for (const post of importData.data.posts) {
-          const existing = await db.collection('posts').findOne({ _id: post._id });
+        for (const post of importDataObj.data.posts) {
+          const postId = post.id || post._id;
+          const existing = await prisma.post.findUnique({ where: { id: postId } });
           if (existing) {
             if (options.overwrite) {
-              await db.collection('posts').updateOne({ _id: post._id }, { $set: post });
+              const { id, _id, ...updateData } = post;
+              await prisma.post.update({ where: { id: postId }, data: updateData });
               updated++;
             }
           } else {
-            await db.collection('posts').insertOne(post);
+            const { _id, ...insertData } = post;
+            await prisma.post.create({ data: { id: postId, ...insertData } });
             imported++;
           }
         }
@@ -252,13 +236,15 @@ async function importData(importData, options = {}) {
     }
 
     // Import data points
-    if (importData.data.pingResults && Array.isArray(importData.data.pingResults)) {
+    if (importDataObj.data.pingResults && Array.isArray(importDataObj.data.pingResults)) {
       try {
         let imported = 0;
-        for (const pingResult of importData.data.pingResults) {
-          const existing = await db.collection('pingResults').findOne({ _id: pingResult._id });
+        for (const pingResult of importDataObj.data.pingResults) {
+          const pingResultId = pingResult.id || pingResult._id;
+          const existing = await prisma.pingResult.findUnique({ where: { id: pingResultId } });
           if (!existing) {
-            await db.collection('pingResults').insertOne(pingResult);
+            const { _id, ...insertData } = pingResult;
+            await prisma.pingResult.create({ data: { id: pingResultId, ...insertData } });
             imported++;
           }
         }
@@ -268,13 +254,15 @@ async function importData(importData, options = {}) {
       }
     }
 
-    if (importData.data.statistics && Array.isArray(importData.data.statistics)) {
+    if (importDataObj.data.statistics && Array.isArray(importDataObj.data.statistics)) {
       try {
         let imported = 0;
-        for (const stat of importData.data.statistics) {
-          const existing = await db.collection('statistics').findOne({ _id: stat._id });
+        for (const stat of importDataObj.data.statistics) {
+          const statId = stat.id || stat._id;
+          const existing = await prisma.statistic.findUnique({ where: { id: statId } });
           if (!existing) {
-            await db.collection('statistics').insertOne(stat);
+            const { _id, ...insertData } = stat;
+            await prisma.statistic.create({ data: { id: statId, ...insertData } });
             imported++;
           }
         }
@@ -285,20 +273,21 @@ async function importData(importData, options = {}) {
     }
 
     // Import ping_results (legacy format) - convert to pingResults
-    if (importData.data.ping_results && Array.isArray(importData.data.ping_results)) {
+    if (importDataObj.data.ping_results && Array.isArray(importDataObj.data.ping_results)) {
       try {
         let imported = 0;
-        for (const pingResult of importData.data.ping_results) {
+        for (const pingResult of importDataObj.data.ping_results) {
           try {
-            await db.collection('pingResults').insertOne({
-              _id: require('uuid').v4(),
-              targetId: pingResult.targetId,
-              success: pingResult.success === 1 || pingResult.success === true,
-              responseTime: pingResult.responseTime || null,
-              timestamp: pingResult.timestamp ? new Date(pingResult.timestamp) : new Date(),
-              statusCode: pingResult.statusCode || null,
-              error: pingResult.error || null,
-              protocol: pingResult.protocol || null
+            await prisma.pingResult.create({
+              data: {
+                targetId: pingResult.targetId,
+                success: pingResult.success === 1 || pingResult.success === true,
+                responseTime: pingResult.responseTime || null,
+                timestamp: pingResult.timestamp ? new Date(pingResult.timestamp) : new Date(),
+                statusCode: pingResult.statusCode || null,
+                error: pingResult.error || null,
+                protocol: pingResult.protocol || null,
+              },
             });
             imported++;
           } catch (error) {
@@ -312,23 +301,24 @@ async function importData(importData, options = {}) {
     }
 
     // Import daily_stats (legacy format) - convert to statistics
-    if (importData.data.daily_stats && Array.isArray(importData.data.daily_stats)) {
+    if (importDataObj.data.daily_stats && Array.isArray(importDataObj.data.daily_stats)) {
       try {
         let imported = 0;
-        for (const stat of importData.data.daily_stats) {
+        for (const stat of importDataObj.data.daily_stats) {
           try {
-            await db.collection('statistics').insertOne({
-              _id: require('uuid').v4(),
-              targetId: stat.targetId,
-              date: stat.date ? new Date(stat.date) : new Date(),
-              totalPings: stat.totalPings || 0,
-              successfulPings: stat.successfulPings || 0,
-              failedPings: (stat.totalPings || 0) - (stat.successfulPings || 0),
-              uptime: stat.totalPings > 0 ? (stat.successfulPings / stat.totalPings) * 100 : 0,
-              lastResponseTime: null,
-              avgResponseTime: stat.avgResponseTime || 0,
-              minResponseTime: stat.minResponseTime || null,
-              maxResponseTime: stat.maxResponseTime || null
+            await prisma.statistic.create({
+              data: {
+                targetId: stat.targetId,
+                date: stat.date ? new Date(stat.date) : new Date(),
+                totalPings: stat.totalPings || 0,
+                successfulPings: stat.successfulPings || 0,
+                failedPings: (stat.totalPings || 0) - (stat.successfulPings || 0),
+                uptime: stat.totalPings > 0 ? (stat.successfulPings / stat.totalPings) * 100 : 0,
+                lastResponseTime: 0,
+                avgResponseTime: stat.avgResponseTime || 0,
+                minResponseTime: stat.minResponseTime || null,
+                maxResponseTime: stat.maxResponseTime || null,
+              },
             });
             imported++;
           } catch (error) {
@@ -342,19 +332,22 @@ async function importData(importData, options = {}) {
     }
 
     // Import actions
-    if (importData.data.actions && Array.isArray(importData.data.actions)) {
+    if (importDataObj.data.actions && Array.isArray(importDataObj.data.actions)) {
       try {
         let imported = 0;
         let updated = 0;
-        for (const action of importData.data.actions) {
-          const existing = await db.collection('actions').findOne({ _id: action._id });
+        for (const action of importDataObj.data.actions) {
+          const actionId = action.id || action._id;
+          const existing = await prisma.action.findUnique({ where: { id: actionId } });
           if (existing) {
             if (options.overwrite) {
-              await db.collection('actions').updateOne({ _id: action._id }, { $set: action });
+              const { id, _id, ...updateData } = action;
+              await prisma.action.update({ where: { id: actionId }, data: updateData });
               updated++;
             }
           } else {
-            await db.collection('actions').insertOne(action);
+            const { _id, ...insertData } = action;
+            await prisma.action.create({ data: { id: actionId, ...insertData } });
             imported++;
           }
         }
@@ -365,13 +358,15 @@ async function importData(importData, options = {}) {
     }
 
     // Import alerts
-    if (importData.data.alerts && Array.isArray(importData.data.alerts)) {
+    if (importDataObj.data.alerts && Array.isArray(importDataObj.data.alerts)) {
       try {
         let imported = 0;
-        for (const alert of importData.data.alerts) {
-          const existing = await db.collection('alerts').findOne({ _id: alert._id });
+        for (const alert of importDataObj.data.alerts) {
+          const alertId = alert.id || alert._id;
+          const existing = await prisma.alert.findUnique({ where: { id: alertId } });
           if (!existing) {
-            await db.collection('alerts').insertOne(alert);
+            const { _id, ...insertData } = alert;
+            await prisma.alert.create({ data: { id: alertId, ...insertData } });
             imported++;
           }
         }
@@ -382,16 +377,17 @@ async function importData(importData, options = {}) {
     }
 
     // Import settings
-    if (importData.data.adminSettings) {
+    if (importDataObj.data.adminSettings) {
       try {
-        const existing = await db.collection('adminSettings').findOne({ _id: 'settings' });
+        const existing = await prisma.adminSettings.findUnique({ where: { id: 'settings' } });
+        const { id, _id, ...settingsData } = importDataObj.data.adminSettings;
         if (existing) {
           if (options.overwrite) {
-            await db.collection('adminSettings').updateOne({ _id: 'settings' }, { $set: importData.data.adminSettings });
+            await prisma.adminSettings.update({ where: { id: 'settings' }, data: settingsData });
             results.imported.adminSettings = { updated: 1 };
           }
         } else {
-          await db.collection('adminSettings').insertOne(importData.data.adminSettings);
+          await prisma.adminSettings.create({ data: { id: 'settings', ...settingsData } });
           results.imported.adminSettings = { imported: 1 };
         }
       } catch (error) {
@@ -399,16 +395,17 @@ async function importData(importData, options = {}) {
       }
     }
 
-    if (importData.data.publicUISettings) {
+    if (importDataObj.data.publicUISettings) {
       try {
-        const existing = await db.collection('publicUISettings').findOne({ _id: 'settings' });
+        const existing = await prisma.publicUISettings.findUnique({ where: { id: 'settings' } });
+        const { id, _id, ...settingsData } = importDataObj.data.publicUISettings;
         if (existing) {
           if (options.overwrite) {
-            await db.collection('publicUISettings').updateOne({ _id: 'settings' }, { $set: importData.data.publicUISettings });
+            await prisma.publicUISettings.update({ where: { id: 'settings' }, data: settingsData });
             results.imported.publicUISettings = { updated: 1 };
           }
         } else {
-          await db.collection('publicUISettings').insertOne(importData.data.publicUISettings);
+          await prisma.publicUISettings.create({ data: { id: 'settings', ...settingsData } });
           results.imported.publicUISettings = { imported: 1 };
         }
       } catch (error) {
@@ -417,19 +414,22 @@ async function importData(importData, options = {}) {
     }
 
     // Import favicons
-    if (importData.data.favicons && Array.isArray(importData.data.favicons)) {
+    if (importDataObj.data.favicons && Array.isArray(importDataObj.data.favicons)) {
       try {
         let imported = 0;
         let updated = 0;
-        for (const favicon of importData.data.favicons) {
-          const existing = await db.collection('favicons').findOne({ _id: favicon._id });
+        for (const favicon of importDataObj.data.favicons) {
+          const faviconId = favicon.id || favicon._id;
+          const existing = await prisma.favicon.findUnique({ where: { id: faviconId } });
           if (existing) {
             if (options.overwrite) {
-              await db.collection('favicons').updateOne({ _id: favicon._id }, { $set: favicon });
+              const { id, _id, ...updateData } = favicon;
+              await prisma.favicon.update({ where: { id: faviconId }, data: updateData });
               updated++;
             }
           } else {
-            await db.collection('favicons').insertOne(favicon);
+            const { _id, ...insertData } = favicon;
+            await prisma.favicon.create({ data: { id: faviconId, ...insertData } });
             imported++;
           }
         }
@@ -449,4 +449,3 @@ module.exports = {
   exportData,
   importData,
 };
-

@@ -1,23 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const { getDB } = require('../config/db');
+const { getPrisma } = require('../config/prisma');
 const monitorService = require('../services/monitorService');
 const faviconService = require('../services/faviconService');
 
 // Public status page
 router.get('/', async (req, res) => {
   try {
-    const db = getDB();
-    let settings = await db.collection('publicUISettings').findOne({ _id: 'settings' });
+    const prisma = getPrisma();
+    let settings = await prisma.publicUISettings.findUnique({ where: { id: 'settings' } });
 
     if (!settings) {
-      // Use defaults if not found
-      settings = {
-        title: 'Homelab',
-        subtitle: 'System Status & Application Dashboard',
-        customCSS: null,
-      };
+      settings = { title: 'Homelab', subtitle: 'System Status & Application Dashboard', customCSS: null };
     }
 
     res.render('public/index', {
@@ -26,7 +21,6 @@ router.get('/', async (req, res) => {
       customCSS: settings.customCSS || '',
     });
   } catch (error) {
-    // Fallback to defaults on error
     res.render('public/index', {
       title: 'Homelab',
       subtitle: 'System Status & Application Dashboard',
@@ -38,15 +32,17 @@ router.get('/', async (req, res) => {
 // Public API - Get all targets (read-only)
 router.get('/api/targets', async (req, res) => {
   try {
-    const db = getDB();
-    const targets = await db.collection('targets').find({ enabled: true, publicVisible: true }).toArray();
+    const prisma = getPrisma();
+    const targets = await prisma.target.findMany({
+      where: { enabled: true, publicVisible: true },
+    });
 
     const targetsWithStatus = targets.map((target) => ({
-      _id: target._id,
+      _id: target.id,
       name: target.name,
       host: target.host,
       protocol: target.protocol,
-      currentStatus: monitorService.getTargetStatus(target._id),
+      currentStatus: monitorService.getTargetStatus(target.id),
     }));
 
     res.json({ success: true, targets: targetsWithStatus });
@@ -58,210 +54,116 @@ router.get('/api/targets', async (req, res) => {
 // Public API - Get target statistics (read-only)
 router.get('/api/targets/:id/statistics', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const targetId = req.params.id;
-    const period = req.query.period || (req.query.days ? null : '24h'); // Default to 24h if no period specified
-    const days = parseFloat(req.query.days) || null;
+    const period = req.query.period || '24h';
 
-    // Verify target exists, is enabled, and is publicly visible
-    const target = await db.collection('targets').findOne({
-      _id: targetId,
-      enabled: true,
-      publicVisible: true,
+    const target = await prisma.target.findFirst({
+      where: { id: targetId, enabled: true, publicVisible: true },
     });
 
     if (!target) {
       return res.status(404).json({ success: false, error: 'Target not found' });
     }
 
-    let startDateObj;
+    let startDateObj = new Date();
     let endDateObj = new Date();
-    let intervalMinutes;
-    let maxPoints;
+    let intervalMinutes = 30;
+    let maxPoints = 48;
 
-    // Determine grouping based on period (matching admin route exactly)
     if (period === '1h') {
-      // 1H: 60 data points (one per minute)
-      startDateObj = new Date();
       startDateObj.setHours(startDateObj.getHours() - 1);
       intervalMinutes = 1;
       maxPoints = 60;
     } else if (period === '24h') {
-      // 24H: 48 data points (every 30 minutes)
-      startDateObj = new Date();
       startDateObj.setHours(startDateObj.getHours() - 24);
       intervalMinutes = 30;
       maxPoints = 48;
     } else if (period === '7d') {
-      // 7D: 56 data points (every 3 hours)
-      startDateObj = new Date();
       startDateObj.setDate(startDateObj.getDate() - 7);
-      intervalMinutes = 180; // 3 hours
+      intervalMinutes = 180;
       maxPoints = 56;
     } else if (period === '30d') {
-      // 30D: 60 data points (every 12 hours)
-      startDateObj = new Date();
       startDateObj.setDate(startDateObj.getDate() - 30);
-      intervalMinutes = 720; // 12 hours
+      intervalMinutes = 720;
       maxPoints = 60;
-    } else if (period === 'all') {
-      // ALL: 60 data points spread evenly since monitor creation
-      const firstPingResult = await db.query(`
-        SELECT MIN(timestamp) as first_timestamp
-        FROM "pingResults"
-        WHERE "targetId" = $1
-      `, [targetId]);
-      
-      if (firstPingResult.rows[0] && firstPingResult.rows[0].first_timestamp) {
-        startDateObj = new Date(firstPingResult.rows[0].first_timestamp);
-        const totalSeconds = Math.floor((endDateObj - startDateObj) / 1000);
-        // Calculate interval to get exactly 60 points
-        intervalMinutes = Math.max(1, Math.floor(totalSeconds / 60 / 60));
-        maxPoints = 60;
-      } else {
-        // No data, return empty
-        return res.json({ success: true, statistics: [] });
-      }
-    } else if (days !== null) {
-      // Fallback to days parameter for backward compatibility
-      startDateObj = new Date();
-      startDateObj.setDate(startDateObj.getDate() - days);
-      if (days <= 1) {
-        intervalMinutes = 60;
-        maxPoints = 24;
-      } else {
-        intervalMinutes = 1440; // 1 day
-        maxPoints = days;
-      }
-    } else {
-      // Default to 24h
-      startDateObj = new Date();
-      startDateObj.setHours(startDateObj.getHours() - 24);
-      intervalMinutes = 30;
-      maxPoints = 48;
     }
 
-    // Generate evenly spaced time buckets and aggregate data into them
-    // This ensures we always get the exact number of points requested
     const intervalSeconds = intervalMinutes * 60;
     const startEpoch = Math.floor(startDateObj.getTime() / 1000);
     const endEpoch = Math.floor(endDateObj.getTime() / 1000);
-    
-    // Convert dates to ISO strings for PostgreSQL (matching admin route)
-    const startDateStr = startDateObj.toISOString().replace('T', ' ').substring(0, 19);
-    const endDateStr = endDateObj.toISOString().replace('T', ' ').substring(0, 19);
-    
-    // Generate time buckets using generate_series
-    // Use AT TIME ZONE 'UTC' to ensure bucket_time is in UTC before casting to timestamp
-    const result = await db.query(`
+
+    const result = await prisma.$queryRaw`
       WITH time_buckets AS (
-        SELECT 
-          (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
-        FROM generate_series($2::bigint, $3::bigint, $5::bigint) as bucket_epoch
+        SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
+        FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
         ORDER BY bucket_epoch
-        LIMIT $4
+        LIMIT ${maxPoints}
       )
-      SELECT 
+      SELECT
         time_buckets.bucket_time::text as date,
-        COALESCE(COUNT(pr._id), 0)::integer as "totalPings",
+        COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
         COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
-        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime",
-        MIN(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "minResponseTime",
-        MAX(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::integer ELSE NULL END) as "maxResponseTime"
+        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
       FROM time_buckets
-      LEFT JOIN "pingResults" pr ON 
-        pr."targetId" = $1 
-        AND pr.timestamp >= time_buckets.bucket_time 
-        AND pr.timestamp < time_buckets.bucket_time + ($5 || ' seconds')::interval
+      LEFT JOIN "pingResults" pr ON
+        pr."targetId" = ${targetId}
+        AND pr.timestamp >= time_buckets.bucket_time
+        AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
       GROUP BY time_buckets.bucket_time
       ORDER BY time_buckets.bucket_time ASC
-    `, [targetId, startEpoch, endEpoch, maxPoints, intervalSeconds]);
-    
-    // Get last response time separately (matching admin route format)
-    const lastResponseResult = await db.query(`
-      SELECT "responseTime" FROM "pingResults" 
-      WHERE "targetId" = $1 AND timestamp >= $2::timestamp AND timestamp <= $3::timestamp
-      ORDER BY timestamp DESC LIMIT 1
-    `, [targetId, startDateStr, endDateStr]);
+    `;
 
-    const results = result.rows; // Already in chronological order
-    const lastResponse = lastResponseResult.rows[0] || null;
-
-    const stats = results.map(r => ({
+    const stats = result.map(r => ({
       date: r.date,
-      totalPings: r.totalPings || 0,
-      successfulPings: r.successfulPings || 0,
-      failedPings: (r.totalPings || 0) - (r.successfulPings || 0),
+      totalPings: Number(r.totalPings) || 0,
+      successfulPings: Number(r.successfulPings) || 0,
+      failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),
       uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
-      avgResponseTime: r.avgResponseTime || 0,
-      minResponseTime: r.minResponseTime || null,
-      maxResponseTime: r.maxResponseTime || null,
-      lastResponseTime: lastResponse?.responseTime || 0,
+      avgResponseTime: Number(r.avgResponseTime) || 0,
     }));
 
-    // Get uptime data for 24h and 30d, plus daily stats for blocks
+    // Get uptime data
     const uptime24hStart = new Date();
     uptime24hStart.setDate(uptime24hStart.getDate() - 1);
-    uptime24hStart.setHours(0, 0, 0, 0);
-    
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
-    uptime30dStart.setHours(0, 0, 0, 0);
 
-    // Get 24h uptime
-    const uptime24hResult = await db.query(`
-      SELECT 
-        SUM("totalPings")::bigint as "totalPings",
-        SUM("successfulPings")::bigint as "successfulPings"
-      FROM statistics
-      WHERE "targetId" = $1 AND date >= $2
-    `, [targetId, uptime24hStart]);
-    
-    const uptime24hData = uptime24hResult.rows[0] || { totalPings: 0, successfulPings: 0 };
-    const uptime24h = uptime24hData.totalPings > 0 
-      ? (uptime24hData.successfulPings / uptime24hData.totalPings) * 100 
-      : 0;
+    const dailyStats = await prisma.statistic.findMany({
+      where: { targetId, date: { gte: uptime30dStart } },
+      orderBy: { date: 'asc' },
+    });
 
-    // Get 30d uptime and daily stats
-    const uptime30dResult = await db.query(`
-      SELECT 
-        date::date as date,
-        "totalPings",
-        "successfulPings",
-        "failedPings",
-        uptime
-      FROM statistics
-      WHERE "targetId" = $1 AND date >= $2
-      ORDER BY date ASC
-    `, [targetId, uptime30dStart]);
+    let totalPings24h = 0, successfulPings24h = 0;
+    let totalPings30d = 0, successfulPings30d = 0;
 
-    const dailyStats = uptime30dResult.rows;
-    let totalPings30d = 0;
-    let successfulPings30d = 0;
     dailyStats.forEach(stat => {
       totalPings30d += stat.totalPings || 0;
       successfulPings30d += stat.successfulPings || 0;
+      if (new Date(stat.date) >= uptime24hStart) {
+        totalPings24h += stat.totalPings || 0;
+        successfulPings24h += stat.successfulPings || 0;
+      }
     });
-    const uptime30d = totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0;
 
-    return res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       statistics: stats,
       uptime: {
         '24h': {
-          uptime: uptime24h,
-          totalPings: uptime24hData.totalPings || 0,
-          successfulPings: uptime24hData.successfulPings || 0,
-          failedPings: (uptime24hData.totalPings || 0) - (uptime24hData.successfulPings || 0)
+          uptime: totalPings24h > 0 ? (successfulPings24h / totalPings24h) * 100 : 0,
+          totalPings: totalPings24h,
+          successfulPings: successfulPings24h,
+          failedPings: totalPings24h - successfulPings24h,
         },
         '30d': {
-          uptime: uptime30d,
+          uptime: totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0,
           totalPings: totalPings30d,
           successfulPings: successfulPings30d,
-          failedPings: totalPings30d - successfulPings30d
-        }
+          failedPings: totalPings30d - successfulPings30d,
+        },
       },
-      dailyStats: dailyStats // For uptime blocks
+      dailyStats: dailyStats.map(s => ({ ...s, _id: s.id })),
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -271,14 +173,12 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
 // Public API - Get target uptime summary (read-only)
 router.get('/api/targets/:id/uptime', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
     const targetId = req.params.id;
     const days = parseInt(req.query.days) || 30;
 
-    const target = await db.collection('targets').findOne({
-      _id: targetId,
-      enabled: true,
-      publicVisible: true,
+    const target = await prisma.target.findFirst({
+      where: { id: targetId, enabled: true, publicVisible: true },
     });
 
     if (!target) {
@@ -287,22 +187,12 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
 
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
 
-    // Query daily statistics from PostgreSQL
-    const statsResult = await db.query(`
-      SELECT 
-        date::date as date,
-        "totalPings",
-        "successfulPings",
-        "failedPings",
-        uptime
-      FROM statistics
-      WHERE "targetId" = $1 AND date >= $2
-      ORDER BY date ASC
-    `, [targetId, startDate]);
+    const stats = await prisma.statistic.findMany({
+      where: { targetId, date: { gte: startDate } },
+      orderBy: { date: 'asc' },
+    });
 
-    const stats = statsResult.rows;
     const totalPings = stats.reduce((sum, s) => sum + (s.totalPings || 0), 0);
     const successfulPings = stats.reduce((sum, s) => sum + (s.successfulPings || 0), 0);
     const uptime = totalPings > 0 ? ((successfulPings / totalPings) * 100).toFixed(2) : 0;
@@ -324,78 +214,51 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
 // Public API - Get overall status
 router.get('/api/status', async (req, res) => {
   try {
-    const db = getDB();
+    const prisma = getPrisma();
 
-    const targets = await db.collection('targets').find({ enabled: true, publicVisible: true }).toArray();
+    const targets = await prisma.target.findMany({
+      where: { enabled: true, publicVisible: true },
+    });
 
-    // Fetch favicons for apps asynchronously - use cached only, don't block on fetches
     const targetsWithStatus = await Promise.all(targets.map(async (target) => {
       let favicon = null;
 
-      // If this is an app (has appUrl), try to get cached favicon only
       if (target.appUrl) {
-        // Check if we have a cached favicon (fast, non-blocking)
-        let cachedFavicon = await db.collection('favicons').findOne({ appUrl: target.appUrl });
-
+        const cachedFavicon = await prisma.favicon.findUnique({ where: { appUrl: target.appUrl } });
         if (cachedFavicon) {
           favicon = cachedFavicon.favicon;
-        }
-        // Don't fetch new favicons here - do it in background to avoid blocking
-        // Background fetch will happen after response is sent
-        if (!favicon) {
+        } else {
           // Fetch favicon in background (non-blocking)
           faviconService.getFavicon(target.appUrl)
             .then(async (newFavicon) => {
               if (newFavicon) {
-                await db.collection('favicons').updateOne(
-                  { appUrl: target.appUrl },
-                  {
-                    $set: {
-                      appUrl: target.appUrl,
-                      favicon: newFavicon,
-                      updatedAt: new Date(),
-                    },
-                  },
-                  { upsert: true }
-                );
+                await prisma.favicon.upsert({
+                  where: { appUrl: target.appUrl },
+                  update: { favicon: newFavicon, updatedAt: new Date() },
+                  create: { appUrl: target.appUrl, favicon: newFavicon, updatedAt: new Date() },
+                });
               }
             })
-            .catch(() => {
-              // Silently fail - favicon fetch is not critical
-            });
-        }
-      }
-
-      // Parse quickCommands if it's a JSON string from SQLite
-      let quickCommands = [];
-      if (target.quickCommands) {
-        if (typeof target.quickCommands === 'string') {
-          try {
-            quickCommands = JSON.parse(target.quickCommands);
-          } catch (e) {
-            quickCommands = [];
-          }
-        } else if (Array.isArray(target.quickCommands)) {
-          quickCommands = target.quickCommands;
+            .catch(() => {});
         }
       }
 
       return {
-        _id: target._id,
+        _id: target.id,
         name: target.name,
         host: target.host,
         protocol: target.protocol,
         appUrl: target.appUrl,
         appIcon: target.appIcon || null,
         favicon: favicon,
-        currentStatus: monitorService.getTargetStatus(target._id),
-        isUp: monitorService.getTargetStatus(target._id) === 'up',
+        currentStatus: monitorService.getTargetStatus(target.id),
+        isUp: monitorService.getTargetStatus(target.id) === 'up',
         position: target.position || 0,
         group: target.group || null,
-        quickCommands: quickCommands,
+        quickCommands: target.quickCommands || [],
         publicShowDetails: target.publicShowDetails === true,
-        publicShowStatus: target.publicShowStatus !== false, // Default to true
-        publicShowAppLink: target.publicShowAppLink !== false, // Default to true
+        publicShowStatus: target.publicShowStatus !== false,
+        publicShowAppLink: target.publicShowAppLink !== false,
       };
     }));
 
@@ -418,16 +281,12 @@ router.get('/api/status', async (req, res) => {
   }
 });
 
-// Proxy endpoint for icons (handles local network URLs)
+// Proxy endpoint for icons
 router.get('/api/proxy-icon', async (req, res) => {
   try {
     const { url } = req.query;
+    if (!url) return res.status(400).json({ success: false, error: 'URL parameter is required' });
 
-    if (!url) {
-      return res.status(400).json({ success: false, error: 'URL parameter is required' });
-    }
-
-    // Validate URL
     let targetUrl;
     try {
       targetUrl = new URL(url);
@@ -435,33 +294,23 @@ router.get('/api/proxy-icon', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid URL' });
     }
 
-    // Fetch the icon - allow self-signed certificates for local networks
     const https = require('https');
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 10000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-      validateStatus: (status) => status < 500, // Accept 4xx but not 5xx
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: false, // Allow self-signed certificates
-      }),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      validateStatus: (status) => status < 500,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
     });
 
     if (response.status >= 400) {
       return res.status(404).json({ success: false, error: 'Icon not found' });
     }
 
-    // Determine content type
     const contentType = response.headers['content-type'] || 'image/png';
-    
-    // Set appropriate headers
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     res.setHeader('Access-Control-Allow-Origin', '*');
-
-    // Send the image data
     res.send(Buffer.from(response.data));
   } catch (error) {
     console.error('Error proxying icon:', error.message);
@@ -472,15 +321,9 @@ router.get('/api/proxy-icon', async (req, res) => {
 // Public API - Get incidents (read-only)
 router.get('/api/incidents', async (req, res) => {
   try {
-    const db = getDB();
-
-    const incidents = await db
-      .collection('incidents')
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.json({ success: true, incidents });
+    const prisma = getPrisma();
+    const incidents = await prisma.incident.findMany({ orderBy: { createdAt: 'desc' } });
+    res.json({ success: true, incidents: incidents.map(i => ({ ...i, _id: i.id })) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -489,15 +332,12 @@ router.get('/api/incidents', async (req, res) => {
 // Public API - Get posts (read-only, only published)
 router.get('/api/posts', async (req, res) => {
   try {
-    const db = getDB();
-
-    const posts = await db
-      .collection('posts')
-      .find({ published: true })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.json({ success: true, posts });
+    const prisma = getPrisma();
+    const posts = await prisma.post.findMany({
+      where: { published: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ success: true, posts: posts.map(p => ({ ...p, _id: p.id })) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -506,17 +346,16 @@ router.get('/api/posts', async (req, res) => {
 // Public API - Get single post (read-only, only published)
 router.get('/api/posts/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const post = await db.collection('posts').findOne({ 
-      _id: req.params.id,
-      published: true 
+    const prisma = getPrisma();
+    const post = await prisma.post.findFirst({
+      where: { id: req.params.id, published: true },
     });
 
     if (!post) {
       return res.status(404).json({ success: false, error: 'Post not found' });
     }
 
-    res.json({ success: true, post });
+    res.json({ success: true, post: { ...post, _id: post.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

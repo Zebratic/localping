@@ -1,6 +1,6 @@
 const axios = require('axios');
 const chalk = require('../utils/colors');
-const { getDB } = require('../config/db');
+const { getPrisma } = require('../config/prisma');
 
 class NotificationService {
   constructor() {
@@ -15,44 +15,20 @@ class NotificationService {
    */
   async getSettings() {
     const now = Date.now();
-    
+
     // Return cached settings if still valid
     if (this.settings && (now - this.settingsLastCheck) < this.settingsCacheTTL) {
       return this.settings;
     }
 
     try {
-      const db = getDB();
-      const settingsDoc = await db.collection('notificationSettings').findOne({ _id: 'settings' });
-      
+      const prisma = getPrisma();
+      const settingsDoc = await prisma.notificationSettings.findUnique({ where: { id: 'settings' } });
+
       if (settingsDoc) {
-        // Parse JSON strings if they exist
-        let discord = null;
-        let events = null;
-        
-        if (settingsDoc.discord) {
-          if (typeof settingsDoc.discord === 'string') {
-            try {
-              discord = JSON.parse(settingsDoc.discord);
-            } catch (e) {
-              discord = null;
-            }
-          } else {
-            discord = settingsDoc.discord;
-          }
-        }
-        
-        if (settingsDoc.events) {
-          if (typeof settingsDoc.events === 'string') {
-            try {
-              events = JSON.parse(settingsDoc.events);
-            } catch (e) {
-              events = null;
-            }
-          } else {
-            events = settingsDoc.events;
-          }
-        }
+        // Prisma stores JSON fields as objects, no need to parse
+        const discord = settingsDoc.discord || null;
+        const events = settingsDoc.events || null;
 
         this.settings = {
           enabled: settingsDoc.enabled !== false,

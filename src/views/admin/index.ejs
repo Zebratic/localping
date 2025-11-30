@@ -465,6 +465,7 @@
       max-height: 90vh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
     }
 
@@ -509,6 +510,13 @@
       padding: 1.5rem;
       overflow-y: auto;
       flex: 1;
+      min-height: 0;
+    }
+
+    .post-modal-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      flex-shrink: 0;
     }
 
     .markdown-editor-container {
@@ -516,11 +524,16 @@
       grid-template-columns: 1fr 1fr;
       gap: 1rem;
       height: 500px;
+      max-height: 60vh;
+      min-height: 300px;
     }
 
-    .markdown-editor {
+    .markdown-editor,
+    .markdown-preview-container {
       display: flex;
       flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .markdown-editor textarea {
@@ -544,6 +557,7 @@
     }
 
     .markdown-preview {
+      flex: 1;
       background-color: rgba(0, 0, 0, 0.3);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 0.5rem;
@@ -636,7 +650,7 @@
   </style>
 </head>
 <body class="bg-slate-950 text-white">
-  <!-- Header -->
+  <!-- Header & Navigation -->
   <header class="border-b border-slate-700/30 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
     <div class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
       <div class="flex justify-between items-center">
@@ -651,11 +665,7 @@
         </button>
       </div>
     </div>
-  </header>
-
-  <!-- Navigation Tabs -->
-  <div class="border-b border-slate-700/30 bg-slate-900/30 backdrop-blur sticky top-[65px] sm:top-[73px] z-40">
-    <div class="w-full px-4 sm:px-6 lg:px-8 overflow-x-auto">
+    <div class="w-full px-4 sm:px-6 lg:px-8 overflow-x-auto border-t border-slate-700/20">
       <div class="flex gap-4 sm:gap-8">
         <button class="tab-button active text-sm sm:text-base" onclick="switchTab('monitors', this)">
           <i class="fas fa-chart-line mr-1 sm:mr-2"></i><span class="hidden xs:inline">Monitors</span>
@@ -680,7 +690,7 @@
         </button>
       </div>
     </div>
-  </div>
+  </header>
 
   <main class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
     <!-- Monitors Tab -->
@@ -1472,9 +1482,9 @@
           <i class="fas fa-times mr-1"></i>Close
         </button>
       </div>
-      <div class="post-modal-body">
-        <form id="postForm">
-          <div class="space-y-4 mb-4">
+      <form id="postForm" class="flex flex-col flex-1 min-h-0">
+        <div class="post-modal-body">
+          <div class="space-y-4">
             <div>
               <label class="form-label">Title *</label>
               <input type="text" id="postTitle" class="form-input" placeholder="Enter post title" required>
@@ -1501,7 +1511,9 @@
               </label>
             </div>
           </div>
-          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+        </div>
+        <div class="post-modal-footer">
+          <div class="flex flex-col sm:flex-row gap-2">
             <button type="submit" class="btn-primary flex-1">
               <i class="fas fa-save mr-2"></i>Save Post
             </button>
@@ -1509,8 +1521,8 @@
               Cancel
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -1523,16 +1535,16 @@
           <i class="fas fa-times mr-1"></i>Close
         </button>
       </div>
-      <div class="post-modal-body">
-        <form id="incidentForm">
-          <div class="space-y-4 mb-4">
+      <form id="incidentForm" class="flex flex-col flex-1 min-h-0">
+        <div class="post-modal-body">
+          <div class="space-y-4">
             <div>
               <label class="form-label">Title *</label>
               <input type="text" id="incidentTitle" class="form-input" placeholder="Enter incident title" required>
             </div>
             <div>
               <label class="form-label">Description *</label>
-              <textarea id="incidentDescription" class="form-input" rows="4" placeholder="Describe the incident..." required></textarea>
+              <textarea id="incidentDescription" class="form-input" rows="4" style="max-height: 200px; overflow-y: auto; resize: vertical;" placeholder="Describe the incident..." required></textarea>
             </div>
             <div class="grid grid-cols-2 gap-4">
               <div>
@@ -1554,7 +1566,9 @@
               </div>
             </div>
           </div>
-          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+        </div>
+        <div class="post-modal-footer">
+          <div class="flex flex-col sm:flex-row gap-2">
             <button type="submit" class="btn-primary flex-1">
               <i class="fas fa-save mr-2"></i>Save Incident
             </button>
@@ -1562,8 +1576,8 @@
               Cancel
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -1576,9 +1590,9 @@
           <i class="fas fa-times mr-1"></i>Close
         </button>
       </div>
-      <div class="post-modal-body">
-        <form id="eventRuleForm" onsubmit="saveEventRule(event)">
-          <div class="space-y-4 mb-4">
+      <form id="eventRuleForm" onsubmit="saveEventRule(event)" class="flex flex-col flex-1 min-h-0">
+        <div class="post-modal-body">
+          <div class="space-y-4">
             <div>
               <label class="form-label">Rule Name *</label>
               <input type="text" id="eventRuleName" class="form-input" placeholder="e.g., Critical Service Down" required>
@@ -1643,7 +1657,9 @@
               <p class="text-xs text-slate-400 mt-1">Prevent duplicate incidents within this time period</p>
             </div>
           </div>
-          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+        </div>
+        <div class="post-modal-footer">
+          <div class="flex flex-col sm:flex-row gap-2">
             <button type="submit" class="btn-primary flex-1">
               <i class="fas fa-save mr-2"></i>Save Rule
             </button>
@@ -1651,8 +1667,8 @@
               Cancel
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   </div>
 

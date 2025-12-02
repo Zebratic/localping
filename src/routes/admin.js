@@ -830,6 +830,35 @@ router.post('/api/clear-ping-data', async (req, res) => {
   }
 });
 
+// Clear ping data for specific monitor
+router.post('/api/targets/:id/clear-ping-data', async (req, res) => {
+  try {
+    const prisma = getPrisma();
+    const targetId = req.params.id;
+
+    // Verify target exists
+    const target = await prisma.target.findUnique({ where: { id: targetId } });
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'Target not found' });
+    }
+
+    // Clear pingResults for this target
+    const pingResults = await prisma.pingResult.deleteMany({ where: { targetId: targetId } });
+
+    // Clear statistics for this target
+    const statistics = await prisma.statistic.deleteMany({ where: { targetId: targetId } });
+
+    res.json({
+      success: true,
+      message: `Ping data cleared for ${target.name}`,
+      details: { pingResults: pingResults.count, statistics: statistics.count },
+    });
+  } catch (error) {
+    console.error('Error clearing ping data for target:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ============ ADMIN SETTINGS ============
 router.get('/api/admin-settings', async (req, res) => {
   try {

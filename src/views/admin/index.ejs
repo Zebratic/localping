@@ -829,6 +829,9 @@
                   <button onclick="showCloneMonitorConfirm()" class="btn-secondary" id="cloneMonitorBtn" style="display: none;">
                     <i class="fas fa-copy mr-2"></i>Clone
                   </button>
+                  <button onclick="showClearMonitorPingDataConfirm()" class="btn-secondary" id="clearPingDataBtn" style="display: none;" title="Clear all ping history for this monitor">
+                    <i class="fas fa-eraser mr-2"></i>Reset Data
+                  </button>
                 </div>
               </div>
 
@@ -1699,6 +1702,50 @@
               <i class="fas fa-copy mr-2"></i>Yes, Clone Monitor
             </button>
             <button onclick="closeCloneMonitorModal()" class="btn-secondary flex-1">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clear Monitor Ping Data Confirmation Modal -->
+  <div id="clearMonitorPingDataModal" class="post-modal">
+    <div class="post-modal-content" style="max-width: 500px;">
+      <div class="post-modal-header">
+        <h3 class="text-xl font-semibold text-orange-400">
+          <i class="fas fa-eraser mr-2"></i>Reset Monitor Data
+        </h3>
+        <button onclick="closeClearMonitorPingDataModal()" class="btn-secondary text-sm px-3 py-1">
+          <i class="fas fa-times mr-1"></i>Close
+        </button>
+      </div>
+      <div class="post-modal-body">
+        <div class="space-y-4">
+          <div class="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
+            <p class="text-orange-200 font-semibold mb-2">
+              <i class="fas fa-exclamation-circle mr-2"></i>Warning
+            </p>
+            <p class="text-orange-100 text-sm">
+              This will permanently delete all ping data for "<span id="clearMonitorPingDataName" class="font-semibold"></span>". This includes:
+            </p>
+            <ul class="text-orange-100 text-sm mt-2 ml-4 list-disc">
+              <li>All ping results and response times</li>
+              <li>All statistics and uptime history</li>
+            </ul>
+          </div>
+          <p class="text-slate-400 text-sm">
+            Monitor settings will NOT be affected. Only the historical ping data will be cleared.
+          </p>
+          <p class="text-slate-300 text-sm font-semibold">
+            Are you sure you want to reset this monitor's data?
+          </p>
+          <div class="flex flex-col sm:flex-row gap-2 pt-4 border-t border-slate-700">
+            <button onclick="confirmClearMonitorPingData()" class="btn-danger flex-1">
+              <i class="fas fa-eraser mr-2"></i>Yes, Reset Data
+            </button>
+            <button onclick="closeClearMonitorPingDataModal()" class="btn-secondary flex-1">
               Cancel
             </button>
           </div>

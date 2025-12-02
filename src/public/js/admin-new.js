@@ -204,10 +204,14 @@ async function selectMonitor(monitor) {
     }
   });
 
-  // Show clone button
+  // Show clone and clear ping data buttons
   const cloneBtn = document.getElementById('cloneMonitorBtn');
   if (cloneBtn) {
     cloneBtn.style.display = 'block';
+  }
+  const clearPingDataBtn = document.getElementById('clearPingDataBtn');
+  if (clearPingDataBtn) {
+    clearPingDataBtn.style.display = 'block';
   }
 }
 
@@ -842,7 +846,7 @@ async function deleteMonitor() {
 function addNewMonitor() {
   currentMonitorId = null;
   document.getElementById('editForm').reset();
-  
+
   // Set defaults
   document.getElementById('editProtocol').value = 'ICMP';
   document.getElementById('editInterval').value = '60';
@@ -865,14 +869,26 @@ function addNewMonitor() {
     card.classList.remove('selected');
   });
 
-  // Hide clone button for new monitor
+  // Hide clone and clear ping data buttons for new monitor
   const cloneBtn = document.getElementById('cloneMonitorBtn');
   if (cloneBtn) {
     cloneBtn.style.display = 'none';
   }
+  const clearPingDataBtn = document.getElementById('clearPingDataBtn');
+  if (clearPingDataBtn) {
+    clearPingDataBtn.style.display = 'none';
+  }
 
-  // Open edit modal
-  openEditMonitor();
+  // Open edit modal/panel - respect mobile viewport
+  if (window.innerWidth < 1024) {
+    // On mobile, ensure the panel is closed first then open it
+    if (editPanelOpen) {
+      editPanelOpen = false;
+    }
+    toggleEditPanel();
+  } else {
+    openEditMonitor();
+  }
 }
 
 // Show clone monitor confirmation modal
@@ -1688,10 +1704,15 @@ document.addEventListener('keydown', (e) => {
     if (modal && modal.classList.contains('active')) {
       closePostModal();
     }
-    
+
     const clearPingDataModal = document.getElementById('clearPingDataModal');
     if (clearPingDataModal && clearPingDataModal.classList.contains('active')) {
       closeClearPingDataModal();
+    }
+
+    const clearMonitorPingDataModal = document.getElementById('clearMonitorPingDataModal');
+    if (clearMonitorPingDataModal && clearMonitorPingDataModal.classList.contains('active')) {
+      closeClearMonitorPingDataModal();
     }
   }
 });
@@ -1702,10 +1723,15 @@ document.addEventListener('click', (e) => {
   if (modal && modal.classList.contains('active') && e.target === modal) {
     closePostModal();
   }
-  
+
   const clearPingDataModal = document.getElementById('clearPingDataModal');
   if (clearPingDataModal && clearPingDataModal.classList.contains('active') && e.target === clearPingDataModal) {
     closeClearPingDataModal();
+  }
+
+  const clearMonitorPingDataModal = document.getElementById('clearMonitorPingDataModal');
+  if (clearMonitorPingDataModal && clearMonitorPingDataModal.classList.contains('active') && e.target === clearMonitorPingDataModal) {
+    closeClearMonitorPingDataModal();
   }
 });
 
@@ -2399,7 +2425,7 @@ async function confirmClearPingData() {
     if (response.data.success) {
       showNotification('All ping data cleared successfully', 'success');
       closeClearPingDataModal();
-      
+
       // Reload monitors to refresh statistics
       if (currentMonitorId) {
         await loadMonitorStatistics(currentMonitorId);
@@ -2413,30 +2439,101 @@ async function confirmClearPingData() {
   }
 }
 
+// Show clear monitor ping data confirmation modal
+function showClearMonitorPingDataConfirm() {
+  if (!currentMonitorId) {
+    showNotification('No monitor selected', 'error');
+    return;
+  }
+
+  const monitorName = document.getElementById('monitorName')?.textContent || 'Monitor';
+  document.getElementById('clearMonitorPingDataName').textContent = monitorName;
+
+  const modal = document.getElementById('clearMonitorPingDataModal');
+  modal.classList.add('active');
+}
+
+// Close clear monitor ping data modal
+function closeClearMonitorPingDataModal() {
+  const modal = document.getElementById('clearMonitorPingDataModal');
+  modal.classList.remove('active');
+}
+
+// Confirm and clear monitor ping data
+async function confirmClearMonitorPingData() {
+  if (!currentMonitorId) {
+    showNotification('No monitor selected', 'error');
+    return;
+  }
+
+  try {
+    const response = await axios.post(`/admin/api/targets/${currentMonitorId}/clear-ping-data`);
+    if (response.data.success) {
+      showNotification(response.data.message || 'Ping data cleared successfully', 'success');
+      closeClearMonitorPingDataModal();
+
+      // Reload monitor statistics to refresh the display
+      await loadMonitorStatistics(currentMonitorId);
+    } else {
+      showNotification(response.data.error || 'Error clearing ping data', 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing monitor ping data:', error);
+    showNotification(error.response?.data?.error || 'Error clearing ping data', 'error');
+  }
+}
+
 // Toggle edit panel (mobile)
 function toggleEditPanel() {
   const panel = document.getElementById('settingsPanel');
   const overlay = document.getElementById('settingsOverlay');
   const desktopContainer = document.getElementById('editFormContainer');
   const mobileContainer = document.getElementById('editFormMobileContainer');
-  
+
   editPanelOpen = !editPanelOpen;
-  
+
   if (editPanelOpen) {
     panel.classList.add('open');
     overlay.classList.add('active');
     // Clone form content to mobile container
     if (desktopContainer && mobileContainer) {
-      const form = desktopContainer.querySelector('#editForm');
-      if (form) {
-        mobileContainer.innerHTML = form.outerHTML;
+      const desktopForm = desktopContainer.querySelector('#editForm');
+      if (desktopForm) {
+        mobileContainer.innerHTML = desktopForm.outerHTML;
         // Re-attach event listeners to cloned form
         const clonedForm = mobileContainer.querySelector('#editForm');
         if (clonedForm) {
+          // Copy all form values from desktop form to mobile form
+          // outerHTML doesn't preserve dynamically set input values
+          const formFields = [
+            'editName', 'editHost', 'editProtocol', 'editPort', 'editInterval',
+            'editGroup', 'editAppUrl', 'editAppIcon', 'editRetries', 'editRetryInterval',
+            'editHttpMethod', 'editTimeout', 'editStatusCodes', 'editMaxRedirects',
+            'editPosition', 'editQuickCommands', 'editAuthMethod', 'editAuthUsername',
+            'editAuthPassword', 'editAuthToken', 'editEnabled', 'editIgnoreSsl',
+            'editUpsideDown', 'editPublicVisible'
+          ];
+
+          formFields.forEach(fieldId => {
+            const desktopField = desktopForm.querySelector(`#${fieldId}`);
+            const mobileField = clonedForm.querySelector(`#${fieldId}`);
+            if (desktopField && mobileField) {
+              if (desktopField.type === 'checkbox') {
+                mobileField.checked = desktopField.checked;
+              } else {
+                mobileField.value = desktopField.value;
+              }
+            }
+          });
+
           const protocolSelect = clonedForm.querySelector('#editProtocol');
           const authSelect = clonedForm.querySelector('#editAuthMethod');
           if (protocolSelect) protocolSelect.onchange = updateProtocolSettings;
           if (authSelect) authSelect.onchange = updateAuthFields;
+
+          // Update protocol and auth visibility after copying values
+          updateProtocolSettings();
+          updateAuthFields();
         }
       }
     }

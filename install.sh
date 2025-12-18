@@ -99,7 +99,18 @@ else
     cd "$INSTALL_DIR"
     git fetch origin
     git checkout "$BRANCH"
-    git pull origin "$BRANCH"
+    # Discard local changes to tracked files (package-lock.json, etc.)
+    # These will be regenerated during npm install anyway
+    # This preserves untracked files like .env and data/
+    if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet HEAD 2>/dev/null; then
+        echo "⚠️  Local changes detected, discarding (will be regenerated)..."
+        git reset --hard HEAD 2>/dev/null || true
+    fi
+    # Pull latest changes
+    git pull origin "$BRANCH" || {
+        echo "⚠️  Pull failed, trying reset to origin..."
+        git reset --hard origin/"$BRANCH"
+    }
 fi
 
 cd "$INSTALL_DIR"

@@ -101,11 +101,11 @@ router.post('/targets', validateTargetInput, async (req, res) => {
       data: {
         name, host, port: port || null, protocol: protocol.toUpperCase(), path: path || null,
         interval: interval || 60, enabled: enabled !== false, appUrl: finalAppUrl || null,
-        appIcon: fetchedAppIcon || null, retries: retries !== undefined ? retries : 0,
+        appIcon: fetchedAppIcon || null,         retries: retries !== undefined ? retries : 0,
         retryInterval: retryInterval !== undefined ? retryInterval : 5,
         timeout: timeout !== undefined ? timeout : 30, httpMethod: httpMethod || 'GET',
         statusCodes: statusCodes || '200-299', maxRedirects: maxRedirects !== undefined ? maxRedirects : 5,
-        ignoreSsl: ignoreSsl === true, upsideDown: upsideDown === true, auth: auth || null,
+        ignoreSsl: ignoreSsl === true, upsideDown: upsideDown === true, important: important === true, auth: auth || null,
         position: position !== undefined ? position : 0, group: group || null, quickCommands: quickCommands || [],
       },
     });
@@ -180,8 +180,15 @@ router.delete('/targets/:id', async (req, res) => {
     const targetId = req.params.id;
 
     monitorService.stopTargetMonitor(targetId);
+    
+    // Manually delete related data to avoid foreign key constraint issues
+    await prisma.pingResult.deleteMany({ where: { targetId } });
+    await prisma.alert.deleteMany({ where: { targetId } });
+    await prisma.statistic.deleteMany({ where: { targetId } });
+    await prisma.action.deleteMany({ where: { targetId } });
+    
+    // Now delete the target
     await prisma.target.delete({ where: { id: targetId } });
-    // Cascade delete handles pingResults, alerts, statistics
 
     res.json({ success: true, message: 'Target deleted' });
   } catch (error) {
@@ -247,6 +254,68 @@ router.get('/targets/:id/statistics', async (req, res) => {
       startDateObj.setDate(startDateObj.getDate() - 30);
       intervalMinutes = 720;
       maxPoints = 60;
+    } else if (period === 'all' || period === 'ALL') {
+      // For ALL period, use daily statistics (much more efficient)
+      const dailyStats = await prisma.statistic.findMany({
+        where: { targetId },
+        orderBy: { date: 'asc' },
+        select: {
+          date: true,
+          totalPings: true,
+          successfulPings: true,
+          avgResponseTime: true,
+        },
+      });
+
+      const stats = dailyStats.map(s => ({
+        date: s.date.toISOString(),
+        totalPings: s.totalPings || 0,
+        successfulPings: s.successfulPings || 0,
+        failedPings: (s.totalPings || 0) - (s.successfulPings || 0),
+        uptime: s.totalPings > 0 ? parseFloat(((s.successfulPings / s.totalPings) * 100).toFixed(2)) : 0,
+        avgResponseTime: s.avgResponseTime || 0,
+      }));
+
+      // Get uptime data using aggregation
+      const uptime24hStart = new Date();
+      uptime24hStart.setDate(uptime24hStart.getDate() - 1);
+      const uptime30dStart = new Date();
+      uptime30dStart.setDate(uptime30dStart.getDate() - 30);
+
+      const [uptime24h, uptime30d] = await Promise.all([
+        prisma.statistic.aggregate({
+          where: { targetId, date: { gte: uptime24hStart } },
+          _sum: { totalPings: true, successfulPings: true },
+        }),
+        prisma.statistic.aggregate({
+          where: { targetId, date: { gte: uptime30dStart } },
+          _sum: { totalPings: true, successfulPings: true },
+        }),
+      ]);
+
+      const totalPings24h = uptime24h._sum.totalPings || 0;
+      const successfulPings24h = uptime24h._sum.successfulPings || 0;
+      const totalPings30d = uptime30d._sum.totalPings || 0;
+      const successfulPings30d = uptime30d._sum.successfulPings || 0;
+
+      return res.json({
+        success: true,
+        statistics: stats,
+        uptime: {
+          '24h': {
+            uptime: totalPings24h > 0 ? parseFloat(((successfulPings24h / totalPings24h) * 100).toFixed(2)) : 0,
+            totalPings: totalPings24h,
+            successfulPings: successfulPings24h,
+            failedPings: totalPings24h - successfulPings24h,
+          },
+          '30d': {
+            uptime: totalPings30d > 0 ? parseFloat(((successfulPings30d / totalPings30d) * 100).toFixed(2)) : 0,
+            totalPings: totalPings30d,
+            successfulPings: successfulPings30d,
+            failedPings: totalPings30d - successfulPings30d,
+          },
+        },
+      });
     }
 
     const intervalSeconds = intervalMinutes * 60;
@@ -288,22 +357,22 @@ router.get('/targets/:id/statistics', async (req, res) => {
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
 
-    const dailyStats = await prisma.statistic.findMany({
-      where: { targetId, date: { gte: uptime30dStart } },
-      orderBy: { date: 'asc' },
-    });
+    // Use aggregation queries instead of fetching all records
+    const [uptime24h, uptime30d] = await Promise.all([
+      prisma.statistic.aggregate({
+        where: { targetId, date: { gte: uptime24hStart } },
+        _sum: { totalPings: true, successfulPings: true },
+      }),
+      prisma.statistic.aggregate({
+        where: { targetId, date: { gte: uptime30dStart } },
+        _sum: { totalPings: true, successfulPings: true },
+      }),
+    ]);
 
-    let totalPings24h = 0, successfulPings24h = 0;
-    let totalPings30d = 0, successfulPings30d = 0;
-
-    dailyStats.forEach(stat => {
-      totalPings30d += stat.totalPings || 0;
-      successfulPings30d += stat.successfulPings || 0;
-      if (new Date(stat.date) >= uptime24hStart) {
-        totalPings24h += stat.totalPings || 0;
-        successfulPings24h += stat.successfulPings || 0;
-      }
-    });
+    const totalPings24h = uptime24h._sum.totalPings || 0;
+    const successfulPings24h = uptime24h._sum.successfulPings || 0;
+    const totalPings30d = uptime30d._sum.totalPings || 0;
+    const successfulPings30d = uptime30d._sum.successfulPings || 0;
 
     res.json({
       success: true,
@@ -322,7 +391,6 @@ router.get('/targets/:id/statistics', async (req, res) => {
           failedPings: totalPings30d - successfulPings30d,
         },
       },
-      dailyStats: dailyStats.map(s => ({ ...s, _id: s.id })),
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

@@ -7,18 +7,27 @@ class IncidentService {
 
   async createIncident(data) {
     try {
+      // Ensure isScheduled is a boolean, not a string or date
+      const isScheduled = (data.isScheduled === true || data.isScheduled === 'true') && data.scheduledStart;
+      const initialStatus = isScheduled && new Date(data.scheduledStart) > new Date() 
+        ? 'scheduled' 
+        : (data.status || 'investigating');
+
       const incident = await this.prisma.incident.create({
         data: {
           title: data.title,
           description: data.description,
-          status: data.status || 'investigating', // investigating, identified, monitoring, resolved
+          status: initialStatus, // investigating, identified, monitoring, resolved, scheduled
           severity: data.severity || 'major', // minor, major, critical
           affectedServices: data.affectedServices || [],
+          isScheduled: Boolean(isScheduled),
+          scheduledStart: data.scheduledStart ? new Date(data.scheduledStart) : null,
+          scheduledEnd: data.scheduledEnd ? new Date(data.scheduledEnd) : null,
           updates: [
             {
               message: data.description,
               timestamp: new Date().toISOString(),
-              status: data.status || 'investigating',
+              status: initialStatus,
             },
           ],
           resolvedAt: data.status === 'resolved' ? new Date() : null,
@@ -85,6 +94,9 @@ class IncidentService {
       if (data.status !== undefined) updateData.status = data.status;
       if (data.severity !== undefined) updateData.severity = data.severity;
       if (data.affectedServices !== undefined) updateData.affectedServices = data.affectedServices;
+      if (data.isScheduled !== undefined) updateData.isScheduled = Boolean(data.isScheduled === true || data.isScheduled === 'true');
+      if (data.scheduledStart !== undefined) updateData.scheduledStart = data.scheduledStart ? new Date(data.scheduledStart) : null;
+      if (data.scheduledEnd !== undefined) updateData.scheduledEnd = data.scheduledEnd ? new Date(data.scheduledEnd) : null;
 
       if (data.status === 'resolved') {
         updateData.resolvedAt = new Date();
@@ -168,6 +180,80 @@ class IncidentService {
       return incidents;
     } catch (error) {
       console.error(chalk.red('Error fetching public incidents:'), error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Process scheduled incidents - activate them when start time arrives, resolve when end time passes
+   */
+  async processScheduledIncidents() {
+    try {
+      const now = new Date();
+      
+      // Find scheduled incidents that need to be activated (start time has passed, status is still 'scheduled')
+      const scheduledToActivate = await this.prisma.incident.findMany({
+        where: {
+          isScheduled: true,
+          status: 'scheduled',
+          scheduledStart: { lte: now },
+        },
+      });
+
+      for (const incident of scheduledToActivate) {
+        // Activate the incident
+        await this.prisma.incident.update({
+          where: { id: incident.id },
+          data: {
+            status: 'investigating',
+            updates: [
+              ...(incident.updates || []),
+              {
+                message: 'Scheduled maintenance window has started',
+                timestamp: now.toISOString(),
+                status: 'investigating',
+              },
+            ],
+          },
+        });
+        console.log(chalk.green(`✓ Activated scheduled incident: ${incident.title}`));
+      }
+
+      // Find active scheduled incidents that should be resolved (end time has passed)
+      const scheduledToResolve = await this.prisma.incident.findMany({
+        where: {
+          isScheduled: true,
+          status: { not: 'resolved' },
+          scheduledEnd: { lte: now },
+        },
+      });
+
+      for (const incident of scheduledToResolve) {
+        // Resolve the incident
+        await this.prisma.incident.update({
+          where: { id: incident.id },
+          data: {
+            status: 'resolved',
+            resolvedAt: now,
+            updates: [
+              ...(incident.updates || []),
+              {
+                message: 'Scheduled maintenance window has ended',
+                timestamp: now.toISOString(),
+                status: 'resolved',
+              },
+            ],
+          },
+        });
+        console.log(chalk.green(`✓ Resolved scheduled incident: ${incident.title}`));
+      }
+
+      return {
+        activated: scheduledToActivate.length,
+        resolved: scheduledToResolve.length,
+      };
+    } catch (error) {
+      console.error(chalk.red('Error processing scheduled incidents:'), error.message);
       throw error;
     }
   }

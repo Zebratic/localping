@@ -24,11 +24,22 @@
     .tab-button {
       transition: all 0.3s ease;
       position: relative;
-      padding: 0.75rem 1.5rem;
+      padding: 0.5rem 0.75rem;
       font-weight: 500;
       color: #94a3b8;
       cursor: pointer;
       border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      font-size: 0.875rem;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    @media (min-width: 640px) {
+      .tab-button {
+        padding: 0.75rem 1.5rem;
+        font-size: 1rem;
+      }
     }
 
     .tab-button:hover {
@@ -170,6 +181,13 @@
       color: white;
       transition: all 0.3s ease;
       width: 100%;
+      font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    @media (min-width: 640px) {
+      .form-input {
+        font-size: inherit;
+      }
     }
 
     .form-input:focus {
@@ -206,6 +224,16 @@
         text-overflow: clip;
         width: 100%;
         text-align: center;
+        padding: 0.75rem 1rem;
+        font-size: 0.875rem;
+      }
+      
+      /* Icon-only buttons on mobile */
+      .create-btn-mobile {
+        width: auto !important;
+        min-width: 2.5rem;
+        padding: 0.75rem !important;
+        aspect-ratio: 1;
       }
     }
 
@@ -449,7 +477,14 @@
       display: none;
       align-items: center;
       justify-content: center;
-      padding: 1rem;
+      padding: 0.5rem;
+      overflow-y: auto;
+    }
+
+    @media (min-width: 640px) {
+      .post-modal {
+        padding: 1rem;
+      }
     }
 
     .post-modal.active {
@@ -462,11 +497,18 @@
       border-radius: 0.75rem;
       width: 100%;
       max-width: 1400px;
-      max-height: 90vh;
+      max-height: 95vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      margin: auto;
+    }
+
+    @media (min-width: 640px) {
+      .post-modal-content {
+        max-height: 90vh;
+      }
     }
 
     /* Custom dropdown styles */
@@ -499,24 +541,44 @@
     }
 
     .post-modal-header {
-      padding: 1.5rem;
+      padding: 1rem;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-shrink: 0;
+    }
+
+    @media (min-width: 640px) {
+      .post-modal-header {
+        padding: 1.5rem;
+      }
     }
 
     .post-modal-body {
-      padding: 1.5rem;
+      padding: 1rem;
       overflow-y: auto;
       flex: 1;
       min-height: 0;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    @media (min-width: 640px) {
+      .post-modal-body {
+        padding: 1.5rem;
+      }
     }
 
     .post-modal-footer {
-      padding: 1rem 1.5rem;
+      padding: 1rem;
       border-top: 1px solid rgba(255, 255, 255, 0.1);
       flex-shrink: 0;
+    }
+
+    @media (min-width: 640px) {
+      .post-modal-footer {
+        padding: 1rem 1.5rem;
+      }
     }
 
     .markdown-editor-container {
@@ -667,34 +729,34 @@
     </div>
     <div class="w-full px-4 sm:px-6 lg:px-8 overflow-x-auto border-t border-slate-700/20">
       <div class="flex gap-4 sm:gap-8">
-        <button class="tab-button active text-sm sm:text-base" onclick="switchTab('monitors', this)">
+        <a href="/admin" class="tab-button text-sm sm:text-base <%= (typeof currentTab !== 'undefined' && currentTab === 'monitors') || (typeof currentTab === 'undefined') ? 'active' : '' %>" onclick="handleTabClick(event, 'monitors')">
           <i class="fas fa-chart-line mr-1 sm:mr-2"></i><span class="hidden xs:inline">Monitors</span>
-        </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('incidents', this)">
+        </a>
+        <a href="/admin/incidents" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'incidents' ? 'active' : '' %>" onclick="handleTabClick(event, 'incidents')">
           <i class="fas fa-exclamation-triangle mr-1 sm:mr-2"></i><span class="hidden xs:inline">Incidents</span>
-        </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('event-rules', this)">
+        </a>
+        <a href="/admin/events" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'event-rules' ? 'active' : '' %>" onclick="handleTabClick(event, 'event-rules')">
           <i class="fas fa-bolt mr-1 sm:mr-2"></i><span class="hidden xs:inline">Event Rules</span>
-        </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('posts', this)">
+        </a>
+        <a href="/admin/blogs" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'posts' ? 'active' : '' %>" onclick="handleTabClick(event, 'posts')">
           <i class="fas fa-blog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Posts</span>
-        </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('visibility', this)">
+        </a>
+        <a href="/admin/visibility" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'visibility' ? 'active' : '' %>" onclick="handleTabClick(event, 'visibility')">
           <i class="fas fa-eye mr-1 sm:mr-2"></i><span class="hidden xs:inline">Visibility</span>
-        </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('settings', this)">
+        </a>
+        <a href="/admin/settings" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'settings' ? 'active' : '' %>" onclick="handleTabClick(event, 'settings')">
           <i class="fas fa-cog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Settings</span>
-        </button>
-        <button class="tab-button text-sm sm:text-base" onclick="switchTab('backup', this)">
+        </a>
+        <a href="/admin/backup" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'backup' ? 'active' : '' %>" onclick="handleTabClick(event, 'backup')">
           <i class="fas fa-download mr-1 sm:mr-2"></i><span class="hidden xs:inline">Backup</span>
-        </button>
+        </a>
       </div>
     </div>
   </header>
 
   <main class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
     <!-- Monitors Tab -->
-    <div id="monitors" class="tab-content active">
+    <div id="monitors" class="tab-content <%= (typeof currentTab !== 'undefined' && currentTab === 'monitors') || (typeof currentTab === 'undefined') ? 'active' : '' %>">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
         <!-- Monitor List -->
         <div class="lg:col-span-3">
@@ -1029,6 +1091,13 @@
                         </label>
                       </div>
                       <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" id="editImportant" class="checkbox-input">
+                          <span class="form-label mb-0">Important</span>
+                        </label>
+                        <p class="form-help">Send @everyone in Discord when this monitor goes down</p>
+                      </div>
+                      <div>
                         <label class="form-label">Position</label>
                         <input type="number" id="editPosition" class="form-input" min="0" value="0">
                         <p class="form-help">Display order in public UI</p>
@@ -1082,12 +1151,12 @@
     </div>
 
     <!-- Incidents Tab -->
-    <div id="incidents" class="tab-content">
+    <div id="incidents" class="tab-content <%= typeof currentTab !== 'undefined' && currentTab === 'incidents' ? 'active' : '' %>">
       <div>
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">Incidents</h2>
-          <button onclick="showCreateIncidentModal()" class="btn-primary">
-            <i class="fas fa-plus mr-2"></i>Create Incident
+          <button onclick="showCreateIncidentModal()" class="btn-primary create-btn-mobile">
+            <i class="fas fa-plus sm:mr-2"></i><span class="hidden sm:inline">Create Incident</span>
           </button>
         </div>
         <div id="incidentsList" class="space-y-4">
@@ -1097,12 +1166,12 @@
     </div>
 
     <!-- Event Rules Tab -->
-    <div id="event-rules" class="tab-content">
+    <div id="event-rules" class="tab-content <%= typeof currentTab !== 'undefined' && currentTab === 'event-rules' ? 'active' : '' %>">
       <div>
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">Event Detection Rules</h2>
-          <button onclick="showCreateEventRuleModal()" class="btn-primary">
-            <i class="fas fa-plus mr-2"></i>Create Rule
+          <button onclick="showCreateEventRuleModal()" class="btn-primary create-btn-mobile">
+            <i class="fas fa-plus sm:mr-2"></i><span class="hidden sm:inline">Create Rule</span>
           </button>
         </div>
         <div id="eventRulesList" class="space-y-4">
@@ -1112,12 +1181,12 @@
     </div>
 
     <!-- Posts Tab -->
-    <div id="posts" class="tab-content">
+    <div id="posts" class="tab-content <%= typeof currentTab !== 'undefined' && currentTab === 'posts' ? 'active' : '' %>">
       <div>
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">Blog Posts</h2>
-          <button onclick="showCreatePostModal()" class="btn-primary">
-            <i class="fas fa-plus mr-2"></i>Create Post
+          <button onclick="showCreatePostModal()" class="btn-primary create-btn-mobile">
+            <i class="fas fa-plus sm:mr-2"></i><span class="hidden sm:inline">Create Post</span>
           </button>
         </div>
         <div id="postsList" class="space-y-4">
@@ -1127,7 +1196,7 @@
     </div>
 
     <!-- Visibility Tab -->
-    <div id="visibility" class="tab-content">
+    <div id="visibility" class="tab-content <%= typeof currentTab !== 'undefined' && currentTab === 'visibility' ? 'active' : '' %>">
       <div>
         <h2 class="text-2xl font-bold mb-6">Public Visibility</h2>
         <p class="text-slate-400 mb-6">Configure which monitors and application links should be visible on the public status page. Private monitors will only be visible in the admin dashboard.</p>
@@ -1144,7 +1213,7 @@
     </div>
 
     <!-- Backup Tab -->
-    <div id="backup" class="tab-content">
+    <div id="backup" class="tab-content <%= typeof currentTab !== 'undefined' && currentTab === 'backup' ? 'active' : '' %>">
       <div>
         <h2 class="text-2xl font-bold mb-6">Backup & Restore</h2>
         
@@ -1239,7 +1308,7 @@
     </div>
 
     <!-- Settings Tab -->
-    <div id="settings" class="tab-content">
+    <div id="settings" class="tab-content <%= typeof currentTab !== 'undefined' && currentTab === 'settings' ? 'active' : '' %>">
       <div>
         <h2 class="text-2xl font-bold mb-6">Settings</h2>
         
@@ -1493,6 +1562,12 @@
               <input type="text" id="postTitle" class="form-input" placeholder="Enter post title" required>
             </div>
             <div>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="postPublished" class="checkbox-input" checked>
+                <span class="form-label mb-0">Publish immediately</span>
+              </label>
+            </div>
+            <div>
               <label class="form-label">Content (Markdown) *</label>
               <div class="markdown-editor-container">
                 <div class="markdown-editor">
@@ -1506,12 +1581,6 @@
                   </div>
                 </div>
               </div>
-            </div>
-            <div>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="postPublished" class="checkbox-input" checked>
-                <span class="form-label mb-0">Publish immediately</span>
-              </label>
             </div>
           </div>
         </div>
@@ -1549,7 +1618,7 @@
               <label class="form-label">Description *</label>
               <textarea id="incidentDescription" class="form-input" rows="4" style="max-height: 200px; overflow-y: auto; resize: vertical;" placeholder="Describe the incident..." required></textarea>
             </div>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label class="form-label">Severity *</label>
                 <select id="incidentSeverity" class="form-input" required>
@@ -1565,7 +1634,29 @@
                   <option value="identified">Identified</option>
                   <option value="monitoring">Monitoring</option>
                   <option value="resolved">Resolved</option>
+                  <option value="scheduled">Scheduled Maintenance</option>
                 </select>
+              </div>
+            </div>
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="incidentIsScheduled" class="checkbox-input" onchange="toggleScheduledFields()">
+                <span class="form-label mb-0">Schedule as Maintenance Window</span>
+              </label>
+              <p class="form-help">Enable to schedule this incident for a future maintenance window</p>
+            </div>
+            <div id="scheduledFields" class="hidden space-y-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="form-label">Scheduled Start *</label>
+                  <input type="datetime-local" id="incidentScheduledStart" class="form-input" required>
+                  <p class="form-help">When the maintenance window begins</p>
+                </div>
+                <div>
+                  <label class="form-label">Scheduled End</label>
+                  <input type="datetime-local" id="incidentScheduledEnd" class="form-input">
+                  <p class="form-help">When the maintenance window ends (optional)</p>
+                </div>
               </div>
             </div>
           </div>
@@ -1628,7 +1719,7 @@
               <label class="form-label">Incident Description *</label>
               <textarea id="eventRuleIncidentDescription" class="form-input" rows="4" placeholder="Describe what happened..." required></textarea>
             </div>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label class="form-label">Incident Severity *</label>
                 <select id="eventRuleIncidentSeverity" class="form-input" required>

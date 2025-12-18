@@ -5,8 +5,40 @@ let currentChartPeriod = '24h'; // Default period
 let currentStartDate = null;
 let currentEndDate = null;
 
-// Tab switching
+// Map URL paths to tab names
+const urlToTabMap = {
+  '/admin': 'monitors',
+  '/admin/incidents': 'incidents',
+  '/admin/events': 'event-rules',
+  '/admin/blogs': 'posts',
+  '/admin/visibility': 'visibility',
+  '/admin/settings': 'settings',
+  '/admin/backup': 'backup'
+};
+
+// Map tab names to URLs
+const tabToUrlMap = {
+  'monitors': '/admin',
+  'incidents': '/admin/incidents',
+  'event-rules': '/admin/events',
+  'posts': '/admin/blogs',
+  'visibility': '/admin/visibility',
+  'settings': '/admin/settings',
+  'backup': '/admin/backup'
+};
+
+// Get current tab from URL
+function getCurrentTabFromUrl() {
+  const path = window.location.pathname;
+  return urlToTabMap[path] || 'monitors';
+}
+
+// Tab switching with URL navigation
 function switchTab(tabName, eventElement) {
+  // Update URL without page reload
+  const url = tabToUrlMap[tabName] || '/admin';
+  window.history.pushState({ tab: tabName }, '', url);
+
   // Hide all tabs
   document.querySelectorAll('.tab-content').forEach(tab => {
     tab.classList.remove('active');
@@ -18,19 +50,17 @@ function switchTab(tabName, eventElement) {
   });
 
   // Show selected tab
-  document.getElementById(tabName).classList.add('active');
-
-  // Set active button - use eventElement if provided, otherwise find by tab name
-  if (eventElement) {
-    eventElement.classList.add('active');
-  } else {
-    // Find the button that corresponds to this tab
-    document.querySelectorAll('.tab-button').forEach(btn => {
-      if (btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(`'${tabName}'`)) {
-        btn.classList.add('active');
-      }
-    });
+  const tabElement = document.getElementById(tabName);
+  if (tabElement) {
+    tabElement.classList.add('active');
   }
+
+  // Set active button - find by href
+  document.querySelectorAll('.tab-button').forEach(btn => {
+    if (btn.getAttribute('href') === url) {
+      btn.classList.add('active');
+    }
+  });
 
   // Load tab-specific data
   if (tabName === 'monitors') {
@@ -48,6 +78,24 @@ function switchTab(tabName, eventElement) {
   } else if (tabName === 'backup') {
     // Backup tab doesn't need to load anything on switch
   }
+}
+
+// Initialize tab on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const currentTab = getCurrentTabFromUrl();
+  switchTab(currentTab);
+});
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', (event) => {
+  const currentTab = getCurrentTabFromUrl();
+  switchTab(currentTab);
+});
+
+// Handle tab link clicks - prevent default and use pushState for smooth navigation
+function handleTabClick(event, tabName) {
+  event.preventDefault();
+  switchTab(tabName);
 }
 
 // Load monitors list
@@ -157,6 +205,7 @@ async function selectMonitor(monitor) {
     document.getElementById('editMaxRedirects').value = fullMonitor.maxRedirects || 5;
     document.getElementById('editIgnoreSsl').checked = fullMonitor.ignoreSsl || false;
     document.getElementById('editUpsideDown').checked = fullMonitor.upsideDown || false;
+    document.getElementById('editImportant').checked = fullMonitor.important || false;
     document.getElementById('editPosition').value = fullMonitor.position || 0;
     document.getElementById('editQuickCommands').value = (fullMonitor.quickCommands || []).join(', ');
 
@@ -1045,7 +1094,7 @@ function openEditMonitor() {
         'editHttpMethod', 'editTimeout', 'editStatusCodes', 'editMaxRedirects',
         'editPosition', 'editQuickCommands', 'editAuthMethod', 'editAuthUsername',
         'editAuthPassword', 'editAuthToken', 'editEnabled', 'editIgnoreSsl', 
-        'editUpsideDown', 'editPublicVisible'
+        'editUpsideDown', 'editImportant', 'editPublicVisible'
       ];
       
       formFields.forEach(fieldId => {
@@ -1120,6 +1169,7 @@ async function saveMonitor() {
     maxRedirects: parseInt(getFormElement('editMaxRedirects')?.value) || 5,
     ignoreSsl: getFormElement('editIgnoreSsl')?.checked || false,
     upsideDown: getFormElement('editUpsideDown')?.checked || false,
+    important: getFormElement('editImportant')?.checked || false,
     position: parseInt(getFormElement('editPosition')?.value) || 0,
     quickCommands: getFormElement('editQuickCommands')?.value
       ? getFormElement('editQuickCommands').value.split(',').map(cmd => cmd.trim()).filter(cmd => cmd)
@@ -1336,13 +1386,30 @@ async function loadIncidents() {
       investigating: 'bg-yellow-900 text-yellow-200',
       identified: 'bg-orange-900 text-orange-200',
       monitoring: 'bg-blue-900 text-blue-200',
-      resolved: 'bg-green-900 text-green-200'
+      resolved: 'bg-green-900 text-green-200',
+      scheduled: 'bg-purple-900 text-purple-200'
     };
 
     incidents.forEach(incident => {
       const card = document.createElement('div');
       card.className = 'bg-slate-900/50 backdrop-blur rounded-lg p-4 border border-slate-700/30';
       const date = new Date(incident.createdAt).toLocaleString();
+      
+      let scheduledInfo = '';
+      if (incident.isScheduled && incident.scheduledStart) {
+        const startDate = new Date(incident.scheduledStart).toLocaleString();
+        const endDate = incident.scheduledEnd ? new Date(incident.scheduledEnd).toLocaleString() : null;
+        scheduledInfo = `
+          <div class="mt-2 p-2 bg-purple-900/20 border border-purple-700/30 rounded">
+            <p class="text-xs text-purple-300">
+              <i class="fas fa-calendar-alt mr-1"></i>
+              <strong>Scheduled:</strong> ${startDate}
+              ${endDate ? ` - ${endDate}` : ''}
+            </p>
+          </div>
+        `;
+      }
+      
       card.innerHTML = `
         <div class="flex justify-between items-start mb-2">
           <h4 class="font-semibold text-lg">${incident.title}</h4>
@@ -1352,7 +1419,8 @@ async function loadIncidents() {
           </div>
         </div>
         <p class="text-sm text-slate-400 mb-3">${incident.description}</p>
-        <div class="flex justify-between items-center">
+        ${scheduledInfo}
+        <div class="flex justify-between items-center mt-3">
           <p class="text-xs text-slate-500">${date}</p>
           <div class="flex gap-2">
             <button onclick="editIncident('${incident._id}')" class="btn-secondary text-xs px-3 py-1">
@@ -1382,12 +1450,38 @@ function showCreateIncidentModal() {
   document.getElementById('incidentDescription').value = '';
   document.getElementById('incidentSeverity').value = 'major';
   document.getElementById('incidentStatus').value = 'investigating';
+  document.getElementById('incidentIsScheduled').checked = false;
+  document.getElementById('incidentScheduledStart').value = '';
+  document.getElementById('incidentScheduledEnd').value = '';
+  document.getElementById('scheduledFields').classList.add('hidden');
   document.getElementById('incidentModal').classList.add('active');
   
   // Focus on title input
   setTimeout(() => {
     document.getElementById('incidentTitle').focus();
   }, 100);
+}
+
+// Toggle scheduled fields visibility
+function toggleScheduledFields() {
+  const isScheduled = document.getElementById('incidentIsScheduled').checked;
+  const scheduledFields = document.getElementById('scheduledFields');
+  const scheduledStart = document.getElementById('incidentScheduledStart');
+  const scheduledEnd = document.getElementById('incidentScheduledEnd');
+  
+  if (isScheduled) {
+    scheduledFields.classList.remove('hidden');
+    scheduledStart.required = true;
+    // Set default start time to 1 hour from now
+    const now = new Date();
+    now.setHours(now.getHours() + 1);
+    scheduledStart.value = now.toISOString().slice(0, 16);
+  } else {
+    scheduledFields.classList.add('hidden');
+    scheduledStart.required = false;
+    scheduledStart.value = '';
+    scheduledEnd.value = '';
+  }
 }
 
 // Close incident modal
@@ -1409,6 +1503,26 @@ async function editIncident(incidentId) {
     document.getElementById('incidentDescription').value = incident.description;
     document.getElementById('incidentSeverity').value = incident.severity || 'major';
     document.getElementById('incidentStatus').value = incident.status || 'investigating';
+    
+    // Handle scheduled maintenance fields
+    const isScheduled = incident.isScheduled || false;
+    document.getElementById('incidentIsScheduled').checked = isScheduled;
+    
+    if (incident.scheduledStart) {
+      const startDate = new Date(incident.scheduledStart);
+      document.getElementById('incidentScheduledStart').value = startDate.toISOString().slice(0, 16);
+    } else {
+      document.getElementById('incidentScheduledStart').value = '';
+    }
+    
+    if (incident.scheduledEnd) {
+      const endDate = new Date(incident.scheduledEnd);
+      document.getElementById('incidentScheduledEnd').value = endDate.toISOString().slice(0, 16);
+    } else {
+      document.getElementById('incidentScheduledEnd').value = '';
+    }
+    
+    toggleScheduledFields();
     document.getElementById('incidentModal').classList.add('active');
     
     // Focus on title input
@@ -1431,30 +1545,38 @@ async function saveIncident(event) {
   const description = document.getElementById('incidentDescription').value.trim();
   const severity = document.getElementById('incidentSeverity').value;
   const status = document.getElementById('incidentStatus').value;
+  const isScheduled = document.getElementById('incidentIsScheduled').checked;
+  const scheduledStart = document.getElementById('incidentScheduledStart').value;
+  const scheduledEnd = document.getElementById('incidentScheduledEnd').value;
 
   if (!title || !description) {
     showNotification('Title and description are required', 'error');
     return;
   }
 
+  if (isScheduled && !scheduledStart) {
+    showNotification('Scheduled start time is required for scheduled maintenance', 'error');
+    return;
+  }
+
   try {
+    const incidentData = {
+      title,
+      description,
+      severity,
+      status,
+      isScheduled,
+      scheduledStart: isScheduled && scheduledStart ? scheduledStart : null,
+      scheduledEnd: isScheduled && scheduledEnd ? scheduledEnd : null
+    };
+
     if (currentIncidentId) {
       // Update existing incident
-      await axios.put(`/admin/api/incidents/${currentIncidentId}`, {
-        title,
-        description,
-        severity,
-        status
-      });
+      await axios.put(`/admin/api/incidents/${currentIncidentId}`, incidentData);
       showNotification('Incident updated successfully', 'success');
     } else {
       // Create new incident
-      await axios.post('/admin/api/incidents', {
-        title,
-        description,
-        severity,
-        status
-      });
+      await axios.post('/admin/api/incidents', incidentData);
       showNotification('Incident created successfully', 'success');
     }
 
@@ -2511,7 +2633,7 @@ function toggleEditPanel() {
             'editHttpMethod', 'editTimeout', 'editStatusCodes', 'editMaxRedirects',
             'editPosition', 'editQuickCommands', 'editAuthMethod', 'editAuthUsername',
             'editAuthPassword', 'editAuthToken', 'editEnabled', 'editIgnoreSsl',
-            'editUpsideDown', 'editPublicVisible'
+            'editUpsideDown', 'editImportant', 'editPublicVisible'
           ];
 
           formFields.forEach(fieldId => {

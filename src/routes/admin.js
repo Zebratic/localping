@@ -66,9 +66,39 @@ router.get('/logout', (req, res) => {
   });
 });
 
-// Admin dashboard
+// Admin dashboard - Monitors tab (default)
 router.get('/', adminPageAuth, (req, res) => {
-  res.render('admin/index');
+  res.render('admin/index', { currentTab: 'monitors' });
+});
+
+// Admin Incidents tab
+router.get('/incidents', adminPageAuth, (req, res) => {
+  res.render('admin/index', { currentTab: 'incidents' });
+});
+
+// Admin Event Detection Rules tab
+router.get('/events', adminPageAuth, (req, res) => {
+  res.render('admin/index', { currentTab: 'event-rules' });
+});
+
+// Admin Blog Posts tab
+router.get('/blogs', adminPageAuth, (req, res) => {
+  res.render('admin/index', { currentTab: 'posts' });
+});
+
+// Admin Public Visibility tab
+router.get('/visibility', adminPageAuth, (req, res) => {
+  res.render('admin/index', { currentTab: 'visibility' });
+});
+
+// Admin Settings tab
+router.get('/settings', adminPageAuth, (req, res) => {
+  res.render('admin/index', { currentTab: 'settings' });
+});
+
+// Admin Backup & Restore tab
+router.get('/backup', adminPageAuth, (req, res) => {
+  res.render('admin/index', { currentTab: 'backup' });
 });
 
 // Proxy endpoint for icons
@@ -118,40 +148,44 @@ router.use('/api', (req, res, next) => {
 router.get('/api/dashboard', async (req, res) => {
   try {
     const prisma = getPrisma();
-    const faviconService = require('../services/faviconService');
 
-    const targets = await prisma.target.findMany();
+    const targets = await prisma.target.findMany({
+      select: {
+        id: true,
+        name: true,
+        host: true,
+        protocol: true,
+        port: true,
+        enabled: true,
+        publicVisible: true,
+        appUrl: true,
+        appIcon: true,
+        group: true,
+        position: true,
+        interval: true,
+        retries: true,
+        timeout: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
 
-    const targetsWithStatus = await Promise.all(targets.map(async (target) => {
-      let favicon = null;
-
-      if (target.appUrl) {
-        let cachedFavicon = await prisma.favicon.findUnique({ where: { appUrl: target.appUrl } });
-        if (cachedFavicon) {
-          favicon = cachedFavicon.favicon;
-        } else {
-          favicon = await faviconService.getFavicon(target.appUrl);
-          if (favicon) {
-            await prisma.favicon.upsert({
-              where: { appUrl: target.appUrl },
-              update: { favicon, updatedAt: new Date() },
-              create: { appUrl: target.appUrl, favicon, updatedAt: new Date() },
-            });
-          }
-        }
-      }
-
-      return {
-        ...target,
-        _id: target.id,
-        favicon,
-        currentStatus: monitorService.getTargetStatus(target.id),
-      };
+    const targetsWithStatus = targets.map((target) => ({
+      ...target,
+      _id: target.id,
+      currentStatus: monitorService.getTargetStatus(target.id),
     }));
 
     const alerts = await prisma.alert.findMany({
       orderBy: { timestamp: 'desc' },
       take: 20,
+      select: {
+        id: true,
+        targetId: true,
+        type: true,
+        timestamp: true,
+        message: true,
+      },
     });
 
     res.json({
@@ -269,13 +303,25 @@ router.post('/api/incidents', async (req, res) => {
   try {
     const prisma = getPrisma();
     const incidentService = new IncidentService(prisma);
-    const { title, description, status, severity, affectedServices } = req.body;
+    const { title, description, status, severity, affectedServices, isScheduled, scheduledStart, scheduledEnd } = req.body;
 
     if (!title || !description) {
       return res.status(400).json({ success: false, error: 'Title and description are required' });
     }
 
-    const result = await incidentService.createIncident({ title, description, status, severity, affectedServices });
+    // Ensure isScheduled is a boolean
+    const isScheduledBool = isScheduled === true || isScheduled === 'true' || isScheduled === 1;
+    
+    const result = await incidentService.createIncident({ 
+      title, 
+      description, 
+      status, 
+      severity, 
+      affectedServices,
+      isScheduled: isScheduledBool,
+      scheduledStart,
+      scheduledEnd
+    });
     res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -286,10 +332,14 @@ router.put('/api/incidents/:id', async (req, res) => {
   try {
     const prisma = getPrisma();
     const incidentService = new IncidentService(prisma);
-    const { title, description, status, severity, affectedServices, updateMessage } = req.body;
+    const { title, description, status, severity, affectedServices, updateMessage, isScheduled, scheduledStart, scheduledEnd } = req.body;
+
+    // Ensure isScheduled is a boolean
+    const isScheduledBool = isScheduled === true || isScheduled === 'true' || isScheduled === 1;
 
     const updated = await incidentService.updateIncident(req.params.id, {
       title, description, status, severity, affectedServices, updateMessage,
+      isScheduled: isScheduledBool, scheduledStart, scheduledEnd
     });
 
     if (!updated) return res.status(404).json({ success: false, error: 'Incident not found' });
@@ -445,7 +495,7 @@ router.post('/api/targets', async (req, res) => {
       name, host, port, protocol, path, interval, enabled, publicVisible,
       publicShowDetails, publicShowStatus, publicShowAppLink, appUrl, appIcon,
       retries, retryInterval, timeout, httpMethod, statusCodes, maxRedirects,
-      ignoreSsl, upsideDown, auth, position, group, quickCommands,
+      ignoreSsl, upsideDown, important, auth, position, group, quickCommands,
     } = req.body;
 
     if (!name || !host || !protocol) {
@@ -462,7 +512,7 @@ router.post('/api/targets', async (req, res) => {
         retries: retries || 0, retryInterval: retryInterval || 5, timeout: timeout || 30,
         httpMethod: httpMethod || 'GET', statusCodes: statusCodes || '200-299',
         maxRedirects: maxRedirects !== undefined ? maxRedirects : 5, ignoreSsl: ignoreSsl === true,
-        upsideDown: upsideDown === true, auth: auth || null, position: position || 0,
+        upsideDown: upsideDown === true, important: important === true, auth: auth || null, position: position || 0,
         group: group || null, quickCommands: quickCommands || null,
       },
     });
@@ -545,8 +595,15 @@ router.delete('/api/targets/:id', async (req, res) => {
     const targetId = req.params.id;
 
     monitorService.stopTargetMonitor(targetId);
+    
+    // Manually delete related data to avoid foreign key constraint issues
+    await prisma.pingResult.deleteMany({ where: { targetId } });
+    await prisma.alert.deleteMany({ where: { targetId } });
+    await prisma.statistic.deleteMany({ where: { targetId } });
+    await prisma.action.deleteMany({ where: { targetId } });
+    
+    // Now delete the target
     await prisma.target.delete({ where: { id: targetId } });
-    // Related data is cascade deleted by Prisma schema
 
     res.json({ success: true, message: 'Target deleted' });
   } catch (error) {
@@ -590,6 +647,69 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
       startDateObj.setDate(startDateObj.getDate() - 30);
       intervalMinutes = 720;
       maxPoints = 60;
+    } else if (period === 'all' || period === 'ALL') {
+      // For ALL period, use daily statistics (much more efficient)
+      const dailyStats = await prisma.statistic.findMany({
+        where: { targetId },
+        orderBy: { date: 'asc' },
+        select: {
+          date: true,
+          totalPings: true,
+          successfulPings: true,
+          avgResponseTime: true,
+        },
+      });
+
+      const stats = dailyStats.map(s => ({
+        date: s.date.toISOString(),
+        totalPings: s.totalPings || 0,
+        successfulPings: s.successfulPings || 0,
+        failedPings: (s.totalPings || 0) - (s.successfulPings || 0),
+        uptime: s.totalPings > 0 ? ((s.successfulPings / s.totalPings) * 100) : 0,
+        avgResponseTime: s.avgResponseTime || 0,
+      }));
+
+      // Get uptime data using aggregation
+      const uptime24hStart = new Date();
+      uptime24hStart.setDate(uptime24hStart.getDate() - 1);
+      const uptime30dStart = new Date();
+      uptime30dStart.setDate(uptime30dStart.getDate() - 30);
+
+      const [uptime24h, uptime30d] = await Promise.all([
+        prisma.statistic.aggregate({
+          where: { targetId, date: { gte: uptime24hStart } },
+          _sum: { totalPings: true, successfulPings: true },
+        }),
+        prisma.statistic.aggregate({
+          where: { targetId, date: { gte: uptime30dStart } },
+          _sum: { totalPings: true, successfulPings: true },
+        }),
+      ]);
+
+      const totalPings24h = uptime24h._sum.totalPings || 0;
+      const successfulPings24h = uptime24h._sum.successfulPings || 0;
+      const totalPings30d = uptime30d._sum.totalPings || 0;
+      const successfulPings30d = uptime30d._sum.successfulPings || 0;
+
+      return res.json({
+        success: true,
+        target: targetWithStatus,
+        statistics: stats,
+        uptime: {
+          '24h': {
+            uptime: totalPings24h > 0 ? (successfulPings24h / totalPings24h) * 100 : 0,
+            totalPings: totalPings24h,
+            successfulPings: successfulPings24h,
+            failedPings: totalPings24h - successfulPings24h,
+          },
+          '30d': {
+            uptime: totalPings30d > 0 ? (successfulPings30d / totalPings30d) * 100 : 0,
+            totalPings: totalPings30d,
+            successfulPings: successfulPings30d,
+            failedPings: totalPings30d - successfulPings30d,
+          },
+        },
+      });
     }
 
     const intervalSeconds = intervalMinutes * 60;
@@ -626,28 +746,28 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
       avgResponseTime: Number(r.avgResponseTime) || 0,
     }));
 
-    // Get uptime data
+    // Get uptime data using aggregation (much faster)
     const uptime24hStart = new Date();
     uptime24hStart.setDate(uptime24hStart.getDate() - 1);
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
 
-    const dailyStats = await prisma.statistic.findMany({
-      where: { targetId, date: { gte: uptime30dStart } },
-      orderBy: { date: 'asc' },
-    });
+    // Use aggregation queries instead of fetching all records
+    const [uptime24h, uptime30d] = await Promise.all([
+      prisma.statistic.aggregate({
+        where: { targetId, date: { gte: uptime24hStart } },
+        _sum: { totalPings: true, successfulPings: true },
+      }),
+      prisma.statistic.aggregate({
+        where: { targetId, date: { gte: uptime30dStart } },
+        _sum: { totalPings: true, successfulPings: true },
+      }),
+    ]);
 
-    let totalPings24h = 0, successfulPings24h = 0;
-    let totalPings30d = 0, successfulPings30d = 0;
-
-    dailyStats.forEach(stat => {
-      totalPings30d += stat.totalPings || 0;
-      successfulPings30d += stat.successfulPings || 0;
-      if (new Date(stat.date) >= uptime24hStart) {
-        totalPings24h += stat.totalPings || 0;
-        successfulPings24h += stat.successfulPings || 0;
-      }
-    });
+    const totalPings24h = uptime24h._sum.totalPings || 0;
+    const successfulPings24h = uptime24h._sum.successfulPings || 0;
+    const totalPings30d = uptime30d._sum.totalPings || 0;
+    const successfulPings30d = uptime30d._sum.successfulPings || 0;
 
     res.json({
       success: true,
@@ -667,7 +787,6 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
           failedPings: totalPings30d - successfulPings30d,
         },
       },
-      dailyStats: dailyStats.map(s => ({ ...s, _id: s.id })),
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

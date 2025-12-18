@@ -56,10 +56,13 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
   try {
     const prisma = getPrisma();
     const targetId = req.params.id;
-    const period = req.query.period || '24h';
+    // Support both 'period' and 'days' query parameters
+    const period = req.query.period || (req.query.days ? `${req.query.days}d` : '24h');
+    const days = parseInt(req.query.days) || null;
 
     const target = await prisma.target.findFirst({
       where: { id: targetId, enabled: true, publicVisible: true },
+      select: { id: true, name: true },
     });
 
     if (!target) {
@@ -70,8 +73,26 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
     let endDateObj = new Date();
     let intervalMinutes = 30;
     let maxPoints = 48;
+    let useDailyStats = false;
 
-    if (period === '1h') {
+    // Handle 'days' parameter for daily statistics
+    if (days !== null) {
+      if (days === 1) {
+        startDateObj.setHours(startDateObj.getHours() - 24);
+        intervalMinutes = 30;
+        maxPoints = 48;
+        useDailyStats = false;
+      } else if (days === 30) {
+        // For 30 days, use daily statistics table instead of raw ping results
+        useDailyStats = true;
+        startDateObj.setDate(startDateObj.getDate() - 30);
+      } else {
+        startDateObj.setDate(startDateObj.getDate() - days);
+        intervalMinutes = Math.max(60, Math.floor((days * 24 * 60) / 60));
+        maxPoints = 60;
+        useDailyStats = days >= 7;
+      }
+    } else if (period === '1h') {
       startDateObj.setHours(startDateObj.getHours() - 1);
       intervalMinutes = 1;
       maxPoints = 60;
@@ -85,66 +106,110 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
       maxPoints = 56;
     } else if (period === '30d') {
       startDateObj.setDate(startDateObj.getDate() - 30);
-      intervalMinutes = 720;
-      maxPoints = 60;
+      useDailyStats = true;
+    } else if (period === 'all' || period === 'ALL') {
+      // For ALL period, use daily statistics (much more efficient)
+      useDailyStats = true;
+      startDateObj = new Date(0); // Start from beginning
     }
 
-    const intervalSeconds = intervalMinutes * 60;
-    const startEpoch = Math.floor(startDateObj.getTime() / 1000);
-    const endEpoch = Math.floor(endDateObj.getTime() / 1000);
+    let stats = [];
 
-    const result = await prisma.$queryRaw`
-      WITH time_buckets AS (
-        SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
-        FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
-        ORDER BY bucket_epoch
-        LIMIT ${maxPoints}
-      )
-      SELECT
-        time_buckets.bucket_time::text as date,
-        COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
-        COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
-        COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
-      FROM time_buckets
-      LEFT JOIN "pingResults" pr ON
-        pr."targetId" = ${targetId}
-        AND pr.timestamp >= time_buckets.bucket_time
-        AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
-      GROUP BY time_buckets.bucket_time
-      ORDER BY time_buckets.bucket_time ASC
-    `;
+    if (useDailyStats) {
+      // Use pre-aggregated daily statistics for better performance
+      const dailyStats = await prisma.statistic.findMany({
+        where: {
+          targetId,
+          date: { gte: startDateObj },
+        },
+        orderBy: { date: 'asc' },
+        select: {
+          date: true,
+          totalPings: true,
+          successfulPings: true,
+          avgResponseTime: true,
+        },
+      });
 
-    const stats = result.map(r => ({
-      date: r.date,
-      totalPings: Number(r.totalPings) || 0,
-      successfulPings: Number(r.successfulPings) || 0,
-      failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),
-      uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
-      avgResponseTime: Number(r.avgResponseTime) || 0,
-    }));
+      stats = dailyStats.map(s => ({
+        date: s.date.toISOString(),
+        totalPings: s.totalPings || 0,
+        successfulPings: s.successfulPings || 0,
+        failedPings: (s.totalPings || 0) - (s.successfulPings || 0),
+        uptime: s.totalPings > 0 ? ((s.successfulPings / s.totalPings) * 100) : 0,
+        avgResponseTime: s.avgResponseTime || 0,
+      }));
+    } else {
+      // Use optimized raw query for shorter time periods
+      const intervalSeconds = intervalMinutes * 60;
+      const startEpoch = Math.floor(startDateObj.getTime() / 1000);
+      const endEpoch = Math.floor(endDateObj.getTime() / 1000);
 
-    // Get uptime data
+      // Optimized query with proper index usage
+      const result = await prisma.$queryRaw`
+        WITH time_buckets AS (
+          SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
+          FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
+          ORDER BY bucket_epoch
+          LIMIT ${maxPoints}
+        )
+        SELECT
+          time_buckets.bucket_time::text as date,
+          COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
+          COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
+          COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
+        FROM time_buckets
+        LEFT JOIN "pingResults" pr ON
+          pr."targetId" = ${targetId}
+          AND pr.timestamp >= time_buckets.bucket_time
+          AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
+        GROUP BY time_buckets.bucket_time
+        ORDER BY time_buckets.bucket_time ASC
+      `;
+
+      stats = result.map(r => ({
+        date: r.date,
+        totalPings: Number(r.totalPings) || 0,
+        successfulPings: Number(r.successfulPings) || 0,
+        failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),
+        uptime: r.totalPings > 0 ? ((r.successfulPings / r.totalPings) * 100) : 0,
+        avgResponseTime: Number(r.avgResponseTime) || 0,
+      }));
+    }
+
+    // Get uptime summary using aggregated statistics (much faster)
     const uptime24hStart = new Date();
     uptime24hStart.setDate(uptime24hStart.getDate() - 1);
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
 
-    const dailyStats = await prisma.statistic.findMany({
-      where: { targetId, date: { gte: uptime30dStart } },
-      orderBy: { date: 'asc' },
+    // Use single aggregation query instead of fetching all records
+    const uptime24h = await prisma.statistic.aggregate({
+      where: {
+        targetId,
+        date: { gte: uptime24hStart },
+      },
+      _sum: {
+        totalPings: true,
+        successfulPings: true,
+      },
     });
 
-    let totalPings24h = 0, successfulPings24h = 0;
-    let totalPings30d = 0, successfulPings30d = 0;
-
-    dailyStats.forEach(stat => {
-      totalPings30d += stat.totalPings || 0;
-      successfulPings30d += stat.successfulPings || 0;
-      if (new Date(stat.date) >= uptime24hStart) {
-        totalPings24h += stat.totalPings || 0;
-        successfulPings24h += stat.successfulPings || 0;
-      }
+    const uptime30d = await prisma.statistic.aggregate({
+      where: {
+        targetId,
+        date: { gte: uptime30dStart },
+      },
+      _sum: {
+        totalPings: true,
+        successfulPings: true,
+      },
     });
+
+    const totalPings24h = uptime24h._sum.totalPings || 0;
+    const successfulPings24h = uptime24h._sum.successfulPings || 0;
+    const totalPings30d = uptime30d._sum.totalPings || 0;
+    const successfulPings30d = uptime30d._sum.successfulPings || 0;
 
     res.json({
       success: true,
@@ -163,7 +228,10 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
           failedPings: totalPings30d - successfulPings30d,
         },
       },
-      dailyStats: dailyStats.map(s => ({ ...s, _id: s.id })),
+      target: {
+        _id: target.id,
+        name: target.name,
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -188,13 +256,14 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const stats = await prisma.statistic.findMany({
+    // Use aggregation instead of fetching all records
+    const stats = await prisma.statistic.aggregate({
       where: { targetId, date: { gte: startDate } },
-      orderBy: { date: 'asc' },
+      _sum: { totalPings: true, successfulPings: true },
     });
 
-    const totalPings = stats.reduce((sum, s) => sum + (s.totalPings || 0), 0);
-    const successfulPings = stats.reduce((sum, s) => sum + (s.successfulPings || 0), 0);
+    const totalPings = stats._sum.totalPings || 0;
+    const successfulPings = stats._sum.successfulPings || 0;
     const uptime = totalPings > 0 ? ((successfulPings / totalPings) * 100).toFixed(2) : 0;
 
     res.json({
@@ -211,6 +280,212 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
   }
 });
 
+// Public API - Get all data for public UI (consolidated endpoint)
+router.get('/api/public/all', async (req, res) => {
+  try {
+    const prisma = getPrisma();
+    
+    // Get all visible targets
+    const targets = await prisma.target.findMany({
+      where: { enabled: true, publicVisible: true },
+      select: {
+        id: true,
+        name: true,
+        host: true,
+        protocol: true,
+        appUrl: true,
+        appIcon: true,
+        position: true,
+        group: true,
+        quickCommands: true,
+        publicShowDetails: true,
+        publicShowStatus: true,
+        publicShowAppLink: true,
+      },
+      orderBy: { position: 'asc' },
+    });
+
+    // Calculate date ranges
+    const uptime24hStart = new Date();
+    uptime24hStart.setDate(uptime24hStart.getDate() - 1);
+    const uptime30dStart = new Date();
+    uptime30dStart.setDate(uptime30dStart.getDate() - 30);
+
+    // Get uptime statistics for all targets in parallel using aggregation
+    const targetIds = targets.map(t => t.id);
+    
+    if (targetIds.length === 0) {
+      return res.json({
+        success: true,
+        status: {
+          overallStatus: 'operational',
+          upTargets: 0,
+          downTargets: 0,
+          totalTargets: 0,
+        },
+        targets: [],
+        timestamp: new Date(),
+      });
+    }
+
+    // Use raw SQL for efficient aggregation across all targets
+    const [uptime24hData, uptime30dData, dailyStatsData] = await Promise.all([
+      // 24h uptime aggregation for all targets
+      prisma.$queryRaw`
+        SELECT 
+          "targetId",
+          COALESCE(SUM("totalPings"), 0)::bigint as "totalPings",
+          COALESCE(SUM("successfulPings"), 0)::bigint as "successfulPings"
+        FROM statistics
+        WHERE "targetId" = ANY(${targetIds}::text[])
+        AND date >= ${uptime24hStart}
+        GROUP BY "targetId"
+      `,
+      // 30d uptime aggregation for all targets
+      prisma.$queryRaw`
+        SELECT 
+          "targetId",
+          COALESCE(SUM("totalPings"), 0)::bigint as "totalPings",
+          COALESCE(SUM("successfulPings"), 0)::bigint as "successfulPings"
+        FROM statistics
+        WHERE "targetId" = ANY(${targetIds}::text[])
+        AND date >= ${uptime30dStart}
+        GROUP BY "targetId"
+      `,
+      // Daily stats for last 30 days (for uptime bars)
+      prisma.statistic.findMany({
+        where: {
+          targetId: { in: targetIds },
+          date: { gte: uptime30dStart },
+        },
+        select: {
+          targetId: true,
+          date: true,
+          totalPings: true,
+          successfulPings: true,
+        },
+        orderBy: { date: 'asc' },
+      }),
+    ]);
+
+    // Create lookup maps for fast access
+    const uptime24hMap = new Map();
+    uptime24hData.forEach(item => {
+      const total = Number(item.totalPings) || 0;
+      const successful = Number(item.successfulPings) || 0;
+      const uptime = total > 0 ? (successful / total) * 100 : 0;
+      uptime24hMap.set(item.targetId, {
+        uptime: parseFloat(uptime.toFixed(2)),
+        totalPings: total,
+        successfulPings: successful,
+        failedPings: total - successful,
+      });
+    });
+
+    const uptime30dMap = new Map();
+    uptime30dData.forEach(item => {
+      const total = Number(item.totalPings) || 0;
+      const successful = Number(item.successfulPings) || 0;
+      const uptime = total > 0 ? (successful / total) * 100 : 0;
+      uptime30dMap.set(item.targetId, {
+        uptime: parseFloat(uptime.toFixed(2)),
+        totalPings: total,
+        successfulPings: successful,
+        failedPings: total - successful,
+      });
+    });
+
+    // Group daily stats by targetId
+    const dailyStatsMap = new Map();
+    dailyStatsData.forEach(stat => {
+      if (!dailyStatsMap.has(stat.targetId)) {
+        dailyStatsMap.set(stat.targetId, []);
+      }
+      const dailyUptime = stat.totalPings > 0 ? ((stat.successfulPings / stat.totalPings) * 100) : 0;
+      dailyStatsMap.get(stat.targetId).push({
+        date: stat.date.toISOString(),
+        totalPings: stat.totalPings || 0,
+        successfulPings: stat.successfulPings || 0,
+        failedPings: (stat.totalPings || 0) - (stat.successfulPings || 0),
+        uptime: parseFloat(dailyUptime.toFixed(2)),
+      });
+    });
+
+    // Build response with targets and their statistics (only include needed fields)
+    const targetsWithStats = targets.map(target => {
+      const status = monitorService.getTargetStatus(target.id);
+      const uptime24h = uptime24hMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
+      const uptime30d = uptime30dMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
+      const dailyStats = dailyStatsMap.get(target.id) || [];
+      const showDetails = target.publicShowDetails === true;
+
+      const result = {
+        _id: target.id,
+        name: target.name,
+        currentStatus: status,
+        isUp: status === 'up',
+        publicShowDetails: showDetails,
+        publicShowStatus: target.publicShowStatus !== false,
+        publicShowAppLink: target.publicShowAppLink !== false,
+        uptime: {
+          '24h': uptime24h,
+          '30d': uptime30d,
+        },
+        dailyStats: dailyStats,
+      };
+
+      // Only include host/protocol if publicShowDetails is true
+      if (showDetails) {
+        result.host = target.host;
+        result.protocol = target.protocol;
+      }
+
+      // Only include appUrl/appIcon if they exist (needed for icons/links)
+      if (target.appUrl) {
+        result.appUrl = target.appUrl;
+      }
+      if (target.appIcon) {
+        result.appIcon = target.appIcon;
+      }
+
+      // Only include group/position/quickCommands if they have values
+      if (target.group) {
+        result.group = target.group;
+      }
+      if (target.position !== 0) {
+        result.position = target.position;
+      }
+      if (target.quickCommands && target.quickCommands.length > 0) {
+        result.quickCommands = target.quickCommands;
+      }
+
+      return result;
+    });
+
+    // Calculate overall status
+    const upCount = targetsWithStats.filter(t => t.isUp).length;
+    const downCount = targetsWithStats.length - upCount;
+    let overallStatus = 'operational';
+    if (downCount > 0) {
+      overallStatus = downCount === targetsWithStats.length ? 'down' : 'degraded';
+    }
+
+    res.json({
+      success: true,
+      status: {
+        overallStatus,
+        upTargets: upCount,
+        downTargets: downCount,
+        totalTargets: targetsWithStats.length,
+      },
+      targets: targetsWithStats,
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Public API - Get overall status
 router.get('/api/status', async (req, res) => {
   try {
@@ -220,29 +495,8 @@ router.get('/api/status', async (req, res) => {
       where: { enabled: true, publicVisible: true },
     });
 
-    const targetsWithStatus = await Promise.all(targets.map(async (target) => {
-      let favicon = null;
-
-      if (target.appUrl) {
-        const cachedFavicon = await prisma.favicon.findUnique({ where: { appUrl: target.appUrl } });
-        if (cachedFavicon) {
-          favicon = cachedFavicon.favicon;
-        } else {
-          // Fetch favicon in background (non-blocking)
-          faviconService.getFavicon(target.appUrl)
-            .then(async (newFavicon) => {
-              if (newFavicon) {
-                await prisma.favicon.upsert({
-                  where: { appUrl: target.appUrl },
-                  update: { favicon: newFavicon, updatedAt: new Date() },
-                  create: { appUrl: target.appUrl, favicon: newFavicon, updatedAt: new Date() },
-                });
-              }
-            })
-            .catch(() => {});
-        }
-      }
-
+    const targetsWithStatus = targets.map((target) => {
+      const status = monitorService.getTargetStatus(target.id);
       return {
         _id: target.id,
         name: target.name,
@@ -250,9 +504,8 @@ router.get('/api/status', async (req, res) => {
         protocol: target.protocol,
         appUrl: target.appUrl,
         appIcon: target.appIcon || null,
-        favicon: favicon,
-        currentStatus: monitorService.getTargetStatus(target.id),
-        isUp: monitorService.getTargetStatus(target.id) === 'up',
+        currentStatus: status,
+        isUp: status === 'up',
         position: target.position || 0,
         group: target.group || null,
         quickCommands: target.quickCommands || [],
@@ -260,7 +513,7 @@ router.get('/api/status', async (req, res) => {
         publicShowStatus: target.publicShowStatus !== false,
         publicShowAppLink: target.publicShowAppLink !== false,
       };
-    }));
+    });
 
     const upCount = targetsWithStatus.filter((t) => t.isUp).length;
     const downCount = targetsWithStatus.length - upCount;

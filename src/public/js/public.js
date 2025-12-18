@@ -5,6 +5,9 @@ let chartPeriods = {}; // Track current period for each chart
 let targetUptimeCache = {};
 let faviconCache = {}; // Cache for favicons in localStorage
 let previousIncidents = new Map(); // Track previous incidents for change detection
+let statisticsCache = null; // Cache for statistics data
+let statisticsCacheTime = null; // Timestamp of when cache was created
+const STATISTICS_CACHE_DURATION = 60 * 60 * 1000; // 60 minutes in milliseconds
 
 // Load previous incidents from localStorage on page load
 function loadPreviousIncidents() {
@@ -103,13 +106,52 @@ async function loadBlogPosts() {
 
 async function loadData() {
   try {
-    const [statusRes, incidentsRes] = await Promise.all([
-      axios.get('/api/status'),
-      axios.get('/api/incidents')
-    ]);
+    const now = Date.now();
+    const shouldRefreshStats = !statisticsCache || !statisticsCacheTime || (now - statisticsCacheTime) > STATISTICS_CACHE_DURATION;
+
+    // Load incidents (always fresh)
+    const incidentsRes = await axios.get('/api/incidents');
+    const { incidents } = incidentsRes.data;
+
+    // Load targets and statistics (use cache if available and not expired)
+    let statusRes;
+    if (shouldRefreshStats) {
+      // Use consolidated endpoint for fresh data
+      statusRes = await axios.get('/api/public/all');
+      statisticsCache = statusRes.data;
+      statisticsCacheTime = now;
+    } else {
+      // Use cached statistics but get fresh status
+      if (statisticsCache) {
+        // Get fresh status only
+        const statusOnlyRes = await axios.get('/api/status');
+        // Merge fresh status with cached statistics
+        statusRes = {
+          data: {
+            status: statusOnlyRes.data.status,
+            targets: statisticsCache.targets.map(cachedTarget => {
+              const freshTarget = statusOnlyRes.data.targets.find(t => t._id === cachedTarget._id);
+              if (freshTarget) {
+                // Merge fresh status with cached statistics
+                return {
+                  ...cachedTarget,
+                  currentStatus: freshTarget.currentStatus,
+                  isUp: freshTarget.isUp,
+                };
+              }
+              return cachedTarget;
+            }),
+          },
+        };
+      } else {
+        // No cache, fetch everything
+        statusRes = await axios.get('/api/public/all');
+        statisticsCache = statusRes.data;
+        statisticsCacheTime = now;
+      }
+    }
 
     const { status, targets } = statusRes.data;
-    const { incidents } = incidentsRes.data;
 
     // Check for status changes and send notifications
     if (window.notificationManager && window.notificationManager.isEnabled()) {
@@ -148,6 +190,7 @@ async function loadData() {
     // Display incidents
     displayIncidents(incidents);
     displayIncidentHistory(incidents);
+    displayHomeIncidents(incidents);
 
     // Update both pages
     displayApps(targets);
@@ -193,12 +236,143 @@ function updateHeaderStatus(status) {
   timeEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
 }
 
+// Format date for scheduled maintenance display
+function formatScheduledTime(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleString([], { 
+    year: 'numeric',
+    month: 'short', 
+    day: 'numeric',
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+// Display active incidents on home page - Mobile Optimized
+function displayHomeIncidents(incidents) {
+  const homeIncidentsContainer = document.getElementById('home-incidents');
+  if (!homeIncidentsContainer) return;
+
+  // Filter for active incidents (investigating, identified, monitoring, scheduled)
+  const activeIncidents = incidents.filter(i => i.status !== 'resolved');
+
+  if (activeIncidents.length === 0) {
+    homeIncidentsContainer.innerHTML = '';
+    return;
+  }
+
+  const statusIcons = {
+    'investigating': '🔍',
+    'identified': '⚠️',
+    'monitoring': '👁️',
+    'scheduled': '📅'
+  };
+
+  const statusLabels = {
+    'investigating': 'Investigating',
+    'identified': 'Identified',
+    'monitoring': 'Monitoring',
+    'scheduled': 'Scheduled'
+  };
+
+  homeIncidentsContainer.innerHTML = `
+    <div class="mb-4">
+      <div class="flex items-center gap-2 mb-3">
+        <h2 class="text-lg font-bold text-white">Ongoing Incidents</h2>
+        <span class="text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-400 font-semibold">${activeIncidents.length}</span>
+      </div>
+      ${activeIncidents.map(incident => {
+        const severityClass = incident.severity || 'minor';
+        const statusIcon = statusIcons[incident.status] || '⚠️';
+        const statusLabel = statusLabels[incident.status] || incident.status;
+        
+        const statusBadgeColors = {
+          'investigating': 'bg-blue-500/20 text-blue-300',
+          'identified': 'bg-yellow-500/20 text-yellow-300',
+          'monitoring': 'bg-orange-500/20 text-orange-300',
+          'scheduled': 'bg-purple-500/20 text-purple-300'
+        };
+
+        const severityBadgeColors = {
+          'critical': 'bg-red-500/20 text-red-300',
+          'major': 'bg-orange-500/20 text-orange-300',
+          'minor': 'bg-yellow-500/20 text-yellow-300'
+        };
+
+        const isScheduled = incident.isScheduled && (incident.scheduledStart || incident.scheduledEnd);
+        let scheduledTimeHtml = '';
+        
+        if (isScheduled) {
+          if (incident.scheduledStart && incident.scheduledEnd) {
+            scheduledTimeHtml = `
+              <div class="mt-2 pt-2 border-t border-slate-600/30">
+                <p class="text-slate-400 text-xs flex items-center gap-1">
+                  <i class="fas fa-calendar-alt"></i>
+                  <span>${formatScheduledTime(incident.scheduledStart)} - ${formatScheduledTime(incident.scheduledEnd)}</span>
+                </p>
+              </div>
+            `;
+          } else if (incident.scheduledStart) {
+            scheduledTimeHtml = `
+              <div class="mt-2 pt-2 border-t border-slate-600/30">
+                <p class="text-slate-400 text-xs flex items-center gap-1">
+                  <i class="fas fa-calendar-alt"></i>
+                  <span>Starts: ${formatScheduledTime(incident.scheduledStart)}</span>
+                </p>
+              </div>
+            `;
+          }
+        }
+
+        const timeAgo = getTimeAgo(new Date(incident.createdAt));
+
+        return `
+          <div class="incident-card ${severityClass}">
+            <div class="incident-header">
+              <h3 class="incident-title">${incident.title}</h3>
+              <span class="incident-status-badge ${statusBadgeColors[incident.status] || 'bg-slate-700/50 text-slate-300'}">
+                ${statusIcon} ${statusLabel}
+              </span>
+            </div>
+            <p class="incident-description">${incident.description}</p>
+            ${scheduledTimeHtml}
+            <div class="incident-meta">
+              <span class="incident-severity-badge ${severityBadgeColors[severityClass] || 'bg-slate-700/50 text-slate-300'}">
+                ${severityClass.toUpperCase()}
+              </span>
+              <span class="text-slate-500">•</span>
+              <span>${timeAgo}</span>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+// Helper function to get time ago
+function getTimeAgo(date) {
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
 // Display active incidents at the top of status page
 function displayIncidents(incidents) {
   const incidentsContainer = document.getElementById('incidents-container');
   if (!incidentsContainer) return;
 
-  // Filter for active incidents (investigating, identified, monitoring)
+  // Filter for active incidents (investigating, identified, monitoring, scheduled)
   const activeIncidents = incidents.filter(i => i.status !== 'resolved');
 
   if (activeIncidents.length === 0) {
@@ -222,8 +396,34 @@ function displayIncidents(incidents) {
         const statusColors = {
           'investigating': 'bg-blue-900/30 text-blue-300',
           'identified': 'bg-yellow-900/30 text-yellow-300',
-          'monitoring': 'bg-orange-900/30 text-orange-300'
+          'monitoring': 'bg-orange-900/30 text-orange-300',
+          'scheduled': 'bg-purple-900/30 text-purple-300'
         };
+
+        const isScheduled = incident.isScheduled && (incident.scheduledStart || incident.scheduledEnd);
+        let scheduledTimeHtml = '';
+        
+        if (isScheduled) {
+          if (incident.scheduledStart && incident.scheduledEnd) {
+            scheduledTimeHtml = `
+              <div class="mt-2 pt-2 border-t border-slate-600/50">
+                <p class="text-slate-300 text-xs">
+                  <i class="fas fa-calendar-alt mr-1"></i>
+                  <strong>Scheduled:</strong> ${formatScheduledTime(incident.scheduledStart)} - ${formatScheduledTime(incident.scheduledEnd)}
+                </p>
+              </div>
+            `;
+          } else if (incident.scheduledStart) {
+            scheduledTimeHtml = `
+              <div class="mt-2 pt-2 border-t border-slate-600/50">
+                <p class="text-slate-300 text-xs">
+                  <i class="fas fa-calendar-alt mr-1"></i>
+                  <strong>Starts:</strong> ${formatScheduledTime(incident.scheduledStart)}
+                </p>
+              </div>
+            `;
+          }
+        }
 
         return `
           <div class="border border-slate-700 rounded-lg p-4 mb-3 ${severityColors[incident.severity] || 'bg-slate-900/30 border-slate-700'}">
@@ -232,7 +432,8 @@ function displayIncidents(incidents) {
               <span class="text-xs px-2 py-1 rounded ${statusColors[incident.status] || 'bg-slate-700'}">${incident.status.toUpperCase()}</span>
             </div>
             <p class="text-slate-300 text-sm mb-2">${incident.description}</p>
-            <p class="text-slate-500 text-xs">Reported: ${new Date(incident.createdAt).toLocaleString()}</p>
+            ${scheduledTimeHtml}
+            <p class="text-slate-500 text-xs mt-2">Reported: ${new Date(incident.createdAt).toLocaleString()}</p>
           </div>
         `;
       }).join('')}
@@ -268,10 +469,31 @@ function displayIncidentHistory(incidents) {
           'investigating': '🔍',
           'identified': '⚠️',
           'monitoring': '👁️',
-          'resolved': '✅'
+          'resolved': '✅',
+          'scheduled': '📅'
         };
 
         const isResolved = incident.status === 'resolved';
+        const isScheduled = incident.isScheduled && (incident.scheduledStart || incident.scheduledEnd);
+        let scheduledTimeHtml = '';
+        
+        if (isScheduled) {
+          if (incident.scheduledStart && incident.scheduledEnd) {
+            scheduledTimeHtml = `
+              <p class="text-slate-400 text-xs ml-6 mt-1">
+                <i class="fas fa-calendar-alt mr-1"></i>
+                <strong>Scheduled:</strong> ${formatScheduledTime(incident.scheduledStart)} - ${formatScheduledTime(incident.scheduledEnd)}
+              </p>
+            `;
+          } else if (incident.scheduledStart) {
+            scheduledTimeHtml = `
+              <p class="text-slate-400 text-xs ml-6 mt-1">
+                <i class="fas fa-calendar-alt mr-1"></i>
+                <strong>Starts:</strong> ${formatScheduledTime(incident.scheduledStart)}
+              </p>
+            `;
+          }
+        }
 
         return `
           <div class="border ${severityColors[incident.severity] || 'border-slate-700'} rounded-lg p-3 ${isResolved ? 'opacity-70' : ''}">
@@ -286,6 +508,7 @@ function displayIncidentHistory(incidents) {
               </div>
             </div>
             <p class="text-slate-400 text-xs ml-6">${incident.description}</p>
+            ${scheduledTimeHtml}
             <p class="text-slate-500 text-xs ml-6 mt-1">Reported: ${new Date(incident.createdAt).toLocaleString()}</p>
           </div>
         `;
@@ -412,7 +635,7 @@ function displayApps(targets) {
 
   // Display ungrouped apps first
   if (ungroupedApps.length > 0) {
-    html += '<div id="apps-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">';
+    html += '<div id="apps-grid" class="flex flex-col gap-3 sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 mb-8">';
     html += ungroupedApps.map(app => buildAppCard(app)).join('');
     html += '</div>';
   }
@@ -422,7 +645,7 @@ function displayApps(targets) {
     html += `
       <div class="mb-8">
         <h3 class="text-lg font-semibold text-white mb-4">${group}</h3>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <div class="flex flex-col gap-3 sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           ${appsInGroup.map(app => buildAppCard(app)).join('')}
         </div>
       </div>
@@ -823,6 +1046,12 @@ function openApp(url) {
 // ==================== STATUS PAGE ====================
 
 async function getTargetUptime(targetId) {
+  // Use cached data from consolidated endpoint if available
+  const target = allTargets.find(t => t._id === targetId);
+  if (target && target.uptime) {
+    return target.uptime['30d']?.uptime || 0;
+  }
+
   if (targetUptimeCache[targetId]) {
     return targetUptimeCache[targetId];
   }
@@ -839,18 +1068,10 @@ async function getTargetUptime(targetId) {
 }
 
 async function getTargetCurrentPing(targetId) {
-  try {
-    const res = await axios.get(`/api/targets/${targetId}/statistics?days=1`);
-    const stats = res.data.statistics || [];
-    if (stats.length > 0) {
-      const latestStat = stats[stats.length - 1];
-      return latestStat.lastResponseTime || 0;
-    }
-    return 0;
-  } catch (error) {
-    console.error('Error fetching current ping:', error);
-    return 0;
-  }
+  // Try to get from cached data first (we don't cache individual ping, but we can skip the request)
+  // For now, return 0 as we don't have current ping in the consolidated endpoint
+  // This can be enhanced later if needed
+  return 0;
 }
 
 async function loadAndDisplayPing(targetId) {
@@ -1056,9 +1277,23 @@ async function loadAndDisplayUptime(targetId) {
 
 async function loadAndDisplayUptimeBars(targetId) {
   try {
-    // Fetch statistics for the last 30 days (hourly data)
-    const res = await axios.get(`/api/targets/${targetId}/statistics?days=30`);
-    const stats = res.data.statistics || [];
+    // Use cached daily stats from consolidated endpoint if available
+    const target = allTargets.find(t => t._id === targetId);
+    let stats = [];
+    
+    if (target && target.dailyStats) {
+      stats = target.dailyStats;
+    } else {
+      // Fallback: fetch if not in cache (shouldn't happen if using consolidated endpoint)
+      const now = Date.now();
+      if (!statisticsCache || !statisticsCacheTime || (now - statisticsCacheTime) > STATISTICS_CACHE_DURATION) {
+        const res = await axios.get(`/api/targets/${targetId}/statistics?days=30`);
+        stats = res.data.statistics || [];
+      } else {
+        // Still in cache, but target not found - return early
+        return;
+      }
+    }
 
     // Get the uptime bar container
     const serviceEl = document.getElementById(`service-${targetId}`);
@@ -1161,19 +1396,27 @@ async function loadServiceDetails(serviceId) {
   const contentEl = document.getElementById(`service-content-${serviceId}`);
 
   try {
-    // Load all data in one API call (statistics + uptime) - use 24h period for initial load
-    const statsResponse = await axios.get(`/api/targets/${serviceId}/statistics?period=24h`);
-    const uptimeData = statsResponse.data.uptime || {};
+    // Use cached uptime data if available, otherwise fetch
+    let uptime24h = 0;
+    let uptime30d = 0;
     
-    const uptime24h = parseFloat(uptimeData['24h']?.uptime || 0);
-    const uptime30d = parseFloat(uptimeData['30d']?.uptime || 0);
-    const totalPings = uptimeData['30d']?.totalPings || 0;
-    const successfulPings = uptimeData['30d']?.successfulPings || 0;
+    if (target.uptime) {
+      uptime24h = parseFloat(target.uptime['24h']?.uptime || 0);
+      uptime30d = parseFloat(target.uptime['30d']?.uptime || 0);
+    } else {
+      // Fallback: fetch if not in cache
+      const statsResponse = await axios.get(`/api/targets/${serviceId}/statistics?period=24h`);
+      const uptimeData = statsResponse.data.uptime || {};
+      uptime24h = parseFloat(uptimeData['24h']?.uptime || 0);
+      uptime30d = parseFloat(uptimeData['30d']?.uptime || 0);
+    }
+    
+    // Chart data will be loaded separately when needed (only when details are expanded)
 
     contentEl.innerHTML = `
       <div class="space-y-4 p-4 border-t border-slate-700">
         <!-- Stats Grid -->
-        <div class="grid ${target.publicShowDetails ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2 md:grid-cols-3'} gap-3">
+        <div class="grid ${target.publicShowDetails ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'} gap-3">
           <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
             <p class="text-slate-400 text-xs mb-1">Current Status</p>
             <p class="text-lg font-bold ${target.isUp ? 'text-green-400' : 'text-red-400'} mt-1">${target.isUp ? '✓ UP' : '✗ DOWN'}</p>
@@ -1194,21 +1437,6 @@ async function loadServiceDetails(serviceId) {
           ` : ''}
         </div>
 
-        <!-- Additional Stats Row -->
-        <div class="grid grid-cols-3 gap-3">
-          <div class="bg-gradient-to-br from-blue-900/30 to-blue-800/20 rounded-lg p-3 border border-blue-700/30 backdrop-blur-sm">
-            <p class="text-slate-400 text-xs mb-1">Total Pings</p>
-            <p class="text-lg font-bold text-blue-400 mt-1">${totalPings}</p>
-          </div>
-          <div class="bg-gradient-to-br from-green-900/30 to-green-800/20 rounded-lg p-3 border border-green-700/30 backdrop-blur-sm">
-            <p class="text-slate-400 text-xs mb-1">Successful</p>
-            <p class="text-lg font-bold text-green-400 mt-1">${successfulPings}</p>
-          </div>
-          <div class="bg-gradient-to-br from-red-900/30 to-red-800/20 rounded-lg p-3 border border-red-700/30 backdrop-blur-sm">
-            <p class="text-slate-400 text-xs mb-1">Failed</p>
-            <p class="text-lg font-bold text-red-400 mt-1">${totalPings - successfulPings}</p>
-          </div>
-        </div>
 
         <!-- Time Period Selector -->
         <div class="flex gap-2 flex-wrap">
@@ -1279,8 +1507,6 @@ async function loadServiceDetailsUpdate(serviceId) {
 
     const uptime24h = parseFloat(uptimeData['24h']?.uptime || 0).toFixed(2);
     const uptime30d = parseFloat(uptimeData['30d']?.uptime || 0).toFixed(2);
-    const totalPings = uptimeData['30d']?.totalPings || 0;
-    const successfulPings = uptimeData['30d']?.successfulPings || 0;
 
     // Update values dynamically
     const uptime24hEl = contentEl.querySelector(`.uptime-24h-${serviceId}`);
@@ -1290,12 +1516,6 @@ async function loadServiceDetailsUpdate(serviceId) {
     const statusCard = contentEl.querySelector('.grid.grid-cols-2');
     const statusEl = statusCard ? statusCard.querySelector('.text-lg.font-bold') : null;
     
-    // Find ping count elements - they're in the second stat grid
-    const pingGrid = contentEl.querySelectorAll('.grid.grid-cols-3')[0];
-    const totalPingsEl = pingGrid ? pingGrid.querySelectorAll('.text-lg.font-bold')[0] : null;
-    const successfulPingsEl = pingGrid ? pingGrid.querySelectorAll('.text-lg.font-bold')[1] : null;
-    const failedPingsEl = pingGrid ? pingGrid.querySelectorAll('.text-lg.font-bold')[2] : null;
-
     if (uptime24hEl) uptime24hEl.textContent = uptime24h + '%';
     if (uptime30dEl) uptime30dEl.textContent = uptime30d + '%';
     
@@ -1305,11 +1525,6 @@ async function loadServiceDetailsUpdate(serviceId) {
       statusEl.className = `text-lg font-bold ${isUp ? 'text-green-400' : 'text-red-400'} mt-1`;
       statusEl.textContent = isUp ? '✓ UP' : '✗ DOWN';
     }
-    
-    // Update ping counts
-    if (totalPingsEl) totalPingsEl.textContent = totalPings;
-    if (successfulPingsEl) successfulPingsEl.textContent = successfulPings;
-    if (failedPingsEl) failedPingsEl.textContent = totalPings - successfulPings;
 
     // Update chart data dynamically if chart exists
     if (charts[serviceId] && chartPeriods[serviceId]) {

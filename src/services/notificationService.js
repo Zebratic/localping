@@ -140,13 +140,34 @@ class NotificationService {
   /**
    * Format Discord embed for monitor status change
    */
-  formatMonitorEmbed(target, status, responseTime = null) {
+  formatMonitorEmbed(target, status, responseTime = null, downtimeDuration = null) {
     const isUp = status === 'up';
     const color = isUp ? 0x10b981 : 0xef4444; // Green or Red
     const title = isUp ? '✓ Monitor Online' : '✗ Monitor Offline';
-    const description = isUp 
+    let description = isUp 
       ? `${target.name} is back online`
       : `${target.name} is currently offline`;
+
+    // Add downtime duration to description if available
+    if (isUp && downtimeDuration !== null) {
+      const seconds = Math.floor(downtimeDuration / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+      
+      let durationStr = '';
+      if (days > 0) {
+        durationStr = `${days} day${days > 1 ? 's' : ''}, ${hours % 24} hour${(hours % 24) !== 1 ? 's' : ''}`;
+      } else if (hours > 0) {
+        durationStr = `${hours} hour${hours > 1 ? 's' : ''}, ${minutes % 60} minute${(minutes % 60) !== 1 ? 's' : ''}`;
+      } else if (minutes > 0) {
+        durationStr = `${minutes} minute${minutes > 1 ? 's' : ''}, ${seconds % 60} second${(seconds % 60) !== 1 ? 's' : ''}`;
+      } else {
+        durationStr = `${seconds} second${seconds !== 1 ? 's' : ''}`;
+      }
+      
+      description += ` (was down for ${durationStr})`;
+    }
 
     const embed = {
       title,
@@ -247,7 +268,7 @@ class NotificationService {
   /**
    * Notify about monitor status change
    */
-  async notifyMonitorStatus(target, status, responseTime = null) {
+  async notifyMonitorStatus(target, status, responseTime = null, downtimeDuration = null) {
     const settings = await this.getSettings();
 
     if (!settings.enabled) {
@@ -263,12 +284,17 @@ class NotificationService {
 
     // Send Discord notification if enabled
     if (settings.discord.enabled && settings.discord.webhookUrl) {
-      const embed = this.formatMonitorEmbed(target, status, responseTime);
+      const embed = this.formatMonitorEmbed(target, status, responseTime, downtimeDuration);
       const payload = {
         username: settings.discord.username,
         embeds: [embed],
         avatar_url: this.getAvatarUrl(settings.discord.webhookUrl, settings.discord.avatarUrl),
       };
+
+      // Add @everyone for important monitors going down
+      if (status === 'down' && target.important === true) {
+        payload.content = '@everyone';
+      }
 
       const result = await this.sendDiscordNotification(settings.discord.webhookUrl, payload);
       results.push({ provider: 'discord', ...result });

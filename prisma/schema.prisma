@@ -32,6 +32,7 @@ model Target {
   maxRedirects      Int      @default(5)
   ignoreSsl         Boolean  @default(false)
   upsideDown        Boolean  @default(false)
+  important         Boolean  @default(false)
   auth              Json?
   appUrl            String?
   appIcon           String?
@@ -110,10 +111,14 @@ model Incident {
   affectedServices Json?
   updates          Json?
   resolvedAt       DateTime?
+  isScheduled      Boolean   @default(false)
+  scheduledStart   DateTime?
+  scheduledEnd     DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@index([status])
+  @@index([isScheduled, scheduledStart])
   @@map("incidents")
 }
 

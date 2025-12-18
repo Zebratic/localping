@@ -11,6 +11,8 @@ class MonitorService {
     this.debugLoggingChecked = false; // Track if we've checked the setting
     this.lastAlertTime = new Map(); // Prevent alert spam
     this.failureCount = new Map(); // Track consecutive failures for retry logic
+    this.downTimestamp = new Map(); // Track when monitor went down
+    this.notificationSent = new Map(); // Track if notification was sent for current down state
   }
 
   /**
@@ -128,11 +130,18 @@ class MonitorService {
       // Handle retry logic
       const maxRetries = target.retries || 0;
       let newStatus = 'unknown';
+      let downtimeDuration = null; // Capture downtime duration for notification
 
       if (pingSuccess) {
         // Success - reset failure counter
         this.failureCount.set(targetIdStr, 0);
         newStatus = 'up';
+        // Calculate downtime duration before clearing the timestamp
+        const downTime = this.downTimestamp.get(targetIdStr);
+        downtimeDuration = downTime ? Date.now() - downTime : null;
+        // Clear down timestamp and notification flag when coming back up
+        this.downTimestamp.delete(targetIdStr);
+        this.notificationSent.delete(targetIdStr);
       } else {
         // Failure - increment counter
         const currentFailures = (this.failureCount.get(targetIdStr) || 0) + 1;
@@ -141,6 +150,10 @@ class MonitorService {
         // Only mark as down if we've exceeded retry threshold
         if (currentFailures > maxRetries) {
           newStatus = 'down';
+          // Track when monitor went down (only set once)
+          if (!this.downTimestamp.has(targetIdStr)) {
+            this.downTimestamp.set(targetIdStr, Date.now());
+          }
         } else {
           // Still retrying, keep current status or mark as unknown
           newStatus = currentStatus || 'unknown';
@@ -191,15 +204,24 @@ class MonitorService {
           });
 
           // Handle alerts (non-blocking)
-          if (newStatus !== currentStatus && currentStatus !== 'unknown') {
-            if (newStatus === 'down') {
+          // Check if we need to send DOWN notification (after 3+ consecutive failures)
+          if (newStatus === 'down') {
+            const consecutiveFailures = this.failureCount.get(targetIdStr) || 0;
+            if (consecutiveFailures >= 3 && !this.notificationSent.get(targetIdStr)) {
+              this.notificationSent.set(targetIdStr, true);
               this.handleTargetDown(target, result.responseTime).catch(err => {
                 if (process.env.NODE_ENV === 'development') {
                   console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
                 }
               });
-            } else if (newStatus === 'up') {
-              this.handleTargetUp(target, result.responseTime).catch(err => {
+            }
+          }
+          
+          // Handle status changes
+          if (newStatus !== currentStatus && currentStatus !== 'unknown') {
+            if (newStatus === 'up') {
+              // Use downtime duration calculated before timestamp was deleted (captured in closure)
+              this.handleTargetUp(target, result.responseTime, downtimeDuration).catch(err => {
                 if (process.env.NODE_ENV === 'development') {
                   console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
                 }
@@ -281,7 +303,7 @@ class MonitorService {
   /**
    * Handle target coming back up
    */
-  async handleTargetUp(target, responseTime = null) {
+  async handleTargetUp(target, responseTime = null, downtimeDuration = null) {
     const prisma = getPrisma();
     const targetId = target.id || target._id;
 
@@ -302,7 +324,7 @@ class MonitorService {
     setImmediate(async () => {
       try {
         const notificationService = require('./notificationService');
-        await notificationService.notifyMonitorStatus(target, 'up', responseTime);
+        await notificationService.notifyMonitorStatus(target, 'up', responseTime, downtimeDuration);
       } catch (error) {
         // Silently fail - notifications are not critical
         if (process.env.NODE_ENV === 'development') {
@@ -431,6 +453,8 @@ class MonitorService {
       this.targetStatus.delete(targetIdStr);
       this.lastAlertTime.delete(targetIdStr);
       this.failureCount.delete(targetIdStr);
+      this.downTimestamp.delete(targetIdStr);
+      this.notificationSent.delete(targetIdStr);
       console.log(chalk.yellow(`⊘ Stopped monitoring ${targetIdStr}`));
     }
   }

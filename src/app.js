@@ -124,6 +124,15 @@ const startServer = async () => {
     // Set up periodic cleanup of old data (handled by dataRetentionService)
 
     // Set up periodic data retention processing
+    // Run once on startup, then every 6 hours
+    (async () => {
+      try {
+        await dataRetentionService.processRetentionForAllTargets();
+      } catch (error) {
+        console.error(chalk.red('Error processing initial data retention:'), error.message);
+      }
+    })();
+
     setInterval(async () => {
       try {
         await dataRetentionService.processRetentionForAllTargets();
@@ -131,6 +140,17 @@ const startServer = async () => {
         console.error(chalk.red('Error processing data retention:'), error.message);
       }
     }, 6 * 60 * 60 * 1000); // Run every 6 hours
+
+    // Set up periodic processing of scheduled incidents
+    const IncidentService = require('./services/incidentService');
+    const incidentService = new IncidentService(prisma);
+    setInterval(async () => {
+      try {
+        await incidentService.processScheduledIncidents();
+      } catch (error) {
+        console.error(chalk.red('Error processing scheduled incidents:'), error.message);
+      }
+    }, 60 * 1000); // Check every minute
 
     // Check if setup is needed
     if (!isSetupComplete()) {

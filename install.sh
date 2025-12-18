@@ -125,6 +125,11 @@ fi
 echo "📥 Installing npm dependencies..."
 npm install --silent 2>/dev/null || npm install
 
+echo "🔄 Syncing database schema with Prisma..."
+cd "$INSTALL_DIR"
+npx prisma generate --silent 2>/dev/null || npx prisma generate
+npx prisma db push --accept-data-loss --skip-generate 2>/dev/null || npx prisma db push --accept-data-loss --skip-generate
+
 echo "📁 Creating data directory..."
 mkdir -p "$INSTALL_DIR/data"
 

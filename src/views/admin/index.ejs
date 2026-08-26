@@ -483,6 +483,101 @@
       background: rgba(255, 255, 255, 0.3);
     }
 
+    .monitor-detail-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .monitor-action-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      min-height: 2.25rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    }
+
+    .monitor-action-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .monitor-action-btn:active {
+      transform: translateY(0);
+    }
+
+    .monitor-action-btn i {
+      font-size: 0.75rem;
+    }
+
+    .monitor-detail-skeleton {
+      display: grid;
+      gap: 1rem;
+      animation: skeletonFadeIn 0.18s ease-out;
+    }
+
+    .monitor-skeleton-line,
+    .monitor-skeleton-block {
+      position: relative;
+      overflow: hidden;
+      background: #17233a;
+      border: 1px solid #273754;
+      border-radius: 0.65rem;
+    }
+
+    .monitor-skeleton-line::after,
+    .monitor-skeleton-block::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(135, 180, 255, 0.12), transparent);
+      animation: skeletonShimmer 1.35s ease-in-out infinite;
+    }
+
+    .monitor-skeleton-line {
+      height: 1rem;
+    }
+
+    .monitor-skeleton-line.title {
+      width: min(18rem, 60%);
+      height: 1.75rem;
+    }
+
+    .monitor-skeleton-line.short {
+      width: 7rem;
+    }
+
+    .monitor-skeleton-block {
+      min-height: 5.5rem;
+    }
+
+    .monitor-skeleton-block.chart {
+      min-height: 23rem;
+    }
+
+    @keyframes skeletonShimmer {
+      100% { transform: translateX(100%); }
+    }
+
+    @keyframes skeletonFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .monitor-skeleton-line::after,
+      .monitor-skeleton-block::after {
+        animation: none;
+      }
+    }
+
     .checkbox-input {
       width: 1.25rem;
       height: 1.25rem;
@@ -826,10 +921,41 @@
         <!-- Monitor Details / Edit View -->
         <div class="lg:col-span-9">
           <div id="monitorDetails" class="hidden">
-            <div class="grid grid-cols-1 gap-4 lg:gap-6">
+            <div id="monitorDetailSkeleton" class="monitor-detail-skeleton hidden" aria-live="polite" aria-label="Loading monitor details">
+              <div class="flex items-center justify-between gap-4">
+                <div class="monitor-skeleton-line title"></div>
+                <div class="monitor-skeleton-line short"></div>
+              </div>
+              <div class="monitor-skeleton-block"></div>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="monitor-skeleton-block"></div>
+                <div class="monitor-skeleton-block"></div>
+                <div class="monitor-skeleton-block"></div>
+                <div class="monitor-skeleton-block"></div>
+              </div>
+              <div class="monitor-skeleton-block chart"></div>
+            </div>
+
+            <div id="monitorDetailContent" class="grid grid-cols-1 gap-4 lg:gap-6">
               <!-- Charts section - full width -->
-              <div>
-                <h3 class="text-lg font-semibold mb-4" id="monitorName">Select a monitor</h3>
+              <div id="monitorSummaryPane">
+                <div class="flex items-start justify-between gap-4 mb-4">
+                  <div class="min-w-0">
+                    <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Monitor overview</p>
+                    <h3 class="text-lg font-semibold truncate" id="monitorName">Select a monitor</h3>
+                  </div>
+                  <div class="monitor-detail-actions shrink-0" aria-label="Monitor actions">
+                    <button onclick="handleEditClick()" class="monitor-action-btn btn-primary" id="editMonitorBtn" title="Edit monitor settings">
+                      <i class="fas fa-edit"></i><span class="hidden sm:inline">Edit</span>
+                    </button>
+                    <button onclick="showCloneMonitorConfirm()" class="monitor-action-btn btn-secondary" id="cloneMonitorBtn" style="display: none;" title="Clone this monitor">
+                      <i class="fas fa-copy"></i><span class="hidden sm:inline">Clone</span>
+                    </button>
+                    <button onclick="showClearMonitorPingDataConfirm()" class="monitor-action-btn btn-secondary" id="clearPingDataBtn" style="display: none;" title="Clear all ping history for this monitor">
+                      <i class="fas fa-eraser"></i><span class="hidden sm:inline">Reset data</span>
+                    </button>
+                  </div>
+                </div>
                 
 
                 <!-- 24-hour block indicator -->
@@ -928,30 +1054,21 @@
                   </div>
                 </div>
                 
-                <!-- Edit Button at Bottom -->
-                <div class="mt-6 flex gap-2">
-                  <button onclick="handleEditClick()" class="btn-primary flex-1">
-                    <i class="fas fa-edit mr-2"></i>Edit Monitor Settings
-                  </button>
-                  <button onclick="showCloneMonitorConfirm()" class="btn-secondary" id="cloneMonitorBtn" style="display: none;">
-                    <i class="fas fa-copy mr-2"></i>Clone
-                  </button>
-                  <button onclick="showClearMonitorPingDataConfirm()" class="btn-secondary" id="clearPingDataBtn" style="display: none;" title="Clear all ping history for this monitor">
-                    <i class="fas fa-eraser mr-2"></i>Reset Data
-                  </button>
-                </div>
               </div>
 
-              <!-- Edit form on the right - Desktop: hidden by default, Mobile: slide-out panel -->
-              <div class="lg:col-span-1 hidden">
-                <div class="lg:hidden mb-4">
-                  <button onclick="toggleEditPanel()" class="btn-primary w-full">
-                    <i class="fas fa-edit mr-2"></i>Edit Settings
+              <!-- Inline monitor editor. It occupies the same main workspace as the summary. -->
+              <div id="monitorEditor" class="hidden">
+                <div class="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Monitor configuration</p>
+                    <h3 class="text-xl font-semibold" id="monitorEditorTitle">Edit monitor</h3>
+                  </div>
+                  <button type="button" onclick="cancelEdit()" class="monitor-action-btn btn-secondary" title="Return to monitor overview">
+                    <i class="fas fa-arrow-left"></i><span class="hidden sm:inline">Back</span>
                   </button>
                 </div>
-                <div id="editFormContainer" class="hidden">
+                <div id="editFormContainer">
                   <div class="form-scroll">
-                    <h3 class="text-lg font-semibold mb-4">Monitor Settings</h3>
                     <form id="editForm">
                   <!-- General Settings -->
                   <div class="form-section">
@@ -1563,41 +1680,6 @@
       </div>
     </div>
   </main>
-
-  <!-- Settings Overlay (Mobile) -->
-  <div id="settingsOverlay" class="settings-overlay" onclick="toggleEditPanel()"></div>
-
-  <!-- Settings Panel (Mobile Slide-out) -->
-  <div id="settingsPanel" class="settings-panel lg:!relative lg:!right-0">
-    <div class="p-4 lg:p-0 flex flex-col h-full">
-      <div class="flex justify-between items-center mb-4 lg:hidden flex-shrink-0 pb-4 border-b border-slate-700/30">
-        <h3 class="text-lg font-semibold">Monitor Settings</h3>
-        <button onclick="toggleEditPanel()" class="text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-slate-700/50">
-          <i class="fas fa-times text-xl"></i>
-        </button>
-      </div>
-      <div class="form-scroll flex-1 overflow-y-auto" id="editFormMobileContainer">
-        <!-- Form will be cloned here for mobile -->
-      </div>
-    </div>
-  </div>
-
-  <!-- Edit Monitor Modal -->
-  <div id="editMonitorModal" class="post-modal">
-    <div class="post-modal-content">
-      <div class="post-modal-header">
-        <h3 class="text-xl font-semibold" id="editMonitorModalTitle">Edit Monitor</h3>
-        <button onclick="closeEditMonitorModal()" class="btn-secondary text-sm px-3 py-1">
-          <i class="fas fa-times mr-1"></i>Close
-        </button>
-      </div>
-      <div class="post-modal-body">
-        <div id="editFormModal">
-          <!-- Form content will be cloned from editForm -->
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- Post Editor Modal -->
   <div id="postModal" class="post-modal">

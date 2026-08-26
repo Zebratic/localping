@@ -1,6 +1,6 @@
 let currentMonitorId = null;
 let statusChart = null;
-let editPanelOpen = false;
+let monitorSelectionVersion = 0;
 let currentChartPeriod = '24h'; // Default period
 let currentStartDate = null;
 let currentEndDate = null;
@@ -174,93 +174,166 @@ async function loadMonitors() {
   }
 }
 
+function isCurrentMonitorSelection(targetId, selectionVersion = null) {
+  return currentMonitorId === targetId
+    && (selectionVersion === null || selectionVersion === monitorSelectionVersion);
+}
+
+function setMonitorActionVisibility(visible) {
+  ['editMonitorBtn', 'cloneMonitorBtn', 'clearPingDataBtn'].forEach((id) => {
+    const button = document.getElementById(id);
+    if (button) button.style.display = visible ? 'inline-flex' : 'none';
+  });
+}
+
+function setMonitorLoadingState(isLoading) {
+  const skeleton = document.getElementById('monitorDetailSkeleton');
+  const content = document.getElementById('monitorDetailContent');
+  if (skeleton) skeleton.classList.toggle('hidden', !isLoading);
+  if (content) content.classList.toggle('hidden', isLoading);
+}
+
+function showMonitorSummary() {
+  const summary = document.getElementById('monitorSummaryPane');
+  const editor = document.getElementById('monitorEditor');
+  const content = document.getElementById('monitorDetailContent');
+  if (content) content.classList.remove('hidden');
+  if (summary) summary.classList.remove('hidden');
+  if (editor) editor.classList.add('hidden');
+}
+
+function populateMonitorForm(fullMonitor) {
+  const values = {
+    editName: fullMonitor.name || '',
+    editHost: fullMonitor.host || '',
+    editProtocol: fullMonitor.protocol || 'ICMP',
+    editPort: fullMonitor.port || '',
+    editInterval: fullMonitor.interval || 60,
+    editGroup: fullMonitor.group || '',
+    editAppUrl: fullMonitor.appUrl || '',
+    editAppIcon: fullMonitor.appIcon || '',
+    editRetries: fullMonitor.retries || 0,
+    editRetryInterval: fullMonitor.retryInterval || 5,
+    editHttpMethod: fullMonitor.httpMethod || 'GET',
+    editTimeout: fullMonitor.timeout || 30,
+    editStatusCodes: fullMonitor.statusCodes || '200-299',
+    editMaxRedirects: fullMonitor.maxRedirects || 5,
+    editPosition: fullMonitor.position || 0,
+    editQuickCommands: (fullMonitor.quickCommands || []).join(', '),
+  };
+
+  Object.entries(values).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) element.value = value;
+  });
+
+  const checkedValues = {
+    editEnabled: fullMonitor.enabled !== false,
+    editIgnoreSsl: fullMonitor.ignoreSsl === true,
+    editUpsideDown: fullMonitor.upsideDown === true,
+    editImportant: fullMonitor.important === true,
+    editPublicVisible: fullMonitor.publicVisible !== false,
+  };
+  Object.entries(checkedValues).forEach(([id, checked]) => {
+    const element = document.getElementById(id);
+    if (element) element.checked = checked;
+  });
+
+  const authMethod = document.getElementById('editAuthMethod');
+  const authUsername = document.getElementById('editAuthUsername');
+  const authPassword = document.getElementById('editAuthPassword');
+  const authToken = document.getElementById('editAuthToken');
+  if (authMethod) authMethod.value = 'none';
+  if (authUsername) authUsername.value = '';
+  if (authPassword) authPassword.value = '';
+  if (authToken) authToken.value = '';
+
+  let auth = fullMonitor.auth;
+  if (typeof auth === 'string') {
+    try { auth = JSON.parse(auth); } catch (error) { auth = null; }
+  }
+  if (auth?.type === 'basic') {
+    if (authMethod) authMethod.value = 'basic';
+    if (authUsername) authUsername.value = auth.username || '';
+    if (authPassword) authPassword.value = auth.password || '';
+  } else if (auth?.type === 'bearer') {
+    if (authMethod) authMethod.value = 'bearer';
+    if (authToken) authToken.value = auth.token || '';
+  }
+
+  updateProtocolSettings();
+  updateAuthFields();
+  attachFormListeners();
+}
+
+function resetMonitorWorkspace() {
+  monitorSelectionVersion += 1;
+  currentMonitorId = null;
+  setMonitorLoadingState(false);
+  setMonitorActionVisibility(false);
+
+  const details = document.getElementById('monitorDetails');
+  const emptyState = document.getElementById('emptyState');
+  const summary = document.getElementById('monitorSummaryPane');
+  const editor = document.getElementById('monitorEditor');
+  if (details) details.classList.add('hidden');
+  if (emptyState) emptyState.classList.remove('hidden');
+  if (summary) summary.classList.remove('hidden');
+  if (editor) editor.classList.add('hidden');
+
+  const form = document.getElementById('editForm');
+  if (form) form.reset();
+  document.querySelectorAll('.monitor-card').forEach(card => card.classList.remove('selected'));
+}
+
 // Select monitor and show details
 async function selectMonitor(monitor) {
+  if (!monitor?._id) return;
+
+  const selectionVersion = ++monitorSelectionVersion;
   currentMonitorId = monitor._id;
 
-  // Update UI
-  document.getElementById('emptyState').classList.add('hidden');
-  document.getElementById('monitorDetails').classList.remove('hidden');
+  const details = document.getElementById('monitorDetails');
+  const emptyState = document.getElementById('emptyState');
+  const summary = document.getElementById('monitorSummaryPane');
+  const editor = document.getElementById('monitorEditor');
+  if (emptyState) emptyState.classList.add('hidden');
+  if (details) details.classList.remove('hidden');
+  if (summary) summary.classList.remove('hidden');
+  if (editor) editor.classList.add('hidden');
+  setMonitorActionVisibility(false);
+  setMonitorLoadingState(true);
 
-  // Load full monitor data
+  // Highlight the selection immediately while the detail request is in flight.
+  document.querySelectorAll('.monitor-card').forEach(card => {
+    card.classList.toggle('selected', card.dataset.monitorId === monitor._id);
+  });
+
   try {
     const response = await axios.get(`/admin/api/targets/${monitor._id}`);
+    if (!isCurrentMonitorSelection(monitor._id, selectionVersion)) return;
     const fullMonitor = response.data.target;
 
-    // Populate form with all fields
-    document.getElementById('editName').value = fullMonitor.name || '';
-    document.getElementById('editHost').value = fullMonitor.host || '';
-    document.getElementById('editProtocol').value = fullMonitor.protocol || 'ICMP';
-    document.getElementById('editPort').value = fullMonitor.port || '';
-    document.getElementById('editInterval').value = fullMonitor.interval || 60;
-    document.getElementById('editGroup').value = fullMonitor.group || '';
-    document.getElementById('editEnabled').checked = fullMonitor.enabled !== false;
-    document.getElementById('editAppUrl').value = fullMonitor.appUrl || '';
-    document.getElementById('editAppIcon').value = fullMonitor.appIcon || '';
-    document.getElementById('editRetries').value = fullMonitor.retries || 0;
-    document.getElementById('editRetryInterval').value = fullMonitor.retryInterval || 5;
-    document.getElementById('editHttpMethod').value = fullMonitor.httpMethod || 'GET';
-    document.getElementById('editTimeout').value = fullMonitor.timeout || 30;
-    document.getElementById('editStatusCodes').value = fullMonitor.statusCodes || '200-299';
-    document.getElementById('editMaxRedirects').value = fullMonitor.maxRedirects || 5;
-    document.getElementById('editIgnoreSsl').checked = fullMonitor.ignoreSsl || false;
-    document.getElementById('editUpsideDown').checked = fullMonitor.upsideDown || false;
-    document.getElementById('editImportant').checked = fullMonitor.important || false;
-    document.getElementById('editPosition').value = fullMonitor.position || 0;
-    document.getElementById('editQuickCommands').value = (fullMonitor.quickCommands || []).join(', ');
+    populateMonitorForm(fullMonitor);
+    document.getElementById('monitorName').textContent = fullMonitor.name || monitor.name || 'Monitor';
 
-    // Handle authentication
-    if (fullMonitor.auth) {
-      if (fullMonitor.auth.type === 'basic') {
-        document.getElementById('editAuthMethod').value = 'basic';
-        document.getElementById('editAuthUsername').value = fullMonitor.auth.username || '';
-        document.getElementById('editAuthPassword').value = fullMonitor.auth.password || '';
-      } else if (fullMonitor.auth.type === 'bearer') {
-        document.getElementById('editAuthMethod').value = 'bearer';
-        document.getElementById('editAuthToken').value = fullMonitor.auth.token || '';
-      } else {
-        document.getElementById('editAuthMethod').value = 'none';
-      }
-    } else {
-      document.getElementById('editAuthMethod').value = 'none';
-    }
-
-    // Update protocol-specific sections
-    updateProtocolSettings();
-    updateAuthFields();
-    attachFormListeners();
-
-    document.getElementById('monitorName').textContent = fullMonitor.name;
-
-    // Update status
     const status = fullMonitor.currentStatus === 'up' ? 'Up' : 'Down';
     const statusColor = fullMonitor.currentStatus === 'up' ? 'text-green-400' : 'text-red-400';
     document.getElementById('monitorStatus').textContent = status;
     document.getElementById('monitorStatus').className = statusColor;
 
-    // Load real statistics (pass timeout for chart)
-    await loadMonitorStatistics(fullMonitor._id, fullMonitor.timeout || 30);
+    // Keep the skeleton visible until both the monitor and its chart are ready.
+    await loadMonitorStatistics(fullMonitor._id, fullMonitor.timeout || 30, selectionVersion);
+    if (!isCurrentMonitorSelection(monitor._id, selectionVersion)) return;
+
+    setMonitorLoadingState(false);
+    setMonitorActionVisibility(true);
   } catch (error) {
+    if (!isCurrentMonitorSelection(monitor._id, selectionVersion)) return;
     console.error('Error loading monitor details:', error);
+    setMonitorLoadingState(false);
+    showMonitorSummary();
     showNotification('Error loading monitor details', 'error');
-  }
-
-  // Update monitor list selection
-  document.querySelectorAll('.monitor-card').forEach(card => {
-    card.classList.remove('selected');
-    if (card.dataset.monitorId === monitor._id) {
-      card.classList.add('selected');
-    }
-  });
-
-  // Show clone and clear ping data buttons
-  const cloneBtn = document.getElementById('cloneMonitorBtn');
-  if (cloneBtn) {
-    cloneBtn.style.display = 'block';
-  }
-  const clearPingDataBtn = document.getElementById('clearPingDataBtn');
-  if (clearPingDataBtn) {
-    clearPingDataBtn.style.display = 'block';
   }
 }
 
@@ -345,13 +418,14 @@ function navigateTimePeriod(direction) {
 }
 
 // Load monitor statistics and draw chart
-async function loadMonitorStatistics(targetId, timeout = 30) {
+async function loadMonitorStatistics(targetId, timeout = 30, selectionVersion = null) {
   try {
     // Determine period for chart (default to 24h if not set)
     const period = currentChartPeriod || '24h';
     
     // Load all data in one API call (target + statistics + uptime)
     const statsResponse = await axios.get(`/admin/api/targets/${targetId}/statistics?period=${period}`);
+    if (!isCurrentMonitorSelection(targetId, selectionVersion)) return;
     const stats = statsResponse.data.statistics || [];
     const uptimeData = statsResponse.data.uptime || {};
     const dailyStats = statsResponse.data.dailyStats || [];
@@ -407,6 +481,7 @@ async function loadMonitorStatistics(targetId, timeout = 30) {
     // Draw chart (matching public UI style)
     drawStatusChart(stats, null, timeout * 1000);
   } catch (error) {
+    if (!isCurrentMonitorSelection(targetId, selectionVersion)) return;
     console.error('Error loading statistics:', error);
     document.getElementById('monitorUptime').textContent = '--';
     document.getElementById('monitorPing').textContent = '--';
@@ -825,8 +900,7 @@ function updateProtocolSettings() {
   
   const protocol = protocolElement.value;
   
-  // Find the form container (desktop, modal, or mobile)
-  const formContainer = protocolElement.closest('form') || protocolElement.closest('#editFormModal') || document.getElementById('editFormContainer');
+  const formContainer = protocolElement.closest('form') || document.getElementById('editFormContainer');
   if (!formContainer) return;
   
   const httpSection = formContainer.querySelector('#httpOptionsSection');
@@ -850,8 +924,7 @@ function updateAuthFields() {
   
   const authMethod = authMethodElement.value;
   
-  // Find the form container (desktop, modal, or mobile)
-  const formContainer = authMethodElement.closest('form') || authMethodElement.closest('#editFormModal') || document.getElementById('editFormContainer');
+  const formContainer = authMethodElement.closest('form') || document.getElementById('editFormContainer');
   if (!formContainer) return;
   
   const basicFields = formContainer.querySelector('#basicAuthFields');
@@ -883,8 +956,9 @@ async function deleteMonitor() {
   try {
     await axios.delete(`/admin/api/targets/${currentMonitorId}`);
     showNotification('Monitor deleted successfully', 'success');
+    currentMonitorId = null;
     cancelEdit();
-    loadMonitors();
+    await loadMonitors();
   } catch (error) {
     console.error('Error deleting monitor:', error);
     showNotification(error.response?.data?.error || 'Error deleting monitor', 'error');
@@ -893,21 +967,40 @@ async function deleteMonitor() {
 
 // Add new monitor
 function addNewMonitor() {
+  monitorSelectionVersion += 1;
   currentMonitorId = null;
-  document.getElementById('editForm').reset();
+  setMonitorLoadingState(false);
+  document.getElementById('monitorDetails')?.classList.remove('hidden');
+  document.getElementById('emptyState')?.classList.add('hidden');
+  document.getElementById('monitorSummaryPane')?.classList.add('hidden');
+  document.getElementById('monitorEditor')?.classList.remove('hidden');
+  document.getElementById('monitorEditorTitle').textContent = 'Add new monitor';
+  document.getElementById('monitorName').textContent = 'New monitor';
+
+  const form = document.getElementById('editForm');
+  if (form) form.reset();
 
   // Set defaults
-  document.getElementById('editProtocol').value = 'ICMP';
-  document.getElementById('editInterval').value = '60';
-  document.getElementById('editEnabled').checked = true;
-  document.getElementById('editRetries').value = '0';
-  document.getElementById('editRetryInterval').value = '5';
-  document.getElementById('editHttpMethod').value = 'GET';
-  document.getElementById('editTimeout').value = '30';
-  document.getElementById('editStatusCodes').value = '200-299';
-  document.getElementById('editMaxRedirects').value = '5';
-  document.getElementById('editPosition').value = '0';
-  document.getElementById('editAuthMethod').value = 'none';
+  const defaults = {
+    editProtocol: 'ICMP',
+    editInterval: '60',
+    editRetries: '0',
+    editRetryInterval: '5',
+    editHttpMethod: 'GET',
+    editTimeout: '30',
+    editStatusCodes: '200-299',
+    editMaxRedirects: '5',
+    editPosition: '0',
+    editAuthMethod: 'none',
+  };
+  Object.entries(defaults).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) element.value = value;
+  });
+  ['editEnabled', 'editPublicVisible'].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.checked = true;
+  });
 
   // Update protocol settings
   updateProtocolSettings();
@@ -928,16 +1021,7 @@ function addNewMonitor() {
     clearPingDataBtn.style.display = 'none';
   }
 
-  // Open edit modal/panel - respect mobile viewport
-  if (window.innerWidth < 1024) {
-    // On mobile, ensure the panel is closed first then open it
-    if (editPanelOpen) {
-      editPanelOpen = false;
-    }
-    toggleEditPanel();
-  } else {
-    openEditMonitor();
-  }
+  setTimeout(() => document.getElementById('editName')?.focus(), 0);
 }
 
 // Show clone monitor confirmation modal
@@ -1040,113 +1124,38 @@ async function confirmCloneMonitor() {
 
 // Helper to get form element (works for both desktop, mobile, and modal)
 function getFormElement(id) {
-  // Check if modal is active first (prioritize modal form)
-  const editModal = document.getElementById('editMonitorModal');
-  if (editModal && editModal.classList.contains('active')) {
-    const modalForm = document.querySelector('#editFormModal');
-    if (modalForm) {
-      const element = modalForm.querySelector(`#${id}`);
-      if (element) return element;
-    }
-  }
-  
-  // Check if mobile panel is open
-  const settingsPanel = document.getElementById('settingsPanel');
-  if (settingsPanel && settingsPanel.classList.contains('open')) {
-    const mobileForm = document.querySelector('#editFormMobileContainer #editForm');
-    if (mobileForm) {
-      const element = mobileForm.querySelector(`#${id}`);
-      if (element) return element;
-    }
-  }
-  
-  // Fall back to desktop form
   return document.getElementById(id);
 }
 
 // Handle edit button click - mobile uses panel, desktop uses modal
 function handleEditClick() {
-  // Check if we're on mobile (viewport width < 1024px)
-  if (window.innerWidth < 1024) {
-    toggleEditPanel();
-  } else {
-    openEditMonitor();
-  }
+  openEditMonitor();
 }
 
-// Open edit monitor modal (desktop)
+// Open the inline monitor editor.
 function openEditMonitor() {
-  const modal = document.getElementById('editMonitorModal');
-  const modalContainer = document.getElementById('editFormModal');
-  const desktopForm = document.getElementById('editForm');
-  
-  if (desktopForm && modalContainer) {
-    // Clone entire form to modal
-    modalContainer.innerHTML = desktopForm.outerHTML;
-    
-    // Re-attach event listeners and copy values from desktop form
-    const clonedForm = modalContainer.querySelector('#editForm');
-    if (clonedForm) {
-      // Copy all form values from desktop form to modal form
-      const formFields = [
-        'editName', 'editHost', 'editProtocol', 'editPort', 'editInterval', 
-        'editGroup', 'editAppUrl', 'editAppIcon', 'editRetries', 'editRetryInterval',
-        'editHttpMethod', 'editTimeout', 'editStatusCodes', 'editMaxRedirects',
-        'editPosition', 'editQuickCommands', 'editAuthMethod', 'editAuthUsername',
-        'editAuthPassword', 'editAuthToken', 'editEnabled', 'editIgnoreSsl', 
-        'editUpsideDown', 'editImportant', 'editPublicVisible'
-      ];
-      
-      formFields.forEach(fieldId => {
-        const desktopField = desktopForm.querySelector(`#${fieldId}`);
-        const modalField = clonedForm.querySelector(`#${fieldId}`);
-        if (desktopField && modalField) {
-          if (desktopField.type === 'checkbox') {
-            modalField.checked = desktopField.checked;
-          } else {
-            modalField.value = desktopField.value;
-          }
-        }
-      });
-      
-      // Re-attach event listeners
-      const protocolSelect = clonedForm.querySelector('#editProtocol');
-      const authSelect = clonedForm.querySelector('#editAuthMethod');
-      if (protocolSelect) {
-        protocolSelect.onchange = updateProtocolSettings;
-        // Update protocol settings visibility in modal
-        updateProtocolSettings();
-      }
-      if (authSelect) {
-        authSelect.onchange = updateAuthFields;
-        // Update auth fields visibility in modal
-        updateAuthFields();
-      }
-    }
-    
-    // Update modal title
-    if (currentMonitorId) {
-      const monitorName = document.getElementById('monitorName')?.textContent || 'Monitor';
-      document.getElementById('editMonitorModalTitle').textContent = `Edit ${monitorName}`;
-    } else {
-      document.getElementById('editMonitorModalTitle').textContent = 'Add New Monitor';
-    }
-    
-    // Show modal
-    modal.classList.add('active');
-    
-    // Focus on name field
-    setTimeout(() => {
-      const nameField = modalContainer.querySelector('#editName');
-      if (nameField) nameField.focus();
-    }, 100);
-  }
-}
+  const details = document.getElementById('monitorDetails');
+  const emptyState = document.getElementById('emptyState');
+  const summary = document.getElementById('monitorSummaryPane');
+  const editor = document.getElementById('monitorEditor');
+  if (!editor) return;
 
-// Close edit monitor modal
-function closeEditMonitorModal() {
-  const modal = document.getElementById('editMonitorModal');
-  modal.classList.remove('active');
+  details?.classList.remove('hidden');
+  emptyState?.classList.add('hidden');
+  summary?.classList.add('hidden');
+  editor.classList.remove('hidden');
+
+  const editorTitle = document.getElementById('monitorEditorTitle');
+  if (editorTitle) {
+    editorTitle.textContent = currentMonitorId
+      ? `Edit ${document.getElementById('monitorName')?.textContent || 'monitor'}`
+      : 'Add new monitor';
+  }
+
+  attachFormListeners();
+  updateProtocolSettings();
+  updateAuthFields();
+  setTimeout(() => document.getElementById('editName')?.focus(), 0);
 }
 
 // Save monitor
@@ -1158,6 +1167,7 @@ async function saveMonitor() {
     port: getFormElement('editPort')?.value ? parseInt(getFormElement('editPort').value) : null,
     interval: parseInt(getFormElement('editInterval')?.value) || 60,
     enabled: getFormElement('editEnabled')?.checked !== false,
+    publicVisible: getFormElement('editPublicVisible')?.checked !== false,
     group: getFormElement('editGroup')?.value || null,
     appUrl: getFormElement('editAppUrl')?.value || null,
     appIcon: getFormElement('editAppIcon')?.value || null,
@@ -1209,22 +1219,13 @@ async function saveMonitor() {
       showNotification('Monitor created successfully', 'success');
     }
     
-    // Close mobile panel if open
-    if (editPanelOpen) {
-      toggleEditPanel();
-    }
-    
-    // Close edit modal if open
-    const editModal = document.getElementById('editMonitorModal');
-    if (editModal && editModal.classList.contains('active')) {
-      closeEditMonitorModal();
-    }
-
-    // Reload monitors and refresh current selection
+    // Reload monitors and refresh the current selection in the same workspace.
     await loadMonitors();
     if (currentMonitorId) {
       const response = await axios.get(`/admin/api/targets/${currentMonitorId}`);
       await selectMonitor(response.data.target);
+    } else {
+      resetMonitorWorkspace();
     }
   } catch (error) {
     console.error('Error saving monitor:', error);
@@ -1341,25 +1342,13 @@ async function testMonitor() {
 
 // Cancel edit
 function cancelEdit() {
-  // Close edit modal if open
-  const editModal = document.getElementById('editMonitorModal');
-  if (editModal && editModal.classList.contains('active')) {
-    closeEditMonitorModal();
-    return; // Don't clear selection if just closing modal
-  }
-  
-  currentMonitorId = null;
-  document.getElementById('monitorDetails').classList.add('hidden');
-  document.getElementById('emptyState').classList.remove('hidden');
-  const desktopForm = document.getElementById('editForm');
-  if (desktopForm) {
-    desktopForm.reset();
+  if (currentMonitorId) {
+    showMonitorSummary();
+    setMonitorActionVisibility(true);
+    return;
   }
 
-  // Remove selection from all cards
-  document.querySelectorAll('.monitor-card').forEach(card => {
-    card.classList.remove('selected');
-  });
+  resetMonitorWorkspace();
 }
 
 // Load incidents
@@ -2617,66 +2606,6 @@ async function confirmClearMonitorPingData() {
   }
 }
 
-// Toggle edit panel (mobile)
-function toggleEditPanel() {
-  const panel = document.getElementById('settingsPanel');
-  const overlay = document.getElementById('settingsOverlay');
-  const desktopContainer = document.getElementById('editFormContainer');
-  const mobileContainer = document.getElementById('editFormMobileContainer');
-
-  editPanelOpen = !editPanelOpen;
-
-  if (editPanelOpen) {
-    panel.classList.add('open');
-    overlay.classList.add('active');
-    // Clone form content to mobile container
-    if (desktopContainer && mobileContainer) {
-      const desktopForm = desktopContainer.querySelector('#editForm');
-      if (desktopForm) {
-        mobileContainer.innerHTML = desktopForm.outerHTML;
-        // Re-attach event listeners to cloned form
-        const clonedForm = mobileContainer.querySelector('#editForm');
-        if (clonedForm) {
-          // Copy all form values from desktop form to mobile form
-          // outerHTML doesn't preserve dynamically set input values
-          const formFields = [
-            'editName', 'editHost', 'editProtocol', 'editPort', 'editInterval',
-            'editGroup', 'editAppUrl', 'editAppIcon', 'editRetries', 'editRetryInterval',
-            'editHttpMethod', 'editTimeout', 'editStatusCodes', 'editMaxRedirects',
-            'editPosition', 'editQuickCommands', 'editAuthMethod', 'editAuthUsername',
-            'editAuthPassword', 'editAuthToken', 'editEnabled', 'editIgnoreSsl',
-            'editUpsideDown', 'editImportant', 'editPublicVisible'
-          ];
-
-          formFields.forEach(fieldId => {
-            const desktopField = desktopForm.querySelector(`#${fieldId}`);
-            const mobileField = clonedForm.querySelector(`#${fieldId}`);
-            if (desktopField && mobileField) {
-              if (desktopField.type === 'checkbox') {
-                mobileField.checked = desktopField.checked;
-              } else {
-                mobileField.value = desktopField.value;
-              }
-            }
-          });
-
-          const protocolSelect = clonedForm.querySelector('#editProtocol');
-          const authSelect = clonedForm.querySelector('#editAuthMethod');
-          if (protocolSelect) protocolSelect.onchange = updateProtocolSettings;
-          if (authSelect) authSelect.onchange = updateAuthFields;
-
-          // Update protocol and auth visibility after copying values
-          updateProtocolSettings();
-          updateAuthFields();
-        }
-      }
-    }
-  } else {
-    panel.classList.remove('open');
-    overlay.classList.remove('active');
-  }
-}
-
 // Attach form listeners for protocol and auth changes
 function attachFormListeners() {
   const protocolSelect = document.getElementById('editProtocol');
@@ -3299,7 +3228,6 @@ if (typeof document !== 'undefined') {
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
-  loadMonitors();
   attachFormListeners();
   loadPublicUISettings(); // Load custom title for header
   

@@ -584,6 +584,87 @@
       animation: skeletonFadeIn 0.18s ease-out;
     }
 
+    .monitor-mobile-toolbar {
+      display: none;
+    }
+
+    @media (max-width: 1023px) {
+      /* Keep the list as the mobile landing view. Details become a focused,
+         viewport-sized surface after a monitor is selected. */
+      #monitorDetails {
+        display: none;
+      }
+
+      body.monitor-detail-open {
+        overflow: hidden;
+      }
+
+      body.monitor-detail-open #monitorListPane {
+        display: none;
+      }
+
+      body.monitor-detail-open #monitorDetailPane {
+        grid-column: 1 / -1;
+      }
+
+      body.monitor-detail-open #monitorDetails {
+        display: block !important;
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        padding: calc(0.75rem + env(safe-area-inset-top, 0px))
+          1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+        background: var(--lp-bg);
+      }
+
+      .monitor-mobile-toolbar {
+        display: flex;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        align-items: center;
+        gap: 0.65rem;
+        margin: -0.75rem -1rem 1rem;
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--lp-border);
+        background: rgba(11, 18, 32, 0.96);
+        backdrop-filter: blur(10px);
+      }
+
+      .monitor-mobile-back {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        min-height: 2.75rem;
+        padding: 0.55rem 0.75rem;
+        border: 1px solid var(--lp-border);
+        border-radius: 0.5rem;
+        color: var(--lp-text);
+        background: var(--lp-surface);
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      .monitor-mobile-back:active {
+        background: var(--lp-surface-raised);
+        transform: scale(0.98);
+      }
+
+      .monitor-mobile-toolbar-label {
+        color: var(--lp-muted);
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      #monitorDetailContent {
+        padding-bottom: 1rem;
+      }
+    }
+
     .monitor-skeleton-line,
     .monitor-skeleton-block {
       position: relative;
@@ -961,7 +1042,7 @@
     <div id="monitors" class="tab-content <%= (typeof currentTab !== 'undefined' && currentTab === 'monitors') || (typeof currentTab === 'undefined') ? 'active' : '' %>">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
         <!-- Monitor List -->
-        <div class="lg:col-span-3">
+        <div id="monitorListPane" class="lg:col-span-3">
           <div class="flex flex-col gap-2 mb-4">
             <div class="flex justify-between items-center">
               <h2 class="text-lg sm:text-xl font-semibold">Monitors</h2>
@@ -981,8 +1062,15 @@
         </div>
 
         <!-- Monitor Details / Edit View -->
-        <div class="lg:col-span-9">
+        <div id="monitorDetailPane" class="lg:col-span-9">
           <div id="monitorDetails" class="hidden">
+            <div class="monitor-mobile-toolbar" aria-label="Monitor detail navigation">
+              <button type="button" id="mobileMonitorBackBtn" class="monitor-mobile-back" onclick="closeMobileMonitorView()" aria-label="Back to monitors">
+                <i class="fas fa-arrow-left" aria-hidden="true"></i>
+                <span>Monitors</span>
+              </button>
+              <span class="monitor-mobile-toolbar-label" id="mobileMonitorToolbarLabel">Monitor details</span>
+            </div>
             <div id="monitorDetailSkeleton" class="monitor-detail-skeleton hidden" aria-live="polite" aria-label="Loading monitor details">
               <div class="flex items-center justify-between gap-4">
                 <div class="monitor-skeleton-line title"></div>

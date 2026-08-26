@@ -35,6 +35,10 @@ function getCurrentTabFromUrl() {
 
 // Tab switching with URL navigation
 function switchTab(tabName, eventElement) {
+  if (tabName !== 'monitors') {
+    closeMobileMonitorView();
+  }
+
   // Update URL without page reload
   const url = tabToUrlMap[tabName] || '/admin';
   window.history.pushState({ tab: tabName }, '', url);
@@ -155,7 +159,15 @@ async function loadMonitors() {
           </span>
         </div>
       `;
-      card.onclick = () => selectMonitor(target);
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
+      card.onclick = () => selectMonitor(target, { openMobile: true });
+      card.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectMonitor(target, { openMobile: true });
+        }
+      };
 
       if (currentMonitorId === target._id) {
         card.classList.add('selected');
@@ -166,7 +178,9 @@ async function loadMonitors() {
 
     // Auto-select first monitor if none is selected
     if (currentMonitorId === null && targets.length > 0) {
-      selectMonitor(targets[0]);
+      // Keep the monitor list as the mobile landing view. A detail surface
+      // opens only after an explicit card activation.
+      selectMonitor(targets[0], { openMobile: false });
     }
   } catch (error) {
     console.error('Error loading monitors:', error);
@@ -191,6 +205,44 @@ function setMonitorLoadingState(isLoading) {
   const content = document.getElementById('monitorDetailContent');
   if (skeleton) skeleton.classList.toggle('hidden', !isLoading);
   if (content) content.classList.toggle('hidden', isLoading);
+}
+
+function isMobileMonitorViewport() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 1023px)').matches;
+}
+
+function openMobileMonitorView() {
+  if (!isMobileMonitorViewport()) return;
+
+  const details = document.getElementById('monitorDetails');
+  if (!details) return;
+
+  document.body.classList.add('monitor-detail-open');
+  const backButton = document.getElementById('mobileMonitorBackBtn');
+  if (backButton) {
+    // Focus the escape hatch without scrolling the underlying document.
+    setTimeout(() => backButton.focus({ preventScroll: true }), 0);
+  }
+}
+
+function closeMobileMonitorView() {
+  if (typeof document === 'undefined') return;
+  const shouldRestoreFocus = document.activeElement?.id === 'mobileMonitorBackBtn';
+  document.body.classList.remove('monitor-detail-open');
+
+  if (shouldRestoreFocus && currentMonitorId) {
+    const selectedCard = Array.from(document.querySelectorAll('.monitor-card'))
+      .find(card => card.dataset.monitorId === currentMonitorId);
+    if (selectedCard) setTimeout(() => selectedCard.focus({ preventScroll: true }), 0);
+  }
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('resize', () => {
+    if (!isMobileMonitorViewport()) closeMobileMonitorView();
+  });
 }
 
 function showMonitorSummary() {
@@ -269,6 +321,7 @@ function populateMonitorForm(fullMonitor) {
 function resetMonitorWorkspace() {
   monitorSelectionVersion += 1;
   currentMonitorId = null;
+  closeMobileMonitorView();
   setMonitorLoadingState(false);
   setMonitorActionVisibility(false);
 
@@ -287,8 +340,10 @@ function resetMonitorWorkspace() {
 }
 
 // Select monitor and show details
-async function selectMonitor(monitor) {
+async function selectMonitor(monitor, options = {}) {
   if (!monitor?._id) return;
+
+  const openMobile = options.openMobile !== false;
 
   const selectionVersion = ++monitorSelectionVersion;
   currentMonitorId = monitor._id;
@@ -303,6 +358,14 @@ async function selectMonitor(monitor) {
   if (editor) editor.classList.add('hidden');
   setMonitorActionVisibility(false);
   setMonitorLoadingState(true);
+  if (openMobile) {
+    openMobileMonitorView();
+  } else {
+    closeMobileMonitorView();
+  }
+
+  const mobileToolbarLabel = document.getElementById('mobileMonitorToolbarLabel');
+  if (mobileToolbarLabel) mobileToolbarLabel.textContent = monitor.name || 'Monitor details';
 
   // Highlight the selection immediately while the detail request is in flight.
   document.querySelectorAll('.monitor-card').forEach(card => {
@@ -316,6 +379,8 @@ async function selectMonitor(monitor) {
 
     populateMonitorForm(fullMonitor);
     document.getElementById('monitorName').textContent = fullMonitor.name || monitor.name || 'Monitor';
+    const mobileToolbarLabel = document.getElementById('mobileMonitorToolbarLabel');
+    if (mobileToolbarLabel) mobileToolbarLabel.textContent = fullMonitor.name || monitor.name || 'Monitor details';
 
     const status = fullMonitor.currentStatus === 'up' ? 'Up' : 'Down';
     const statusColor = fullMonitor.currentStatus === 'up' ? 'text-green-400' : 'text-red-400';
@@ -969,6 +1034,9 @@ function addNewMonitor() {
   document.getElementById('monitorEditor')?.classList.remove('hidden');
   document.getElementById('monitorEditorTitle').textContent = 'Add new monitor';
   document.getElementById('monitorName').textContent = 'New monitor';
+  const mobileToolbarLabel = document.getElementById('mobileMonitorToolbarLabel');
+  if (mobileToolbarLabel) mobileToolbarLabel.textContent = 'New monitor';
+  openMobileMonitorView();
 
   const form = document.getElementById('editForm');
   if (form) form.reset();
@@ -1817,6 +1885,11 @@ document.addEventListener('keydown', (e) => {
     const clearMonitorPingDataModal = document.getElementById('clearMonitorPingDataModal');
     if (clearMonitorPingDataModal && clearMonitorPingDataModal.classList.contains('active')) {
       closeClearMonitorPingDataModal();
+    }
+
+    const activeModal = document.querySelector('.post-modal.active');
+    if (!activeModal && isMobileMonitorViewport() && document.body.classList.contains('monitor-detail-open')) {
+      closeMobileMonitorView();
     }
   }
 });

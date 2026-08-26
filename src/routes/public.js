@@ -433,7 +433,11 @@ router.get('/api/public/all', async (req, res) => {
     // bucket boundary so every monitor receives the same client-renderable
     // 24-hour timeline from one batched query.
     const miniBucketSeconds = 30 * 60;
-    const miniEndEpoch = Math.floor(Date.now() / miniBucketSeconds) * miniBucketSeconds;
+    // Date.now() is milliseconds while PostgreSQL's to_timestamp and the
+    // generated bucket values use Unix seconds. Convert before aligning to a
+    // bucket boundary; passing milliseconds here creates dates thousands of
+    // years in the future and causes `Invalid time value` during serialization.
+    const miniEndEpoch = Math.floor(Date.now() / 1000 / miniBucketSeconds) * miniBucketSeconds;
     const miniStartEpoch = miniEndEpoch - (47 * miniBucketSeconds);
 
     // Get uptime statistics for all targets in parallel using aggregation

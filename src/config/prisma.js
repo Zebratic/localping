@@ -29,6 +29,12 @@ const ensureRuntimeSchema = async (client) => {
     await client.$executeRawUnsafe(
       'ALTER TABLE "notificationSettings" ADD COLUMN IF NOT EXISTS "monitorDownDelayMinutes" INTEGER NOT NULL DEFAULT 5',
     );
+    // The public uptime list aggregates recent ping results by monitor and
+    // time bucket. Keep the two predicates together in one index so that
+    // loading the compact graphs does not scan the complete ping history.
+    await client.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS idx_pingResults_targetId_timestamp ON "pingResults"("targetId", timestamp)',
+    );
   } catch (error) {
     // A first-run database may not have been pushed yet. Prisma's normal
     // schema deployment remains responsible for creating missing tables.

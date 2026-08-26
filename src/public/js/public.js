@@ -20,6 +20,49 @@ const BLOG_CACHE_DURATION = 60 * 1000;
 let graphDataCache = {};
 let graphRefreshes = new Map();
 
+// Extend each outage to the edges of its bucket so the red fill reads as one
+// connected interval between the surrounding response-time segments.
+function buildDowntimeSeries(stats, maxValue) {
+  const downBuckets = stats.map(stat => Number(stat.successfulPings || 0) === 0);
+  return downBuckets.map((isDown, index) => (
+    isDown || downBuckets[index - 1] || downBuckets[index + 1] ? maxValue : null
+  ));
+}
+
+// Keep the graph visually minimal while retaining useful hover details. The
+// downtime series has bridge points around outages for a continuous fill;
+// those points are filtered out of the tooltip via the chart status map.
+function buildGraphTooltipOptions() {
+  return {
+    enabled: true,
+    mode: 'index',
+    intersect: false,
+    displayColors: false,
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    titleColor: '#f8fafc',
+    bodyColor: '#e2e8f0',
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+    borderWidth: 1,
+    callbacks: {
+      title: tooltipItems => tooltipItems[0]?.label || '',
+      label: context => {
+        if (context.datasetIndex === 1) return '🔴 Service Down';
+        const responseTime = Number(context.raw);
+        return Number.isFinite(responseTime) ? `${Math.round(responseTime)} ms` : '';
+      },
+    },
+    filter: context => {
+      if (context.datasetIndex === 0) {
+        return context.raw !== null && context.raw !== undefined;
+      }
+      const downtimeAtIndex = context.chart?._downtimeAtIndex || [];
+      return Boolean(downtimeAtIndex[context.dataIndex])
+        && context.raw !== null
+        && context.raw !== undefined;
+    },
+  };
+}
+
 // Values returned by the API are user-configurable. Keep generated markup
 // safe and resilient when a monitor name contains quotes or HTML characters.
 function escapeHtml(value) {
@@ -38,6 +81,127 @@ function escapeInlineArgument(value) {
 
 function serviceIconKey(target) {
   return [target.appIcon || '', target.appUrl || '', target.favicon || '', target.name || ''].join('|');
+}
+
+const MINI_GRAPH_WIDTH = 240;
+const MINI_GRAPH_HEIGHT = 44;
+
+function miniGraphStats(target) {
+  if (Array.isArray(target?.miniStats)) return target.miniStats;
+  const cached = graphDataCache[graphCacheKey(target?._id, '24h')];
+  return Array.isArray(cached?.statistics) ? cached.statistics : [];
+}
+
+function miniGraphDataKey(target) {
+  return miniGraphStats(target).map(stat => [
+    stat.date || '',
+    Number(stat.totalPings) || 0,
+    Number(stat.successfulPings) || 0,
+    Number(stat.avgResponseTime) || 0,
+  ].join(':')).join('|');
+}
+
+function miniGraphPointState(stat) {
+  const totalPings = Number(stat.totalPings) || 0;
+  const successfulPings = Number(stat.successfulPings) || 0;
+  const hasPings = totalPings > 0;
+  const isDown = hasPings && successfulPings === 0;
+  const responseTime = hasPings && successfulPings > 0 && Number(stat.avgResponseTime) > 0
+    ? Number(stat.avgResponseTime)
+    : null;
+  return { isDown, responseTime };
+}
+
+function buildMiniGraphContent(target) {
+  const insetX = 2;
+  const topY = 3;
+  const bottomY = MINI_GRAPH_HEIGHT - 3;
+  const stats = miniGraphStats(target)
+    .filter(stat => stat && stat.date)
+    .map(stat => ({
+      ...stat,
+      dateObj: new Date(stat.date),
+      ...miniGraphPointState(stat),
+    }))
+    .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
+  const pointCount = stats.length;
+  const xForIndex = index => pointCount <= 1
+    ? MINI_GRAPH_WIDTH / 2
+    : insetX + (index / (pointCount - 1)) * (MINI_GRAPH_WIDTH - insetX * 2);
+
+  const values = stats
+    .map(stat => stat.responseTime)
+    .filter(value => Number.isFinite(value) && value > 0);
+  const minValue = values.length > 0 ? Math.min(...values) : 0;
+  const maxValue = values.length > 0 ? Math.max(...values) : 1;
+  const range = Math.max(maxValue - minValue, 1);
+  const domainMin = Math.max(0, minValue - range * 0.15);
+  const domainMax = maxValue + range * 0.15;
+  const yForValue = value => bottomY - ((value - domainMin) / Math.max(domainMax - domainMin, 1)) * (bottomY - topY);
+
+  const downAreas = [];
+  let downStart = null;
+  const flushDownArea = endIndex => {
+    if (downStart === null || pointCount === 0) return;
+    const startX = downStart === 0
+      ? insetX
+      : (xForIndex(downStart - 1) + xForIndex(downStart)) / 2;
+    const endX = endIndex === pointCount - 1
+      ? MINI_GRAPH_WIDTH - insetX
+      : (xForIndex(endIndex) + xForIndex(endIndex + 1)) / 2;
+    downAreas.push(`<path d="M ${startX.toFixed(2)} ${topY} H ${endX.toFixed(2)} V ${bottomY} H ${startX.toFixed(2)} Z" fill="rgba(248,113,113,0.24)" />`);
+    downStart = null;
+  };
+
+  stats.forEach((stat, index) => {
+    if (stat.isDown && downStart === null) downStart = index;
+    if ((!stat.isDown || index === pointCount - 1) && downStart !== null) {
+      flushDownArea(stat.isDown && index === pointCount - 1 ? index : index - 1);
+    }
+  });
+
+  const responsePaths = [];
+  let responseSegment = [];
+  const flushResponseSegment = () => {
+    if (responseSegment.length === 0) return;
+    if (responseSegment.length === 1) {
+      const point = responseSegment[0];
+      const startX = Math.max(insetX, point.x - 2);
+      const endX = Math.min(MINI_GRAPH_WIDTH - insetX, point.x + 2);
+      responsePaths.push(`M ${startX.toFixed(2)} ${point.y.toFixed(2)} L ${endX.toFixed(2)} ${point.y.toFixed(2)}`);
+    } else {
+      responsePaths.push(responseSegment
+        .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+        .join(' '));
+    }
+    responseSegment = [];
+  };
+
+  stats.forEach((stat, index) => {
+    if (stat.responseTime === null || stat.isDown) {
+      flushResponseSegment();
+      return;
+    }
+    responseSegment.push({
+      x: xForIndex(index),
+      y: yForValue(stat.responseTime),
+    });
+  });
+  flushResponseSegment();
+
+  const svg = `
+    <svg class="service-mini-graph-svg" viewBox="0 0 ${MINI_GRAPH_WIDTH} ${MINI_GRAPH_HEIGHT}" preserveAspectRatio="none" role="img" aria-label="24-hour response time graph">
+      <path d="M ${insetX} ${bottomY} H ${MINI_GRAPH_WIDTH - insetX}" stroke="rgba(145,162,187,0.24)" stroke-width="1" fill="none" />
+      ${downAreas.join('')}
+      ${responsePaths.map(path => `<path d="${path}" stroke="#4bce97" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" fill="none" />`).join('')}
+    </svg>
+    ${target.currentStatus === 'down' ? '<span class="service-mini-graph-status">Down</span>' : ''}
+  `;
+  return svg;
+}
+
+function buildMiniGraphMarkup(target) {
+  return `<div class="service-mini-graph">${buildMiniGraphContent(target)}</div>`;
 }
 
 function buildIconImage(source, name, className, errorHandler) {
@@ -236,7 +400,9 @@ async function loadData() {
   dataLoadInFlight = (async () => {
   try {
     const now = Date.now();
-    const shouldRefreshStats = !statisticsCache || !statisticsCacheTime || (now - statisticsCacheTime) > STATISTICS_CACHE_DURATION;
+    const hasMiniGraphData = Array.isArray(statisticsCache?.targets)
+      && statisticsCache.targets.every(target => Array.isArray(target.miniStats));
+    const shouldRefreshStats = !statisticsCache || !statisticsCacheTime || (now - statisticsCacheTime) > STATISTICS_CACHE_DURATION || !hasMiniGraphData;
 
     // Load incidents (always fresh)
     const incidentsPromise = axios.get('/api/incidents');
@@ -260,31 +426,49 @@ async function loadData() {
         if (typeof statusOnlyRes.data.viewer?.isAdmin === 'boolean') {
           viewerIsAdmin = statusOnlyRes.data.viewer.isAdmin;
         }
-        // Merge fresh status with cached statistics
-        statusRes = {
-          data: {
-            status: statusOnlyRes.data.status,
-            targets: statusOnlyRes.data.targets.map(freshTarget => {
-              const cachedTarget = statisticsCache.targets.find(t => t._id === freshTarget._id);
-              if (cachedTarget) {
-                // Merge fresh status with cached statistics
-                return {
-                  ...cachedTarget,
-                  ...freshTarget,
-                  // The status endpoint intentionally omits expensive
-                  // aggregates; keep those fields from the summary cache.
-                  uptime: cachedTarget.uptime,
-                  dailyStats: cachedTarget.dailyStats,
-                  currentStatus: freshTarget.currentStatus,
-                  isUp: freshTarget.isUp,
-                  isDown: freshTarget.isDown,
-                  notification: freshTarget.notification,
-                };
-              }
-              return cachedTarget || { ...freshTarget };
-            }),
-          },
-        };
+        const cachedTargets = Array.isArray(statisticsCache.targets) ? statisticsCache.targets : [];
+        const freshTargets = Array.isArray(statusOnlyRes.data.targets) ? statusOnlyRes.data.targets : [];
+        const cachedTargetIds = new Set(cachedTargets.map(target => String(target._id)));
+        const freshTargetIds = new Set(freshTargets.map(target => String(target._id)));
+        const targetSetChanged = cachedTargetIds.size !== freshTargetIds.size
+          || [...freshTargetIds].some(targetId => !cachedTargetIds.has(targetId));
+
+        if (targetSetChanged) {
+          // A monitor was added or removed while the summary cache was warm.
+          // Refresh the consolidated payload so newly added rows get their
+          // mini graph immediately instead of waiting for the cache timeout.
+          statusRes = await axios.get('/api/public/all');
+          statisticsCache = statusRes.data;
+          statisticsCacheTime = now;
+          try { sessionStorage.setItem('localping:summary-cache:v1', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
+        } else {
+          // Merge fresh status with cached statistics
+          statusRes = {
+            data: {
+              status: statusOnlyRes.data.status,
+              targets: freshTargets.map(freshTarget => {
+                const cachedTarget = cachedTargets.find(t => t._id === freshTarget._id);
+                if (cachedTarget) {
+                  // Merge fresh status with cached statistics
+                  return {
+                    ...cachedTarget,
+                    ...freshTarget,
+                    // The status endpoint intentionally omits expensive
+                    // aggregates; keep those fields from the summary cache.
+                    uptime: cachedTarget.uptime,
+                    dailyStats: cachedTarget.dailyStats,
+                    miniStats: cachedTarget.miniStats,
+                    currentStatus: freshTarget.currentStatus,
+                    isUp: freshTarget.isUp,
+                    isDown: freshTarget.isDown,
+                    notification: freshTarget.notification,
+                  };
+                }
+                return { ...freshTarget };
+              }),
+            },
+          };
+        }
       } else {
         // No cache, fetch everything
         statusRes = await axios.get('/api/public/all');
@@ -1422,10 +1606,11 @@ function updateServicesList(targets) {
       tempDiv.innerHTML = createServiceElement(target);
       const newServiceEl = tempDiv.firstElementChild;
       list.appendChild(newServiceEl);
-      
-      loadAndDisplayUptime(target._id);
-      loadAndDisplayUptimeBars(target._id);
-      loadAndDisplayPing(target._id);
+      const newMiniGraph = newServiceEl.querySelector('.service-mini-graph');
+      if (newMiniGraph) {
+        newMiniGraph._miniKey = miniGraphDataKey(target);
+        newMiniGraph._miniStatus = target.currentStatus || 'unknown';
+      }
       
       // If this service should be expanded, restore its expanded state
       if (expandedServiceId === target._id) {
@@ -1445,17 +1630,13 @@ function updateServicesList(targets) {
       }
     } else {
       // Update existing service - preserve expanded state at all costs
-      const isUp = target.currentStatus === 'up';
       const isDown = target.currentStatus === 'down';
-      const statusBadgeClass = isDown ? 'down' : isUp ? 'up' : 'unknown';
-      const statusText = !target.enabled ? 'Paused' : isUp ? 'Up' : isDown ? 'Down' : 'Checking';
 
       const row = serviceEl.querySelector('.service-row');
       if (!row) return; // Safety check
       
-      const badgeEl = row.querySelector('.status-badge');
       const wrapper = document.getElementById(`details-wrapper-${target._id}`);
-      const icon = row.querySelector('.expand-icon');
+      const icon = row?.querySelector('.expand-icon');
       const iconEl = row.querySelector('.service-icon');
 
       // Update icon if it exists
@@ -1465,11 +1646,10 @@ function updateServicesList(targets) {
         iconEl.dataset.iconKey = serviceIconKey(target);
       }
 
-      // Update status badge only
-      if (badgeEl) {
-        badgeEl.className = `service-status-badge status-badge ${statusBadgeClass}`;
-        badgeEl.innerHTML = `<span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : isDown ? 'bg-red-400' : 'bg-slate-500'} inline-block"></span>${statusText}`;
-      }
+      // Keep the row itself as the status signal. Down monitors get a subtle
+      // red wash and the graph adds the explicit "Down" label.
+      serviceEl.classList.toggle('service-item-down', isDown);
+      updateServiceMiniGraph(target, serviceEl);
 
       // CRITICAL: Always preserve expanded state - never close if it's expanded
       const isExpanded = expandedServiceId === target._id;
@@ -1489,10 +1669,6 @@ function updateServicesList(targets) {
         if (icon) icon.classList.remove('rotated');
       }
 
-      // Reload uptime data
-      loadAndDisplayUptime(target._id);
-      loadAndDisplayUptimeBars(target._id);
-      loadAndDisplayPing(target._id);
     }
   });
 
@@ -1522,36 +1698,24 @@ function updateServicesList(targets) {
 }
 
 function createServiceElement(target) {
-  const isUp = target.currentStatus === 'up';
   const isDown = target.currentStatus === 'down';
-  const statusBadgeClass = isDown ? 'down' : isUp ? 'up' : 'unknown';
-  const statusText = !target.enabled ? 'Paused' : isUp ? 'Up' : isDown ? 'Down' : 'Checking';
   const isExpanded = expandedServiceId === target._id;
-  const showDetails = target.publicShowDetails === true;
 
   // Get icon HTML for the service
   const iconHTML = getServiceIconHTML(target);
 
   return `
-    <div class="service-item bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 mb-3 overflow-hidden" id="service-${escapeHtml(target._id)}">
+    <div class="service-item ${isDown ? 'service-item-down' : ''} bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 mb-2 overflow-hidden" id="service-${escapeHtml(target._id)}">
       <div class="service-row ${isExpanded ? 'expanded' : ''}" onclick="toggleServiceExpand(${escapeInlineArgument(target._id)})">
         <div class="service-icon" data-icon-key="${escapeHtml(serviceIconKey(target))}">
           ${iconHTML}
         </div>
         <div class="service-name">
           <div class="font-semibold text-white text-sm sm:text-base">${escapeHtml(target.name)}</div>
-          ${showDetails ? `<div class="hidden sm:block text-xs text-slate-400 mt-1">${escapeHtml(target.host)}${target.port ? ':' + escapeHtml(target.port) : ''} (${escapeHtml(target.protocol)})</div>` : ''}
         </div>
-        <div class="service-ping ping-${escapeHtml(target._id)} text-yellow-400 font-semibold">-</div>
-        <div class="service-uptime uptime-${escapeHtml(target._id)} text-cyan-400 font-semibold">-</div>
-        <div class="service-bars">
-          ${generateUptimeBars(target._id)}
+        <div class="service-mini-graph-wrap">
+          ${buildMiniGraphMarkup(target)}
         </div>
-        <div class="service-status-badge status-badge ${statusBadgeClass}">
-          <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : isDown ? 'bg-red-400' : 'bg-slate-500'} inline-block"></span>
-          ${statusText}
-        </div>
-        <div class="service-expand-icon expand-icon text-slate-400${isExpanded ? ' rotated' : ''}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></div>
       </div>
 
       <div class="service-details-wrapper" id="details-wrapper-${escapeHtml(target._id)}">
@@ -1561,6 +1725,19 @@ function createServiceElement(target) {
       </div>
     </div>
   `;
+}
+
+function updateServiceMiniGraph(target, serviceEl) {
+  const graphEl = serviceEl?.querySelector('.service-mini-graph');
+  if (!graphEl) return;
+
+  const dataKey = miniGraphDataKey(target);
+  const status = target.currentStatus || 'unknown';
+  if (graphEl._miniKey === dataKey && graphEl._miniStatus === status) return;
+
+  graphEl._miniKey = dataKey;
+  graphEl._miniStatus = status;
+  graphEl.innerHTML = buildMiniGraphContent(target);
 }
 
 async function loadAndDisplayUptime(targetId) {
@@ -1643,7 +1820,7 @@ function toggleServiceExpand(serviceId, options = {}) {
     expandedServiceId = null;
     const wrapper = document.getElementById(`details-wrapper-${serviceId}`);
     const row = document.querySelector(`#service-${serviceId} .service-row`);
-    const icon = row.querySelector('.expand-icon');
+    const icon = row?.querySelector('.expand-icon');
 
     if (wrapper) {
       wrapper.classList.remove('open');
@@ -1676,7 +1853,7 @@ function toggleServiceExpand(serviceId, options = {}) {
     expandedServiceId = serviceId;
     const wrapper = document.getElementById(`details-wrapper-${serviceId}`);
     const row = document.querySelector(`#service-${serviceId} .service-row`);
-    const icon = row.querySelector('.expand-icon');
+    const icon = row?.querySelector('.expand-icon');
 
     if (wrapper) {
       wrapper.classList.add('open');
@@ -1726,25 +1903,25 @@ async function loadServiceDetails(serviceId) {
     // Chart data will be loaded separately when needed (only when details are expanded)
 
     contentEl.innerHTML = `
-      <div class="space-y-4 p-4 border-t border-slate-700">
+      <div class="space-y-2 p-3 border-t border-slate-700">
         <!-- Stats Grid -->
-        <div class="grid ${target.publicShowDetails ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'} gap-3">
-          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
-            <p class="text-slate-400 text-xs mb-1">Current Status</p>
-            <p class="text-lg font-bold ${target.currentStatus === 'up' ? 'text-green-400' : target.currentStatus === 'down' ? 'text-red-400' : 'text-slate-400'} mt-1">${!target.enabled ? 'PAUSED' : target.currentStatus === 'up' ? '✓ UP' : target.currentStatus === 'down' ? '✗ DOWN' : 'CHECKING'}</p>
+        <div class="grid ${target.publicShowDetails ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2 md:grid-cols-3'} gap-2">
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-2 border border-slate-600/50 backdrop-blur-sm shadow-lg flex items-center justify-between gap-2 min-w-0">
+            <p class="text-slate-400 text-[11px] leading-tight">Current Status</p>
+            <p class="monitor-current-status text-base font-bold leading-tight whitespace-nowrap ${target.currentStatus === 'up' ? 'text-green-400' : target.currentStatus === 'down' ? 'text-red-400' : 'text-slate-400'}">${!target.enabled ? 'PAUSED' : target.currentStatus === 'up' ? '✓ UP' : target.currentStatus === 'down' ? '✗ DOWN' : 'CHECKING'}</p>
           </div>
-          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
-            <p class="text-slate-400 text-xs mb-1">Uptime (24h)</p>
-            <p class="text-lg font-bold text-green-400 mt-1 uptime-24h-${serviceId}">${uptime24h.toFixed(2)}%</p>
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-2 border border-slate-600/50 backdrop-blur-sm shadow-lg flex items-center justify-between gap-2 min-w-0">
+            <p class="text-slate-400 text-[11px] leading-tight">Uptime (24h)</p>
+            <p class="text-base font-bold leading-tight text-green-400 whitespace-nowrap uptime-24h-${serviceId}">${uptime24h.toFixed(2)}%</p>
           </div>
-          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
-            <p class="text-slate-400 text-xs mb-1">Uptime (30d)</p>
-            <p class="text-lg font-bold text-green-400 mt-1 uptime-30d-${serviceId}">${uptime30d.toFixed(2)}%</p>
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-2 border border-slate-600/50 backdrop-blur-sm shadow-lg flex items-center justify-between gap-2 min-w-0">
+            <p class="text-slate-400 text-[11px] leading-tight">Uptime (30d)</p>
+            <p class="text-base font-bold leading-tight text-green-400 whitespace-nowrap uptime-30d-${serviceId}">${uptime30d.toFixed(2)}%</p>
           </div>
           ${target.publicShowDetails ? `
-          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
-            <p class="text-slate-400 text-xs mb-1">Protocol</p>
-            <p class="text-lg font-bold text-cyan-400 mt-1">${escapeHtml(target.protocol)}</p>
+          <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-2 border border-slate-600/50 backdrop-blur-sm shadow-lg flex items-center justify-between gap-2 min-w-0">
+            <p class="text-slate-400 text-[11px] leading-tight">Protocol</p>
+            <p class="text-base font-bold leading-tight text-cyan-400 whitespace-nowrap">${escapeHtml(target.protocol)}</p>
           </div>
           ` : ''}
         </div>
@@ -1823,8 +2000,8 @@ async function loadServiceDetailsUpdate(serviceId) {
     const uptime24hEl = contentEl.querySelector(`.uptime-24h-${serviceId}`);
     const uptime30dEl = contentEl.querySelector(`.uptime-30d-${serviceId}`);
     
-    // Find status element - it's in the first stat card
-    const statusEl = contentEl.querySelector('.text-lg.font-bold');
+    // Find status element - it's in the first compact stat card
+    const statusEl = contentEl.querySelector('.monitor-current-status');
     
     if (uptime24hEl) uptime24hEl.textContent = uptime24h + '%';
     if (uptime30dEl) uptime30dEl.textContent = uptime30d + '%';
@@ -1833,7 +2010,7 @@ async function loadServiceDetailsUpdate(serviceId) {
     if (statusEl) {
       const isUp = target.currentStatus === 'up';
       const isDown = target.currentStatus === 'down';
-      statusEl.className = `text-lg font-bold ${isUp ? 'text-green-400' : isDown ? 'text-red-400' : 'text-slate-400'} mt-1`;
+      statusEl.className = `monitor-current-status text-base font-bold leading-tight whitespace-nowrap ${isUp ? 'text-green-400' : isDown ? 'text-red-400' : 'text-slate-400'}`;
       statusEl.textContent = !target.enabled ? 'PAUSED' : isUp ? '✓ UP' : isDown ? '✗ DOWN' : 'CHECKING';
     }
 
@@ -1882,7 +2059,6 @@ async function updateChartData(serviceId, period) {
 
     const labels = [];
     const responseTimeData = [];
-    const downData = [];
 
     sortedStats.forEach(stat => {
       const date = stat.dateObj;
@@ -1910,8 +2086,6 @@ async function updateChartData(serviceId, period) {
       const isDown = Number(stat.successfulPings || 0) === 0;
       responseTimeData.push(isDown ? null : Math.round(avgResponseTime));
 
-      // Add downtime indicator (will be scaled to max Y value later)
-      downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
     });
 
     // Calculate max response time for scaling downtime indicator
@@ -1920,15 +2094,19 @@ async function updateChartData(serviceId, period) {
     const downtimeMaxValue = Math.round(Math.max(maxResponseTime * 1.1, 100)); // Add 10% padding, minimum 100, rounded
 
     // Scale downtime indicator to max Y value
-    const scaledDownData = downData.map(val => val !== null ? downtimeMaxValue : null);
+    const scaledDownData = buildDowntimeSeries(sortedStats, downtimeMaxValue);
+    const downtimeAtIndex = sortedStats.map(stat => Number(stat.successfulPings || 0) === 0);
 
     // Update chart data dynamically
     chart.data.labels = labels;
     chart.data.datasets[0].data = responseTimeData;
     chart.data.datasets[1].data = scaledDownData;
+    chart._downtimeAtIndex = downtimeAtIndex;
     
-    // Update point radius based on period
-    chart.data.datasets[0].pointRadius = period === '1h' || period === '24h' ? 4 : 0;
+    // Keep the line clean at every period. A hit radius still allows chart
+    // interaction without rendering a marker at each sample.
+    chart.data.datasets[0].pointRadius = 0;
+    chart.data.datasets[0].pointHoverRadius = 0;
     
     chart.update('none'); // Update without animation for smooth refresh
   } catch (error) {
@@ -1960,7 +2138,6 @@ async function loadServiceChart(serviceId, period) {
 
     const labels = [];
     const responseTimeData = [];
-    const downData = [];
 
     sortedStats.forEach(stat => {
       const date = stat.dateObj;
@@ -1988,8 +2165,6 @@ async function loadServiceChart(serviceId, period) {
       const isDown = Number(stat.successfulPings || 0) === 0;
       responseTimeData.push(isDown ? null : Math.round(avgResponseTime));
 
-      // Add downtime indicator (will be scaled to max Y value later)
-      downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
     });
 
     // Destroy existing chart if any
@@ -2006,7 +2181,8 @@ async function loadServiceChart(serviceId, period) {
     const downtimeMaxValue = Math.round(Math.max(maxResponseTime * 1.1, 100)); // Add 10% padding, minimum 100, rounded
 
     // Scale downtime indicator to max Y value
-    const scaledDownData = downData.map(val => val !== null ? downtimeMaxValue : null);
+    const scaledDownData = buildDowntimeSeries(sortedStats, downtimeMaxValue);
+    const downtimeAtIndex = sortedStats.map(stat => Number(stat.successfulPings || 0) === 0);
     
     // Store the period for this chart
     chartPeriods[serviceId] = period;
@@ -2023,16 +2199,12 @@ async function loadServiceChart(serviceId, period) {
             backgroundColor: 'rgba(16, 185, 129, 0.15)',
             fill: true,
             tension: 0.5,
-            pointRadius: period === '1h' || period === '24h' ? 4 : 0,
-            pointHoverRadius: 8,
-            pointBackgroundColor: '#10b981',
-            pointBorderColor: '#ffffff',
-            pointBorderWidth: 2,
-            pointHoverBackgroundColor: '#34d399',
-            pointHoverBorderColor: '#ffffff',
-            pointHoverBorderWidth: 3,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            pointHitRadius: 8,
             borderWidth: 3,
             spanGaps: false,
+            order: 1,
           },
           {
             label: 'Downtime',
@@ -2042,6 +2214,8 @@ async function loadServiceChart(serviceId, period) {
             fill: true,
             tension: 0.3,
             pointRadius: 0,
+            pointHoverRadius: 0,
+            pointHitRadius: 8,
             borderWidth: 0,
             spanGaps: false,
             order: 0,
@@ -2059,37 +2233,7 @@ async function loadServiceChart(serviceId, period) {
           legend: {
             display: false,
           },
-          tooltip: {
-            backgroundColor: 'rgba(15, 23, 42, 0.98)',
-            titleColor: '#ffffff',
-            bodyColor: '#cbd5e1',
-            borderColor: '#06b6d4',
-            borderWidth: 2,
-            padding: 14,
-            displayColors: true,
-            cornerRadius: 8,
-            titleFont: { size: 13, weight: 'bold' },
-            bodyFont: { size: 12 },
-            boxPadding: 8,
-            filter: function(context) {
-              // Do not show an empty green tooltip item for downtime buckets.
-              return context.raw !== null && context.raw !== undefined;
-            },
-            callbacks: {
-              title: function(context) {
-                return context[0].label;
-              },
-              label: function(context) {
-                if (context.datasetIndex === 0) {
-                  const value = context.raw;
-                  return value == null ? '' : `${Math.round(value)} ms`;
-                } else {
-                  return context.raw ? '🔴 Service Down' : '';
-                }
-              },
-              afterBody: function() { return ''; }
-            }
-          }
+          tooltip: buildGraphTooltipOptions()
         },
         scales: {
           y: {
@@ -2100,20 +2244,9 @@ async function loadServiceChart(serviceId, period) {
               drawBorder: false,
               lineWidth: 1
             },
-            ticks: { 
-              color: '#94a3b8', 
-              font: { size: 11, weight: '500' },
-              padding: 8,
-              callback: function(value) {
-                return Math.round(value) + ' ms';
-              }
-            },
+            ticks: { display: false },
             title: { 
-              display: true, 
-              text: 'Response Time (ms)', 
-              color: '#cbd5e1',
-              font: { size: 12, weight: '600' },
-              padding: { bottom: 10 }
+              display: false
             }
           },
           x: {
@@ -2122,23 +2255,16 @@ async function loadServiceChart(serviceId, period) {
               color: 'rgba(255, 255, 255, 0.05)', 
               drawBorder: false 
             },
-            ticks: { 
-              color: '#94a3b8', 
-              maxRotation: 45, 
-              minRotation: 0, 
-              font: { size: 10, weight: '500' },
-              padding: 8,
-              autoSkip: true,
-              maxTicksLimit: 12
-            },
+            ticks: { display: false },
             // Ensure chronological order (left = oldest, right = newest)
             reverse: false
           },
         },
         elements: {
           point: {
-            hoverRadius: 8,
-            hoverBorderWidth: 3,
+            radius: 0,
+            hoverRadius: 0,
+            hoverBorderWidth: 0,
           }
         },
         animation: {
@@ -2147,6 +2273,7 @@ async function loadServiceChart(serviceId, period) {
         }
       },
     });
+    charts[serviceId]._downtimeAtIndex = downtimeAtIndex;
   } catch (error) {
     console.error('Error loading chart:', error);
   }

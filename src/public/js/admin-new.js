@@ -5,6 +5,49 @@ let currentChartPeriod = '24h'; // Default period
 let currentStartDate = null;
 let currentEndDate = null;
 
+// Extend each outage to the edges of its bucket so the red fill reads as one
+// connected interval between the surrounding response-time segments.
+function buildDowntimeSeries(stats, maxValue) {
+  const downBuckets = stats.map(stat => Number(stat.successfulPings || 0) === 0);
+  return downBuckets.map((isDown, index) => (
+    isDown || downBuckets[index - 1] || downBuckets[index + 1] ? maxValue : null
+  ));
+}
+
+// Keep the graph visually minimal while retaining useful hover details. The
+// downtime series has bridge points around outages for a continuous fill;
+// those points are filtered out of the tooltip via the chart status map.
+function buildGraphTooltipOptions() {
+  return {
+    enabled: true,
+    mode: 'index',
+    intersect: false,
+    displayColors: false,
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    titleColor: '#f8fafc',
+    bodyColor: '#e2e8f0',
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+    borderWidth: 1,
+    callbacks: {
+      title: tooltipItems => tooltipItems[0]?.label || '',
+      label: context => {
+        if (context.datasetIndex === 1) return '🔴 Service Down';
+        const responseTime = Number(context.raw);
+        return Number.isFinite(responseTime) ? `${Math.round(responseTime)} ms` : '';
+      },
+    },
+    filter: context => {
+      if (context.datasetIndex === 0) {
+        return context.raw !== null && context.raw !== undefined;
+      }
+      const downtimeAtIndex = context.chart?._downtimeAtIndex || [];
+      return Boolean(downtimeAtIndex[context.dataIndex])
+        && context.raw !== null
+        && context.raw !== undefined;
+    },
+  };
+}
+
 // Map URL paths to tab names
 const urlToTabMap = {
   '/admin': 'monitors',
@@ -512,7 +555,7 @@ async function loadMonitorStatistics(targetId, timeout = 30, selectionVersion = 
 
     // Update stats displays
     document.getElementById('currentStatusDisplay').textContent = isUp ? '✓ UP' : '✗ DOWN';
-    document.getElementById('currentStatusDisplay').className = `text-lg font-bold mt-1 ${isUp ? 'text-green-400' : 'text-red-400'}`;
+    document.getElementById('currentStatusDisplay').className = `text-base font-bold leading-tight whitespace-nowrap ${isUp ? 'text-green-400' : 'text-red-400'}`;
     document.getElementById('uptime24hDisplay').textContent = `${uptime24h.toFixed(2)}%`;
     document.getElementById('uptime30dDisplay').textContent = `${uptime30d.toFixed(2)}%`;
     document.getElementById('protocolDisplay').textContent = monitor.protocol || '--';
@@ -779,7 +822,6 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
   });
 
   const responseTimeData = [];
-  const downData = [];
 
   sortedStats.forEach(stat => {
     // Do not plot response time for an entirely failed bucket. A null value
@@ -789,8 +831,6 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
     const isDown = Number(stat.successfulPings || 0) === 0;
     responseTimeData.push(isDown ? null : Math.round(avgResponseTime));
 
-    // Add downtime indicator (will be scaled to max Y value later)
-    downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
   });
 
   // Calculate max response time for scaling downtime indicator
@@ -799,7 +839,13 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
   const downtimeMaxValue = Math.round(Math.max(maxResponseTime * 1.1, 100)); // Add 10% padding, minimum 100, rounded
 
   // Scale downtime indicator to max Y value
-  const scaledDownData = downData.map(val => val !== null ? downtimeMaxValue : null);
+  const scaledDownData = buildDowntimeSeries(sortedStats, downtimeMaxValue);
+
+  // The downtime series intentionally includes one bucket on either side of
+  // an outage to make the red fill meet the response-time line. Keep a
+  // separate status array so those visual bridge points do not appear as
+  // false outage values in the hover tooltip.
+  const downtimeAtIndex = sortedStats.map(stat => Number(stat.successfulPings || 0) === 0);
 
   // Add test result if provided
   if (testResult && sortedStats.length > 0) {
@@ -807,9 +853,11 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
     if (testResult.success && testResult.responseTime) {
       responseTimeData[lastIndex] = Math.round(testResult.responseTime);
       scaledDownData[lastIndex] = null;
+      downtimeAtIndex[lastIndex] = false;
     } else {
       responseTimeData[lastIndex] = null;
       scaledDownData[lastIndex] = downtimeMaxValue;
+      downtimeAtIndex[lastIndex] = true;
     }
   }
 
@@ -825,16 +873,12 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
           backgroundColor: 'rgba(16, 185, 129, 0.15)',
           fill: true,
           tension: 0.5,
-          pointRadius: currentChartPeriod === '1h' || currentChartPeriod === '24h' ? 4 : 0,
-          pointHoverRadius: 8,
-          pointBackgroundColor: '#10b981',
-          pointBorderColor: '#ffffff',
-          pointBorderWidth: 2,
-          pointHoverBackgroundColor: '#34d399',
-          pointHoverBorderColor: '#ffffff',
-          pointHoverBorderWidth: 3,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 8,
           borderWidth: 3,
           spanGaps: false,
+          order: 1,
         },
         {
           label: 'Downtime',
@@ -844,6 +888,8 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
           fill: true,
           tension: 0.3,
           pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 8,
           borderWidth: 0,
           spanGaps: false,
           order: 0,
@@ -861,37 +907,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
         legend: {
           display: false,
         },
-        tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.98)',
-          titleColor: '#ffffff',
-          bodyColor: '#cbd5e1',
-          borderColor: '#06b6d4',
-          borderWidth: 2,
-          padding: 14,
-          displayColors: true,
-          cornerRadius: 8,
-          titleFont: { size: 13, weight: 'bold' },
-          bodyFont: { size: 12 },
-          boxPadding: 8,
-          filter: function(context) {
-            // Do not show an empty green tooltip item for downtime buckets.
-            return context.raw !== null && context.raw !== undefined;
-          },
-          callbacks: {
-            title: function(context) {
-              return context[0].label;
-            },
-              label: function(context) {
-                if (context.datasetIndex === 0) {
-                  const value = context.raw;
-                  return value == null ? '' : `${Math.round(value)} ms`;
-                } else {
-                  return context.raw ? '🔴 Service Down' : '';
-                }
-              },
-              afterBody: function() { return ''; }
-          }
-        }
+        tooltip: buildGraphTooltipOptions()
       },
       scales: {
         y: {
@@ -902,20 +918,9 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
             drawBorder: false,
             lineWidth: 1
           },
-          ticks: { 
-            color: '#94a3b8', 
-            font: { size: 11, weight: '500' },
-            padding: 8,
-            callback: function(value) {
-              return Math.round(value) + ' ms';
-            }
-          },
+          ticks: { display: false },
           title: { 
-            display: true, 
-            text: 'Response Time (ms)', 
-            color: '#cbd5e1',
-            font: { size: 12, weight: '600' },
-            padding: { bottom: 10 }
+            display: false
           }
         },
         x: {
@@ -924,23 +929,16 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
             color: 'rgba(255, 255, 255, 0.05)', 
             drawBorder: false 
           },
-          ticks: { 
-            color: '#94a3b8', 
-            maxRotation: 45, 
-            minRotation: 0, 
-            font: { size: 10, weight: '500' },
-            padding: 8,
-            autoSkip: true,
-            maxTicksLimit: 12
-          },
+          ticks: { display: false },
           // Ensure chronological order (left = oldest, right = newest)
           reverse: false
         },
       },
       elements: {
         point: {
-          hoverRadius: 8,
-          hoverBorderWidth: 3,
+          radius: 0,
+          hoverRadius: 0,
+          hoverBorderWidth: 0,
         }
       },
       animation: {
@@ -949,6 +947,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
       }
     },
   });
+  statusChart._downtimeAtIndex = downtimeAtIndex;
 }
 
 // Update protocol settings visibility

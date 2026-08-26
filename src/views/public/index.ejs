@@ -843,6 +843,98 @@
     .status-badge.unknown { background: rgba(145, 162, 187, 0.14); color: var(--lp-muted); }
     .status-indicator { animation: none !important; }
     .service-details-wrapper { transition-duration: 0.22s; }
+    .service-row {
+      padding: 0.65rem 0.75rem;
+      gap: 0.75rem;
+      min-height: 3.5rem;
+    }
+    .service-icon {
+      width: 2rem;
+      height: 2rem;
+      margin-right: 0;
+      flex: 0 0 2rem;
+    }
+    .service-icon img,
+    .service-icon .service-favicon {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 0.5rem;
+    }
+    .service-icon i { font-size: 1.1rem; }
+    .service-name {
+      flex: 0 1 42%;
+      max-width: 42%;
+      min-width: 0;
+    }
+    .service-name > div:first-child {
+      font-size: 0.875rem;
+      line-height: 1.2;
+    }
+    .service-mini-graph-wrap {
+      display: flex;
+      flex: 1 1 auto;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+    .service-mini-graph {
+      position: relative;
+      width: min(100%, 18rem);
+      min-width: 6.5rem;
+      height: 2.25rem;
+      flex: 1 1 12rem;
+      overflow: hidden;
+    }
+    .service-mini-graph-svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .service-mini-graph-status {
+      position: absolute;
+      top: 0.1rem;
+      right: 0.15rem;
+      padding: 0.1rem 0.35rem;
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      border-radius: 0.3rem;
+      background: rgba(69, 21, 29, 0.9);
+      color: #fca5a5;
+      font-size: 0.6rem;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .service-item.service-item-down {
+      background: rgba(127, 29, 29, 0.16) !important;
+      border-color: rgba(248, 113, 113, 0.3) !important;
+    }
+    .service-item.service-item-down .service-row,
+    .service-item.service-item-down .service-row.expanded {
+      background: rgba(127, 29, 29, 0.1) !important;
+    }
+    @media (min-width: 640px) {
+      .service-row {
+        padding: 0.75rem 1rem;
+        gap: 1rem;
+        min-height: 4rem;
+      }
+      .service-icon {
+        width: 2.25rem;
+        height: 2.25rem;
+        flex-basis: 2.25rem;
+      }
+      .service-name {
+        flex: 0 1 30%;
+        max-width: 30%;
+      }
+      .service-name > div:first-child { font-size: 1rem; }
+      .service-mini-graph {
+        min-width: 10rem;
+        max-width: 22rem;
+        height: 2.75rem;
+      }
+    }
     .period-btn.bg-gradient-to-r {
       background-color: var(--lp-accent) !important;
       background-image: none !important;

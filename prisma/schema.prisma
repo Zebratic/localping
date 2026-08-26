@@ -64,6 +64,7 @@ model PingResult {
 
   @@index([targetId])
   @@index([timestamp])
+  @@index([targetId, timestamp])
   @@map("pingResults")
 }
 

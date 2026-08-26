@@ -429,6 +429,12 @@ router.get('/api/public/all', async (req, res) => {
     uptime24hStart.setDate(uptime24hStart.getDate() - 1);
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
+    // Mini graphs use the latest 48 half-hour buckets. Align the window to a
+    // bucket boundary so every monitor receives the same client-renderable
+    // 24-hour timeline from one batched query.
+    const miniBucketSeconds = 30 * 60;
+    const miniEndEpoch = Math.floor(Date.now() / miniBucketSeconds) * miniBucketSeconds;
+    const miniStartEpoch = miniEndEpoch - (47 * miniBucketSeconds);
 
     // Get uptime statistics for all targets in parallel using aggregation
     const targetIds = targets.map(t => t.id);
@@ -449,7 +455,7 @@ router.get('/api/public/all', async (req, res) => {
     }
 
     // Use raw SQL for efficient aggregation across all targets
-    const [uptime24hData, uptime30dData, dailyStatsData] = await Promise.all([
+    const [uptime24hData, uptime30dData, dailyStatsData, miniStatsData] = await Promise.all([
       // 24h uptime aggregation for all targets
       prisma.$queryRaw`
         SELECT 
@@ -486,6 +492,35 @@ router.get('/api/public/all', async (req, res) => {
         },
         orderBy: { date: 'asc' },
       }),
+      // Raw ping buckets power the compact 24-hour graph shown for every
+      // service. Cross joining the small 48-bucket timeline with the target
+      // IDs keeps this to one indexed query instead of one request per row.
+      prisma.$queryRaw`
+        WITH time_buckets AS (
+          SELECT
+            to_timestamp(bucket_epoch) AT TIME ZONE 'UTC' AS bucket_start,
+            to_timestamp(bucket_epoch) AS bucket_time
+          FROM generate_series(
+            ${miniStartEpoch}::bigint,
+            ${miniEndEpoch}::bigint,
+            ${miniBucketSeconds}::bigint
+          ) AS bucket_epoch
+        )
+        SELECT
+          target_ids."targetId",
+          time_buckets.bucket_time AS date,
+          COALESCE(COUNT(pr."_id"), 0)::integer AS "totalPings",
+          COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer AS "successfulPings",
+          COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) AS "avgResponseTime"
+        FROM time_buckets
+        CROSS JOIN unnest(${targetIds}::text[]) AS target_ids("targetId")
+        LEFT JOIN "pingResults" pr ON
+          pr."targetId" = target_ids."targetId"
+          AND pr.timestamp >= time_buckets.bucket_start
+          AND pr.timestamp < (time_buckets.bucket_start + interval '30 minutes')
+        GROUP BY target_ids."targetId", time_buckets.bucket_start, time_buckets.bucket_time
+        ORDER BY target_ids."targetId", time_buckets.bucket_time ASC
+      `,
     ]);
 
     // Create lookup maps for fast access
@@ -531,12 +566,29 @@ router.get('/api/public/all', async (req, res) => {
       });
     });
 
+    // Group the fixed 24-hour buckets by target so the browser can draw all
+    // rows from the consolidated response without additional network calls.
+    const miniStatsMap = new Map();
+    miniStatsData.forEach(stat => {
+      if (!miniStatsMap.has(stat.targetId)) {
+        miniStatsMap.set(stat.targetId, []);
+      }
+      miniStatsMap.get(stat.targetId).push({
+        date: new Date(stat.date).toISOString(),
+        totalPings: Number(stat.totalPings) || 0,
+        successfulPings: Number(stat.successfulPings) || 0,
+        failedPings: (Number(stat.totalPings) || 0) - (Number(stat.successfulPings) || 0),
+        avgResponseTime: Number(stat.avgResponseTime) || 0,
+      });
+    });
+
     // Build response with targets and their statistics (only include needed fields)
     const targetsWithStats = targets.map(target => {
       const status = monitorService.getTargetStatus(target.id);
       const uptime24h = uptime24hMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
       const uptime30d = uptime30dMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
       const dailyStats = dailyStatsMap.get(target.id) || [];
+      const miniStats = miniStatsMap.get(target.id) || [];
       const adminViewer = isPrivilegedViewer(req);
       const showDetails = adminViewer || target.publicShowDetails === true;
 
@@ -557,6 +609,7 @@ router.get('/api/public/all', async (req, res) => {
           '30d': uptime30d,
         },
         dailyStats: dailyStats,
+        miniStats,
       };
 
       // Only include host/protocol if publicShowDetails is true

@@ -5,45 +5,148 @@ const { getPrisma } = require('../config/prisma');
 const monitorService = require('../services/monitorService');
 const faviconService = require('../services/faviconService');
 
-// Public status page
-router.get('/', async (req, res) => {
+// The dashboard summary contains 30 days of bars, so keep the expensive
+// aggregation briefly and refresh only the live status fields on cache hits.
+const PUBLIC_SUMMARY_TTL = 15 * 1000;
+
+function isAdminViewer(req) {
+  return req.session?.adminAuthenticated === true;
+}
+
+/**
+ * Public routes are mounted before the authenticated `/api` router so the
+ * browser can use the same `/api/*` paths without an API key. When a caller
+ * does send an API credential, preserve the REST API contract and let it see
+ * the complete monitor inventory (including private monitors). In local
+ * development authentication is intentionally disabled, so the presence of
+ * an API header is the only useful signal there.
+ */
+function isApiClient(req) {
+  const authHeader = req.headers.authorization || '';
+  const xApiKey = req.headers['x-api-key'] || '';
+  const providedKey = authHeader.replace(/^Bearer\s+/i, '') || xApiKey;
+  if (!providedKey) return false;
+  const configuredKey = process.env.ADMIN_API_KEY;
+  return !configuredKey || providedKey === configuredKey;
+}
+
+function isPrivilegedViewer(req) {
+  return isAdminViewer(req) || isApiClient(req);
+}
+
+// The public router is mounted before the authenticated API router. Exit this
+// router whenever a caller explicitly presents API credentials so valid keys
+// reach the protected API implementation and invalid keys receive its 401
+// response instead of being silently downgraded to public data.
+router.use('/api', (req, res, next) => {
+  if (req.headers.authorization || req.headers['x-api-key']) {
+    return next('router');
+  }
+  return next();
+});
+
+function targetVisibilityWhere(req) {
+  return isPrivilegedViewer(req) ? {} : { enabled: true, publicVisible: true };
+}
+
+function liveNotificationState(targetId) {
+  if (typeof monitorService.getNotificationState !== 'function') return {};
+  return monitorService.getNotificationState(targetId);
+}
+
+function publicTargetStatus(target, req) {
+  const adminViewer = isPrivilegedViewer(req);
+  const status = monitorService.getTargetStatus(target.id);
+  const showDetails = adminViewer || target.publicShowDetails === true;
+  const result = {
+    _id: target.id,
+    name: target.name,
+    currentStatus: status,
+    isUp: status === 'up',
+    isDown: status === 'down',
+    notification: liveNotificationState(target.id),
+    publicShowDetails: showDetails,
+    publicShowStatus: adminViewer || target.publicShowStatus !== false,
+    publicShowAppLink: adminViewer || target.publicShowAppLink !== false,
+  };
+
+  if (target.enabled !== undefined) result.enabled = target.enabled;
+  if (target.publicVisible !== undefined) result.publicVisible = target.publicVisible;
+  if (showDetails) {
+    result.host = target.host;
+    result.protocol = target.protocol;
+    if (target.port !== undefined) result.port = target.port;
+  }
+  if (target.appUrl && (adminViewer || target.publicShowAppLink !== false)) result.appUrl = target.appUrl;
+  if (target.appIcon) result.appIcon = target.appIcon;
+  if (target.position !== undefined) result.position = target.position || 0;
+  if (target.group) result.group = target.group;
+  if (target.quickCommands && (adminViewer || target.publicShowAppLink !== false)) result.quickCommands = target.quickCommands;
+  return result;
+}
+
+function hydrateSummary(cached, req) {
+  const targets = cached.targets.map((target) => {
+    const currentStatus = monitorService.getTargetStatus(target._id);
+    return {
+      ...target,
+      currentStatus,
+      isUp: currentStatus === 'up',
+      isDown: currentStatus === 'down',
+      notification: liveNotificationState(target._id),
+    };
+  });
+  const upTargets = targets.filter((target) => target.isUp).length;
+  const downTargets = targets.filter((target) => target.isDown).length;
+  const overallStatus = downTargets === 0 ? 'operational' : downTargets === targets.length ? 'down' : 'degraded';
+  return {
+    success: true,
+    status: { overallStatus, upTargets, downTargets, totalTargets: targets.length },
+    targets,
+    viewer: { isAdmin: isAdminViewer(req), isApiClient: isApiClient(req) },
+    timestamp: new Date(),
+  };
+}
+
+async function renderPublicPage(req, res, initialPage) {
   try {
     const prisma = getPrisma();
-    let settings = await prisma.publicUISettings.findUnique({ where: { id: 'settings' } });
-
-    if (!settings) {
-      settings = { title: 'Homelab', subtitle: 'System Status & Application Dashboard', customCSS: null };
-    }
-
-    res.render('public/index', {
+    const settings = await prisma.publicUISettings.findUnique({ where: { id: 'settings' } }) || {};
+    return res.render('public/index', {
       title: settings.title || 'Homelab',
       subtitle: settings.subtitle || 'System Status & Application Dashboard',
       customCSS: settings.customCSS || '',
+      initialPage,
+      isAdminViewer: isAdminViewer(req),
     });
   } catch (error) {
-    res.render('public/index', {
+    return res.render('public/index', {
       title: 'Homelab',
       subtitle: 'System Status & Application Dashboard',
       customCSS: '',
+      initialPage,
+      isAdminViewer: isAdminViewer(req),
     });
   }
+}
+
+// Public status page
+router.get('/', async (req, res) => {
+  return renderPublicPage(req, res, 'home');
 });
+
+router.get('/uptime', (req, res) => renderPublicPage(req, res, 'status'));
+router.get('/blog', (req, res) => renderPublicPage(req, res, 'blog'));
 
 // Public API - Get all targets (read-only)
 router.get('/api/targets', async (req, res) => {
   try {
     const prisma = getPrisma();
     const targets = await prisma.target.findMany({
-      where: { enabled: true, publicVisible: true },
+      where: targetVisibilityWhere(req),
     });
 
-    const targetsWithStatus = targets.map((target) => ({
-      _id: target.id,
-      name: target.name,
-      host: target.host,
-      protocol: target.protocol,
-      currentStatus: monitorService.getTargetStatus(target.id),
-    }));
+    const targetsWithStatus = targets.map((target) => publicTargetStatus(target, req));
 
     res.json({ success: true, targets: targetsWithStatus });
   } catch (error) {
@@ -61,7 +164,7 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
     const days = parseInt(req.query.days) || null;
 
     const target = await prisma.target.findFirst({
-      where: { id: targetId, enabled: true, publicVisible: true },
+      where: { id: targetId, ...targetVisibilityWhere(req) },
       select: { id: true, name: true },
     });
 
@@ -147,28 +250,35 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
 
       // Optimized query with proper index usage
       const result = await prisma.$queryRaw`
-        WITH time_buckets AS (
-          SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
-          FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
-          ORDER BY bucket_epoch
-          LIMIT ${maxPoints}
-        )
+      WITH time_buckets AS (
+        -- Prisma DateTime columns are stored as UTC timestamp values without
+        -- a timezone. Keep the join in UTC, but return a timestamptz instant
+        -- so browsers can render it in their own local timezone.
         SELECT
-          time_buckets.bucket_time::text as date,
+          to_timestamp(bucket_epoch) AT TIME ZONE 'UTC' AS bucket_start,
+          to_timestamp(bucket_epoch) AS bucket_time
+        FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
+        ORDER BY bucket_epoch
+        LIMIT ${maxPoints}
+      )
+      SELECT
+        -- Keep the value as a timestamptz; browsers render the UTC instant in
+        -- each client's own local timezone.
+        time_buckets.bucket_time as date,
           COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
           COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
           COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
         FROM time_buckets
         LEFT JOIN "pingResults" pr ON
           pr."targetId" = ${targetId}
-          AND pr.timestamp >= time_buckets.bucket_time
-          AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
-        GROUP BY time_buckets.bucket_time
+        AND pr.timestamp >= time_buckets.bucket_start
+        AND pr.timestamp < (time_buckets.bucket_start + (${intervalSeconds} || ' seconds')::interval)
+      GROUP BY time_buckets.bucket_start, time_buckets.bucket_time
         ORDER BY time_buckets.bucket_time ASC
       `;
 
       stats = result.map(r => ({
-        date: r.date,
+        date: new Date(r.date).toISOString(),
         totalPings: Number(r.totalPings) || 0,
         successfulPings: Number(r.successfulPings) || 0,
         failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),
@@ -246,7 +356,7 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
     const days = parseInt(req.query.days) || 30;
 
     const target = await prisma.target.findFirst({
-      where: { id: targetId, enabled: true, publicVisible: true },
+      where: { id: targetId, ...targetVisibilityWhere(req) },
     });
 
     if (!target) {
@@ -284,10 +394,17 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
 router.get('/api/public/all', async (req, res) => {
   try {
     const prisma = getPrisma();
+    const cacheService = require('../services/cacheService');
+    const cacheKey = cacheService.generateKey('public-all', { privileged: isPrivilegedViewer(req) });
+    const cachedSummary = cacheService.get(cacheKey);
+    if (cachedSummary) {
+      res.set('Cache-Control', 'private, max-age=5, stale-while-revalidate=30');
+      return res.json(hydrateSummary(cachedSummary, req));
+    }
     
     // Get all visible targets
     const targets = await prisma.target.findMany({
-      where: { enabled: true, publicVisible: true },
+      where: targetVisibilityWhere(req),
       select: {
         id: true,
         name: true,
@@ -301,6 +418,8 @@ router.get('/api/public/all', async (req, res) => {
         publicShowDetails: true,
         publicShowStatus: true,
         publicShowAppLink: true,
+        enabled: true,
+        publicVisible: true,
       },
       orderBy: { position: 'asc' },
     });
@@ -315,7 +434,7 @@ router.get('/api/public/all', async (req, res) => {
     const targetIds = targets.map(t => t.id);
     
     if (targetIds.length === 0) {
-      return res.json({
+      const emptySummary = {
         success: true,
         status: {
           overallStatus: 'operational',
@@ -324,8 +443,9 @@ router.get('/api/public/all', async (req, res) => {
           totalTargets: 0,
         },
         targets: [],
-        timestamp: new Date(),
-      });
+      };
+      cacheService.set(cacheKey, emptySummary, PUBLIC_SUMMARY_TTL);
+      return res.json(hydrateSummary(emptySummary, req));
     }
 
     // Use raw SQL for efficient aggregation across all targets
@@ -417,16 +537,21 @@ router.get('/api/public/all', async (req, res) => {
       const uptime24h = uptime24hMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
       const uptime30d = uptime30dMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
       const dailyStats = dailyStatsMap.get(target.id) || [];
-      const showDetails = target.publicShowDetails === true;
+      const adminViewer = isPrivilegedViewer(req);
+      const showDetails = adminViewer || target.publicShowDetails === true;
 
       const result = {
         _id: target.id,
         name: target.name,
         currentStatus: status,
         isUp: status === 'up',
+        isDown: status === 'down',
+        enabled: target.enabled,
+        publicVisible: target.publicVisible,
+        notification: liveNotificationState(target.id),
         publicShowDetails: showDetails,
-        publicShowStatus: target.publicShowStatus !== false,
-        publicShowAppLink: target.publicShowAppLink !== false,
+        publicShowStatus: adminViewer ? true : target.publicShowStatus !== false,
+        publicShowAppLink: adminViewer ? true : target.publicShowAppLink !== false,
         uptime: {
           '24h': uptime24h,
           '30d': uptime30d,
@@ -440,8 +565,9 @@ router.get('/api/public/all', async (req, res) => {
         result.protocol = target.protocol;
       }
 
-      // Only include appUrl/appIcon if they exist (needed for icons/links)
-      if (target.appUrl) {
+      // Only expose an app URL when the public app-link setting allows it.
+      // Icons remain available for service rows even when linking is disabled.
+      if (target.appUrl && (adminViewer || target.publicShowAppLink !== false)) {
         result.appUrl = target.appUrl;
       }
       if (target.appIcon) {
@@ -455,7 +581,7 @@ router.get('/api/public/all', async (req, res) => {
       if (target.position !== 0) {
         result.position = target.position;
       }
-      if (target.quickCommands && target.quickCommands.length > 0) {
+      if (target.quickCommands && target.quickCommands.length > 0 && (adminViewer || target.publicShowAppLink !== false)) {
         result.quickCommands = target.quickCommands;
       }
 
@@ -464,13 +590,13 @@ router.get('/api/public/all', async (req, res) => {
 
     // Calculate overall status
     const upCount = targetsWithStats.filter(t => t.isUp).length;
-    const downCount = targetsWithStats.length - upCount;
+    const downCount = targetsWithStats.filter(t => t.isDown).length;
     let overallStatus = 'operational';
     if (downCount > 0) {
       overallStatus = downCount === targetsWithStats.length ? 'down' : 'degraded';
     }
 
-    res.json({
+    const summary = {
       success: true,
       status: {
         overallStatus,
@@ -479,8 +605,10 @@ router.get('/api/public/all', async (req, res) => {
         totalTargets: targetsWithStats.length,
       },
       targets: targetsWithStats,
-      timestamp: new Date(),
-    });
+    };
+    cacheService.set(cacheKey, summary, PUBLIC_SUMMARY_TTL);
+    res.set('Cache-Control', 'private, max-age=5, stale-while-revalidate=30');
+    res.json(hydrateSummary(summary, req));
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -492,31 +620,13 @@ router.get('/api/status', async (req, res) => {
     const prisma = getPrisma();
 
     const targets = await prisma.target.findMany({
-      where: { enabled: true, publicVisible: true },
+      where: targetVisibilityWhere(req),
     });
 
-    const targetsWithStatus = targets.map((target) => {
-      const status = monitorService.getTargetStatus(target.id);
-      return {
-        _id: target.id,
-        name: target.name,
-        host: target.host,
-        protocol: target.protocol,
-        appUrl: target.appUrl,
-        appIcon: target.appIcon || null,
-        currentStatus: status,
-        isUp: status === 'up',
-        position: target.position || 0,
-        group: target.group || null,
-        quickCommands: target.quickCommands || [],
-        publicShowDetails: target.publicShowDetails === true,
-        publicShowStatus: target.publicShowStatus !== false,
-        publicShowAppLink: target.publicShowAppLink !== false,
-      };
-    });
+    const targetsWithStatus = targets.map((target) => publicTargetStatus(target, req));
 
     const upCount = targetsWithStatus.filter((t) => t.isUp).length;
-    const downCount = targetsWithStatus.length - upCount;
+    const downCount = targetsWithStatus.filter((t) => t.isDown).length;
 
     res.json({
       success: true,
@@ -524,9 +634,10 @@ router.get('/api/status', async (req, res) => {
         totalTargets: targetsWithStatus.length,
         upTargets: upCount,
         downTargets: downCount,
-        overallStatus: downCount === 0 ? 'operational' : downCount < upCount ? 'degraded' : 'down',
+        overallStatus: downCount === 0 ? 'operational' : downCount === targetsWithStatus.length ? 'down' : 'degraded',
       },
       targets: targetsWithStatus,
+      viewer: { isAdmin: isAdminViewer(req), isApiClient: isApiClient(req) },
       timestamp: new Date(),
     });
   } catch (error) {

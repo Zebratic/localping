@@ -187,11 +187,12 @@ model AdminSettings {
 }
 
 model NotificationSettings {
-  id        String   @id @default("settings") @map("_id")
-  enabled   Boolean  @default(false)
-  discord   Json?
-  events    Json?
-  updatedAt DateTime @updatedAt
+  id                      String   @id @default("settings") @map("_id")
+  enabled                 Boolean  @default(false)
+  discord                 Json?
+  events                  Json?
+  monitorDownDelayMinutes Int      @default(5)
+  updatedAt               DateTime @updatedAt
 
   @@map("notificationSettings")
 }

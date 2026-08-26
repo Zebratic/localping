@@ -6,7 +6,7 @@
 class NotificationManager {
   constructor() {
     this.notificationPermission = Notification.permission;
-    this.targetStates = new Map(); // Track previous states for change detection
+    this.targetStates = new Map(); // Track previous states and delayed notification state
     this.inPageNotifications = [];
     this.maxInPageNotifications = 5;
 
@@ -156,13 +156,16 @@ class NotificationManager {
       setTimeout(() => notification.remove(), 300);
     });
 
-    // Auto-dismiss
-    setTimeout(() => {
-      if (notification.parentElement) {
-        notification.style.animation = 'slideOut 0.3s ease-out';
-        setTimeout(() => notification.remove(), 300);
-      }
-    }, duration);
+    // A zero duration means the toast should remain until the user dismisses
+    // it (used for sustained outage notifications).
+    if (duration > 0) {
+      setTimeout(() => {
+        if (notification.parentElement) {
+          notification.style.animation = 'slideOut 0.3s ease-out';
+          setTimeout(() => notification.remove(), 300);
+        }
+      }, duration);
+    }
 
     // Track notifications
     this.inPageNotifications.push(notification);
@@ -175,25 +178,33 @@ class NotificationManager {
   /**
    * Update target status and send notifications if changed
    */
-  updateTargetStatus(targetId, targetName, newStatus) {
-    const previousStatus = this.targetStates.get(targetId);
+  updateTargetStatus(targetId, targetName, newStatus, metadata = {}) {
+    const previous = this.targetStates.get(targetId);
+    const previousStatus = previous?.status || previous;
+    const hadDownNotification = previous?.downNotified === true;
 
     // No change
-    if (previousStatus === newStatus) {
+    if (previousStatus === newStatus && !(newStatus === 'down' && metadata.notificationEligible && !previous?.downNotified)) {
       return;
     }
 
-    // Store new state
-    this.targetStates.set(targetId, newStatus);
+    // Keep the status immediately visible, but gate monitor toasts/browser
+    // notifications on the server's sustained-outage eligibility signal.
+    const state = typeof previous === 'object' && previous ? previous : { status: previousStatus };
+    state.status = newStatus;
+    if (newStatus === 'up') state.downNotified = false;
+    this.targetStates.set(targetId, state);
 
     // Only send notifications if transitioning from a known state
     if (previousStatus === undefined) {
       return;
     }
 
-    if (newStatus === 'up') {
+    if (newStatus === 'up' && previousStatus === 'down' && hadDownNotification) {
       this.notifyTargetUp(targetName);
-    } else if (newStatus === 'down') {
+      state.downNotified = false;
+    } else if (newStatus === 'down' && metadata.notificationEligible && !state.downNotified) {
+      state.downNotified = true;
       this.notifyTargetDown(targetName);
     }
   }

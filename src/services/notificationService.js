@@ -32,6 +32,7 @@ class NotificationService {
 
         this.settings = {
           enabled: settingsDoc.enabled !== false,
+          monitorDownDelayMinutes: this.normalizeDelay(settingsDoc.monitorDownDelayMinutes),
           discord: {
             enabled: discord?.enabled === true,
             webhookUrl: discord?.webhookUrl || null,
@@ -49,6 +50,7 @@ class NotificationService {
         // Default settings
         this.settings = {
           enabled: false,
+          monitorDownDelayMinutes: 5,
           discord: {
             enabled: false,
             webhookUrl: null,
@@ -71,10 +73,22 @@ class NotificationService {
       // Return default settings on error
       return {
         enabled: false,
+        monitorDownDelayMinutes: 5,
         discord: { enabled: false, webhookUrl: null, username: 'LocalPing', avatarUrl: null },
         events: { monitorDown: true, monitorUp: true, incidentCreated: true, incidentUpdated: true },
       };
     }
+  }
+
+  normalizeDelay(value) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return 5;
+    return Math.min(1440, Math.max(1, parsed));
+  }
+
+  async getMonitorDownDelayMinutes() {
+    const settings = await this.getSettings();
+    return this.normalizeDelay(settings.monitorDownDelayMinutes);
   }
 
   /**
@@ -288,7 +302,7 @@ class NotificationService {
       const payload = {
         username: settings.discord.username,
         embeds: [embed],
-        avatar_url: this.getAvatarUrl(settings.discord.webhookUrl, settings.discord.avatarUrl),
+        avatar_url: this.getAvatarUrl(settings.discord.avatarUrl),
       };
 
       // Add @everyone for important monitors going down
@@ -329,7 +343,7 @@ class NotificationService {
       const payload = {
         username: settings.discord.username,
         embeds: [embed],
-        avatar_url: this.getAvatarUrl(settings.discord.webhookUrl, settings.discord.avatarUrl),
+        avatar_url: this.getAvatarUrl(settings.discord.avatarUrl),
       };
 
       const result = await this.sendDiscordNotification(settings.discord.webhookUrl, payload);
@@ -378,4 +392,3 @@ class NotificationService {
 }
 
 module.exports = new NotificationService();
-

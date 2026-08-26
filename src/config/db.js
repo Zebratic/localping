@@ -345,9 +345,17 @@ const initializeTables = async () => {
         enabled BOOLEAN DEFAULT false,
         discord TEXT,
         events TEXT,
+        "monitorDownDelayMinutes" INTEGER DEFAULT 5,
         "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Migration: add the sustained-outage notification delay to existing installs.
+    try {
+      await executeQuery(`ALTER TABLE "notificationSettings" ADD COLUMN IF NOT EXISTS "monitorDownDelayMinutes" INTEGER DEFAULT 5`);
+    } catch (error) {
+      // Column already exists, ignore.
+    }
 
     // Create indices
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled)`);

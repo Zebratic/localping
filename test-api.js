@@ -170,6 +170,7 @@ const testData = {
   targetId: null,
   incidentId: null,
   postId: null,
+  notificationDelayMinutes: 5,
 };
 
 // ==================== TARGETS/MONITORS TESTS ====================
@@ -187,6 +188,7 @@ const testTargets = {
       publicShowDetails: false,
       publicShowStatus: true,
       publicShowAppLink: true,
+      important: false,
     };
 
     const response = await api.post('/api/targets', target);
@@ -230,10 +232,16 @@ const testTargets = {
       name: `updated-target-${Date.now()}`,
       interval: 120,
       publicShowDetails: true,
+      publicVisible: false,
+      publicShowStatus: false,
     };
     const response = await api.put(`/api/targets/${testData.targetId}`, updates);
     if (response.status !== 200 || !response.data.success) {
       throw new Error(`Failed to update target: ${JSON.stringify(response.data)}`);
+    }
+    const verify = await api.get(`/api/targets/${testData.targetId}`);
+    if (verify.status !== 200 || verify.data.target.publicVisible !== false || verify.data.target.publicShowStatus !== false) {
+      throw new Error(`Target visibility settings were not persisted: ${JSON.stringify(verify.data)}`);
     }
     log(`   Updated target: ${updates.name}`);
   }),
@@ -436,6 +444,40 @@ const testOther = {
     log(`   Public status: ${response.data.status?.overallStatus || 'unknown'}`);
   }),
 
+  getPublicPages: test('Get Public Apps, Uptime, and Blog Pages', async () => {
+    for (const page of ['/', '/uptime', '/blog']) {
+      const response = await axios.get(`${BASE_URL}${page}`);
+      if (response.status !== 200 || !response.data.includes('LocalPing')) {
+        throw new Error(`Public page ${page} failed: ${response.status}`);
+      }
+    }
+    log('   Public routes returned the shared shell');
+  }),
+
+  getNotificationSettings: test('Get Notification Settings', async () => {
+    const response = await adminApi.get('/admin/api/notification-settings');
+    if (response.status !== 200 || !response.data.success) {
+      throw new Error(`Failed to get notification settings: ${JSON.stringify(response.data)}`);
+    }
+    const delay = response.data.settings?.monitorDownDelayMinutes;
+    if (!Number.isInteger(delay) || delay < 1 || delay > 1440) {
+      throw new Error(`Invalid monitor notification delay: ${delay}`);
+    }
+    testData.notificationDelayMinutes = delay;
+    log(`   Current outage notification delay: ${delay} minute(s)`);
+  }),
+
+  updateNotificationSettings: test('Update Notification Settings', async () => {
+    const delay = testData.notificationDelayMinutes || 5;
+    const response = await adminApi.put('/admin/api/notification-settings', {
+      monitorDownDelayMinutes: delay,
+    });
+    if (response.status !== 200 || !response.data.success) {
+      throw new Error(`Failed to update notification settings: ${JSON.stringify(response.data)}`);
+    }
+    log(`   Notification delay accepted: ${delay} minute(s)`);
+  }),
+
   getSettings: test('Get Admin Settings', async () => {
     const response = await adminApi.get('/admin/api/admin-settings');
     if (response.status !== 200 || !response.data.success) {
@@ -522,8 +564,11 @@ async function runAllTests() {
     { name: 'Other Endpoints', tests: [
       testOther.getAlerts,
       testOther.getPublicStatus,
+      testOther.getPublicPages,
       testOther.getSettings,
       testOther.updateSettings,
+      testOther.getNotificationSettings,
+      testOther.updateNotificationSettings,
     ]},
   ];
 

@@ -1,7 +1,6 @@
 const { getPrisma } = require('../config/prisma');
 const pingService = require('./pingService');
 const chalk = require('../utils/colors');
-const { v4: uuidv4 } = require('uuid');
 
 class MonitorService {
   constructor() {
@@ -13,6 +12,14 @@ class MonitorService {
     this.failureCount = new Map(); // Track consecutive failures for retry logic
     this.downTimestamp = new Map(); // Track when monitor went down
     this.notificationSent = new Map(); // Track if notification was sent for current down state
+    this.notificationTimers = new Map(); // Delay monitor notifications until the outage is sustained
+    this.notificationScheduling = new Map();
+    this.monitorGeneration = new Map(); // Ignore results from monitors that were restarted
+    this.inFlight = new Map(); // Prevent overlapping pings without blocking restarted monitors
+    this.monitorTargets = new Map();
+    this.notificationDelayMinutes = 5;
+    this.notificationDelayVersion = 0;
+    this.lastNotificationSentAt = new Map();
   }
 
   /**
@@ -22,6 +29,13 @@ class MonitorService {
     // Run in background to avoid blocking webserver startup
     setImmediate(async () => {
       try {
+        // Prime the delay before the first failures can be recorded.
+        try {
+          const notificationService = require('./notificationService');
+          this.setNotificationDelayMinutes(await notificationService.getMonitorDownDelayMinutes());
+        } catch (error) {
+          // Keep the safe five-minute default if settings are unavailable.
+        }
         const prisma = getPrisma();
         const targets = await prisma.target.findMany({ where: { enabled: true } });
 
@@ -36,7 +50,7 @@ class MonitorService {
         if (targets.length > 0) {
           console.log(chalk.blue('↪ Pinging all monitors to get current status (background)...'));
           // Don't await - let it run in background
-          Promise.allSettled(targets.map(target => this.pingTarget(target)))
+          Promise.allSettled(targets.map(target => this.pingTarget(target, this.monitorGeneration.get((target.id || target._id).toString()))))
             .then(() => {
               console.log(chalk.green('✓ Initial ping complete, status updated'));
             })
@@ -56,10 +70,19 @@ class MonitorService {
   startTargetMonitor(target) {
     // Support both Prisma's 'id' and legacy '_id'
     const targetIdStr = (target.id || target._id).toString();
+    const generation = (this.monitorGeneration.get(targetIdStr) || 0) + 1;
+    this.monitorGeneration.set(targetIdStr, generation);
+    this.monitorTargets.set(targetIdStr, target);
 
     // Clear existing interval if any
     if (this.intervals.has(targetIdStr)) {
       clearInterval(this.intervals.get(targetIdStr));
+      // A restarted generation must not inherit a timer whose callback still
+      // carries the previous generation token. Keep the outage timestamp so a
+      // restart does not manufacture a fresh outage, then let the next ping
+      // schedule against the active delay.
+      this.clearNotificationTimer(targetIdStr);
+      this.notificationScheduling.delete(targetIdStr);
     }
 
     // Status should already be set from initial ping in startMonitoring()
@@ -70,7 +93,8 @@ class MonitorService {
 
     // Set up interval (initial ping already done in startMonitoring())
     const interval = setInterval(() => {
-      this.pingTarget(target);
+      const currentTarget = this.monitorTargets.get(targetIdStr) || target;
+      this.pingTarget(currentTarget, generation);
     }, (target.interval || 60) * 1000);
 
     this.intervals.set(targetIdStr, interval);
@@ -78,13 +102,44 @@ class MonitorService {
   }
 
   /**
+   * Replace the target metadata used by an active monitor without resetting
+   * its status, retry counters, or sustained-outage timer. Public visibility,
+   * labels, icons, and notification metadata can change while a service is
+   * down; those changes should not restart the outage clock.
+   */
+  updateTargetReference(target) {
+    const targetId = target.id || target._id;
+    if (targetId === undefined || targetId === null) return;
+    const targetIdStr = targetId.toString();
+    if (this.monitorTargets.has(targetIdStr)) {
+      this.monitorTargets.set(targetIdStr, target);
+    }
+  }
+
+  /**
    * Ping a target and store result (non-blocking)
    */
-  async pingTarget(target) {
+  async pingTarget(target, expectedGeneration = null) {
+    const targetId = target.id || target._id;
+    const targetIdStr = targetId.toString();
+    // Give direct/manual pings the same generation protection as interval
+    // pings. This also means a monitor started while a direct ping is in
+    // flight can invalidate that result safely.
+    if (!this.monitorGeneration.has(targetIdStr)) {
+      this.monitorGeneration.set(targetIdStr, 0);
+    }
+    // Calls made by an interval carry an explicit generation. Direct calls
+    // (for example a startup ping or an admin test) inherit the current one
+    // so a result cannot update a monitor after it has been restarted.
+    const pingGeneration = expectedGeneration ?? this.monitorGeneration.get(targetIdStr);
+    if (this.monitorGeneration.get(targetIdStr) !== pingGeneration) return;
+    const activePing = this.inFlight.get(targetIdStr);
+    if (activePing && activePing.generation === pingGeneration) return;
+    const pingToken = {};
+    this.inFlight.set(targetIdStr, { generation: pingGeneration, token: pingToken });
+
     try {
       // Support both Prisma's 'id' and legacy '_id'
-      const targetId = target.id || target._id;
-      const targetIdStr = targetId.toString();
 
       // Check debug logging setting (cache it, check every 60 seconds)
       if (!this.debugLoggingChecked || Date.now() - (this.debugLoggingLastCheck || 0) > 60000) {
@@ -102,6 +157,7 @@ class MonitorService {
 
       // Ping is now non-blocking via worker threads
       const result = await pingService.ping(target);
+      if (pingGeneration !== null && this.monitorGeneration.get(targetIdStr) !== pingGeneration) return;
 
       // Debug logging
       if (this.debugLogging) {
@@ -131,6 +187,7 @@ class MonitorService {
       const maxRetries = target.retries || 0;
       let newStatus = 'unknown';
       let downtimeDuration = null; // Capture downtime duration for notification
+      let wasNotificationSent = false;
 
       if (pingSuccess) {
         // Success - reset failure counter
@@ -139,8 +196,10 @@ class MonitorService {
         // Calculate downtime duration before clearing the timestamp
         const downTime = this.downTimestamp.get(targetIdStr);
         downtimeDuration = downTime ? Date.now() - downTime : null;
+        wasNotificationSent = this.notificationSent.get(targetIdStr) === true;
         // Clear down timestamp and notification flag when coming back up
         this.downTimestamp.delete(targetIdStr);
+        this.clearNotificationTimer(targetIdStr);
         this.notificationSent.delete(targetIdStr);
       } else {
         // Failure - increment counter
@@ -154,6 +213,7 @@ class MonitorService {
           if (!this.downTimestamp.has(targetIdStr)) {
             this.downTimestamp.set(targetIdStr, Date.now());
           }
+          this.scheduleDownNotification(target, targetIdStr, result.responseTime, pingGeneration);
         } else {
           // Still retrying, keep current status or mark as unknown
           newStatus = currentStatus || 'unknown';
@@ -166,6 +226,10 @@ class MonitorService {
       // Defer database operations to next tick to avoid blocking
       setImmediate(async () => {
         try {
+          // The monitor may have been disabled or restarted while the ping
+          // result was waiting for the event loop. Do not persist or emit
+          // status events from that stale generation.
+          if (this.monitorGeneration.get(targetIdStr) !== pingGeneration) return;
           const prisma = getPrisma();
           const timestamp = new Date();
 
@@ -203,25 +267,11 @@ class MonitorService {
             console.error(chalk.gray('  Error details:'), err);
           });
 
-          // Handle alerts (non-blocking)
-          // Check if we need to send DOWN notification (after 3+ consecutive failures)
-          if (newStatus === 'down') {
-            const consecutiveFailures = this.failureCount.get(targetIdStr) || 0;
-            if (consecutiveFailures >= 3 && !this.notificationSent.get(targetIdStr)) {
-              this.notificationSent.set(targetIdStr, true);
-              this.handleTargetDown(target, result.responseTime).catch(err => {
-                if (process.env.NODE_ENV === 'development') {
-                  console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
-                }
-              });
-            }
-          }
-          
           // Handle status changes
           if (newStatus !== currentStatus && currentStatus !== 'unknown') {
             if (newStatus === 'up') {
               // Use downtime duration calculated before timestamp was deleted (captured in closure)
-              this.handleTargetUp(target, result.responseTime, downtimeDuration).catch(err => {
+              this.handleTargetUp(target, result.responseTime, downtimeDuration, wasNotificationSent).catch(err => {
                 if (process.env.NODE_ENV === 'development') {
                   console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
                 }
@@ -256,6 +306,108 @@ class MonitorService {
       });
     } catch (error) {
       console.error(chalk.red(`Error pinging ${target.name}:`), error.message);
+    } finally {
+      // A newer generation may already be pinging this target. Do not let an
+      // older worker completion clear the newer request's in-flight marker.
+      if (this.inFlight.get(targetIdStr)?.token === pingToken) {
+        this.inFlight.delete(targetIdStr);
+      }
+    }
+  }
+
+  getNotificationDelayMs() {
+    return Math.max(1, this.notificationDelayMinutes || 5) * 60 * 1000;
+  }
+
+  setNotificationDelayMinutes(value, options = {}) {
+    const parsed = Number.parseInt(value, 10);
+    const nextDelay = Number.isFinite(parsed) ? Math.min(1440, Math.max(1, parsed)) : 5;
+    const changed = nextDelay !== this.notificationDelayMinutes;
+    this.notificationDelayMinutes = nextDelay;
+    if (changed) {
+      this.notificationDelayVersion += 1;
+      if (options.reschedule !== false) this.rescheduleNotificationTimers();
+    }
+  }
+
+  getNotificationState(targetId) {
+    const id = targetId.toString ? targetId.toString() : String(targetId);
+    const downSince = this.downTimestamp.get(id) || null;
+    const downDurationMs = downSince ? Math.max(0, Date.now() - downSince) : 0;
+    return {
+      downSince: downSince ? new Date(downSince).toISOString() : null,
+      downDurationMs,
+      notificationDelayMinutes: this.notificationDelayMinutes,
+      notificationEligible: Boolean(downSince && downDurationMs >= this.getNotificationDelayMs()),
+      notificationSent: this.notificationSent.get(id) === true,
+      lastNotificationSentAt: this.lastNotificationSentAt.get(id) || null,
+    };
+  }
+
+  clearNotificationTimer(targetId) {
+    const timer = this.notificationTimers.get(targetId);
+    if (timer) clearTimeout(timer);
+    this.notificationTimers.delete(targetId);
+  }
+
+  async scheduleDownNotification(target, targetIdStr, responseTime = null, expectedGeneration = null) {
+    if (expectedGeneration !== null && this.monitorGeneration.get(targetIdStr) !== expectedGeneration) return;
+    if (this.notificationSent.get(targetIdStr) || this.notificationTimers.has(targetIdStr) || this.notificationScheduling.has(targetIdStr)) return;
+    const schedulingGeneration = expectedGeneration ?? this.monitorGeneration.get(targetIdStr) ?? null;
+    this.notificationScheduling.set(targetIdStr, schedulingGeneration);
+    const delayVersionAtStart = this.notificationDelayVersion;
+    try {
+      let delayMinutes = this.notificationDelayMinutes;
+      try {
+        const notificationService = require('./notificationService');
+        if (typeof notificationService.getMonitorDownDelayMinutes === 'function') {
+          delayMinutes = await notificationService.getMonitorDownDelayMinutes();
+        }
+      } catch (error) {
+        // Keep scheduling with the safe in-memory default when the settings
+        // store is temporarily unavailable. The next outage check can pick
+        // up the persisted value once the database is healthy again.
+        if (process.env.NODE_ENV === 'development') {
+          console.error(chalk.yellow(`Notification settings lookup failed for ${target.name}:`), error.message);
+        }
+      }
+      // A settings update may have happened while the database lookup was in
+      // flight. Do not let an older lookup overwrite the newly selected global
+      // delay; use the current in-memory value in that case.
+      if (this.notificationDelayVersion === delayVersionAtStart) {
+        this.setNotificationDelayMinutes(delayMinutes, { reschedule: false });
+      }
+      const downSince = this.downTimestamp.get(targetIdStr);
+      if (!downSince || this.notificationSent.get(targetIdStr)) return;
+      if ((this.monitorGeneration.get(targetIdStr) ?? null) !== schedulingGeneration) return;
+      const remaining = Math.max(0, downSince + this.getNotificationDelayMs() - Date.now());
+      const timer = setTimeout(() => {
+        this.notificationTimers.delete(targetIdStr);
+        if ((this.monitorGeneration.get(targetIdStr) ?? null) !== schedulingGeneration) return;
+        if (this.targetStatus.get(targetIdStr) !== 'down' || !this.downTimestamp.has(targetIdStr) || this.notificationSent.get(targetIdStr)) return;
+        this.notificationSent.set(targetIdStr, true);
+        this.lastNotificationSentAt.set(targetIdStr, new Date().toISOString());
+        const currentTarget = this.monitorTargets.get(targetIdStr) || target;
+        this.handleTargetDown(currentTarget, responseTime).catch(err => {
+          if (process.env.NODE_ENV === 'development') console.error(chalk.yellow(`Alert error for ${target.name}:`), err.message);
+        });
+      }, remaining);
+      this.notificationTimers.set(targetIdStr, timer);
+    } catch (error) {
+      if (process.env.NODE_ENV === 'development') console.error(chalk.yellow(`Notification scheduling error for ${target.name}:`), error.message);
+    } finally {
+      if (this.notificationScheduling.get(targetIdStr) === schedulingGeneration) {
+        this.notificationScheduling.delete(targetIdStr);
+      }
+    }
+  }
+
+  rescheduleNotificationTimers() {
+    for (const [targetIdStr, target] of this.monitorTargets.entries()) {
+      if (this.downTimestamp.has(targetIdStr) && !this.notificationSent.get(targetIdStr)) {
+        this.clearNotificationTimer(targetIdStr);
+        this.scheduleDownNotification(target, targetIdStr, null, this.monitorGeneration.get(targetIdStr) ?? null);
+      }
     }
   }
 
@@ -303,9 +455,12 @@ class MonitorService {
   /**
    * Handle target coming back up
    */
-  async handleTargetUp(target, responseTime = null, downtimeDuration = null) {
+  async handleTargetUp(target, responseTime = null, downtimeDuration = null, notificationWasSent = null) {
     const prisma = getPrisma();
     const targetId = target.id || target._id;
+    const shouldNotify = notificationWasSent === null
+      ? this.notificationSent.get(targetId.toString()) === true
+      : notificationWasSent === true;
 
     // Create alert
     await prisma.alert.create({
@@ -319,6 +474,13 @@ class MonitorService {
 
     // Log recovery
     console.log(chalk.green(`✓ ${target.name} is UP`));
+
+    // A recovery notification is paired with a previously emitted outage
+    // notification. Short or otherwise unnotified outages stay silent while
+    // the internal alert history still records the state transition.
+    if (!shouldNotify) {
+      return { skipped: true, reason: 'Outage shorter than notification delay' };
+    }
 
     // Send external notifications (non-blocking)
     setImmediate(async () => {
@@ -447,16 +609,24 @@ class MonitorService {
    */
   stopTargetMonitor(targetId) {
     const targetIdStr = targetId.toString ? targetId.toString() : targetId;
+    // Invalidate any ping that is still awaiting a worker response. This is
+    // important when a monitor is disabled or its settings are replaced.
+    this.monitorGeneration.set(targetIdStr, (this.monitorGeneration.get(targetIdStr) || 0) + 1);
     if (this.intervals.has(targetIdStr)) {
       clearInterval(this.intervals.get(targetIdStr));
       this.intervals.delete(targetIdStr);
-      this.targetStatus.delete(targetIdStr);
-      this.lastAlertTime.delete(targetIdStr);
-      this.failureCount.delete(targetIdStr);
-      this.downTimestamp.delete(targetIdStr);
-      this.notificationSent.delete(targetIdStr);
       console.log(chalk.yellow(`⊘ Stopped monitoring ${targetIdStr}`));
     }
+    this.targetStatus.delete(targetIdStr);
+    this.lastAlertTime.delete(targetIdStr);
+    this.failureCount.delete(targetIdStr);
+    this.downTimestamp.delete(targetIdStr);
+    this.notificationSent.delete(targetIdStr);
+    this.lastNotificationSentAt.delete(targetIdStr);
+    this.clearNotificationTimer(targetIdStr);
+    this.notificationScheduling.delete(targetIdStr);
+    this.monitorTargets.delete(targetIdStr);
+    this.inFlight.delete(targetIdStr);
   }
 
   /**
@@ -469,6 +639,21 @@ class MonitorService {
     this.intervals.clear();
     this.targetStatus.clear();
     this.lastAlertTime.clear();
+    this.failureCount.clear();
+    this.downTimestamp.clear();
+    this.notificationSent.clear();
+    this.lastNotificationSentAt.clear();
+    for (const timer of this.notificationTimers.values()) clearTimeout(timer);
+    this.notificationTimers.clear();
+    this.notificationScheduling.clear();
+    this.monitorTargets.clear();
+    this.inFlight.clear();
+    // Keep generation numbers monotonic so a ping from before a full stop
+    // cannot be mistaken for a ping from a newly started monitor that reuses
+    // the same id.
+    for (const [targetId, generation] of this.monitorGeneration.entries()) {
+      this.monitorGeneration.set(targetId, generation + 1);
+    }
     console.log(chalk.yellow('⊘ Stopped all monitoring'));
   }
 

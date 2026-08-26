@@ -7,7 +7,66 @@ let faviconCache = {}; // Cache for favicons in localStorage
 let previousIncidents = new Map(); // Track previous incidents for change detection
 let statisticsCache = null; // Cache for statistics data
 let statisticsCacheTime = null; // Timestamp of when cache was created
-const STATISTICS_CACHE_DURATION = 60 * 60 * 1000; // 60 minutes in milliseconds
+let viewerIsAdmin = false;
+let dataLoadInFlight = null;
+let blogLoadInFlight = null;
+let blogLoadedAt = 0;
+let lastAppsStructureKey = null;
+let lastDeepLinkedMonitorId = null;
+const STATISTICS_CACHE_DURATION = 5 * 60 * 1000;
+const GRAPH_CACHE_STORAGE_KEY = 'localping:graph-cache:v1';
+const GRAPH_CACHE_DURATION = 30 * 60 * 1000;
+const BLOG_CACHE_DURATION = 60 * 1000;
+let graphDataCache = {};
+let graphRefreshes = new Map();
+
+// Values returned by the API are user-configurable. Keep generated markup
+// safe and resilient when a monitor name contains quotes or HTML characters.
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[character]));
+}
+
+function escapeInlineArgument(value) {
+  return escapeHtml(JSON.stringify(String(value ?? '')));
+}
+
+function serviceIconKey(target) {
+  return [target.appIcon || '', target.appUrl || '', target.favicon || '', target.name || ''].join('|');
+}
+
+function buildIconImage(source, name, className, errorHandler) {
+  return `<img src="${escapeHtml(source)}" alt="${escapeHtml(name)}" data-icon-name="${escapeHtml(name)}" class="${className}" onerror="${errorHandler}(this)" />`;
+}
+
+viewerIsAdmin = document.body?.dataset.viewerAdmin === 'true';
+
+try {
+  const storedGraphCache = JSON.parse(localStorage.getItem(GRAPH_CACHE_STORAGE_KEY) || '{}');
+  graphDataCache = storedGraphCache && typeof storedGraphCache === 'object' && !Array.isArray(storedGraphCache)
+    ? storedGraphCache
+    : {};
+} catch (error) {
+  graphDataCache = {};
+}
+
+try {
+  const cachedSummary = JSON.parse(sessionStorage.getItem('localping:summary-cache:v1') || 'null');
+  if (cachedSummary?.data?.targets && cachedSummary.cachedAt && cachedSummary.viewerIsAdmin === viewerIsAdmin) {
+    statisticsCache = cachedSummary.data;
+    statisticsCacheTime = cachedSummary.cachedAt;
+    if (typeof cachedSummary.data.viewer?.isAdmin === 'boolean') {
+      viewerIsAdmin = cachedSummary.data.viewer.isAdmin;
+    }
+  }
+} catch (error) {
+  // Session storage is optional.
+}
 
 // Load previous incidents from localStorage on page load
 function loadPreviousIncidents() {
@@ -36,16 +95,80 @@ function savePreviousIncidents() {
 // Initialize previous incidents from localStorage
 loadPreviousIncidents();
 
-// Load on page load
-loadData();
+// Paint the last known summary before the first network round-trip. This is
+// deliberately best-effort; live status replaces it as soon as the API responds.
+if (statisticsCache?.targets) {
+  allTargets = statisticsCache.targets;
+  displayApps(allTargets);
+  updateServicesList(allTargets);
+  if (statisticsCache.status) updateHeaderStatus(statisticsCache.status);
+}
 
-// Auto-refresh every 10 seconds
-setInterval(loadData, 10000);
+// Load immediately from the URL-selected view and refresh at a modest cadence
+// so the browser is responsive even with many monitors.
+loadData();
+setInterval(loadData, 30000);
+
+function persistGraphCache() {
+  try {
+    const entries = Object.entries(graphDataCache).slice(-120);
+    graphDataCache = Object.fromEntries(entries);
+    localStorage.setItem(GRAPH_CACHE_STORAGE_KEY, JSON.stringify(graphDataCache));
+  } catch (error) {
+    // Storage can be disabled or full; the in-memory cache still works.
+  }
+}
+
+function graphCacheKey(targetId, period) {
+  return `${targetId}:${period}`;
+}
+
+async function refreshGraphData(targetId, period) {
+  const key = graphCacheKey(targetId, period);
+  if (graphRefreshes.has(key)) return graphRefreshes.get(key);
+  const request = axios.get(`/api/targets/${encodeURIComponent(targetId)}/statistics?period=${encodeURIComponent(period)}`)
+    .then((response) => {
+      const entry = { statistics: response.data.statistics || [], updatedAt: Date.now() };
+      graphDataCache[key] = entry;
+      persistGraphCache();
+      return entry.statistics;
+    })
+    .finally(() => graphRefreshes.delete(key));
+  graphRefreshes.set(key, request);
+  return request;
+}
+
+async function getGraphData(targetId, period) {
+  const cached = graphDataCache[graphCacheKey(targetId, period)];
+  if (cached && Array.isArray(cached.statistics)) {
+    // Stale-while-refresh: paint the cached chart now and refresh it in the
+    // background if it is older than the short freshness window.
+    if (Date.now() - (cached.updatedAt || 0) > GRAPH_CACHE_DURATION) {
+      refreshGraphData(targetId, period)
+        .then(() => {
+          // Keep an already-open chart current without making the user wait
+          // for the background refresh to complete.
+          if (charts[targetId] && chartPeriods[targetId] === period) {
+            return updateChartData(targetId, period);
+          }
+          return undefined;
+        })
+        .catch(() => {});
+    }
+    return cached.statistics;
+  }
+  return refreshGraphData(targetId, period);
+}
 
 async function loadBlogPosts() {
-  try {
+  if (blogLoadInFlight) return blogLoadInFlight;
+  if (blogLoadedAt && Date.now() - blogLoadedAt < BLOG_CACHE_DURATION) return;
+
+  blogLoadInFlight = (async () => {
+   try {
     const response = await axios.get('/api/posts');
-    const { posts } = response.data;
+    const posts = response.data.posts || [];
+    blogLoadedAt = Date.now();
 
     const blogContainer = document.getElementById('blog-posts');
     if (!blogContainer) return;
@@ -65,7 +188,7 @@ async function loadBlogPosts() {
 
     blogContainer.innerHTML = posts.map(post => {
       const date = new Date(post.createdAt);
-      const formattedDate = date.toLocaleDateString('en-US', { 
+      const formattedDate = date.toLocaleDateString(undefined, {
         year: 'numeric', 
         month: 'long', 
         day: 'numeric' 
@@ -101,17 +224,22 @@ async function loadBlogPosts() {
     if (blogContainer) {
       blogContainer.innerHTML = '<div class="text-center text-red-400 py-12">Error loading posts</div>';
     }
-  }
+   }
+  })().finally(() => {
+    blogLoadInFlight = null;
+  });
+  return blogLoadInFlight;
 }
 
 async function loadData() {
+  if (dataLoadInFlight) return dataLoadInFlight;
+  dataLoadInFlight = (async () => {
   try {
     const now = Date.now();
     const shouldRefreshStats = !statisticsCache || !statisticsCacheTime || (now - statisticsCacheTime) > STATISTICS_CACHE_DURATION;
 
     // Load incidents (always fresh)
-    const incidentsRes = await axios.get('/api/incidents');
-    const { incidents } = incidentsRes.data;
+    const incidentsPromise = axios.get('/api/incidents');
 
     // Load targets and statistics (use cache if available and not expired)
     let statusRes;
@@ -120,26 +248,40 @@ async function loadData() {
       statusRes = await axios.get('/api/public/all');
       statisticsCache = statusRes.data;
       statisticsCacheTime = now;
+      if (typeof statusRes.data.viewer?.isAdmin === 'boolean') {
+        viewerIsAdmin = statusRes.data.viewer.isAdmin;
+      }
+      try { sessionStorage.setItem('localping:summary-cache:v1', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
     } else {
       // Use cached statistics but get fresh status
       if (statisticsCache) {
         // Get fresh status only
         const statusOnlyRes = await axios.get('/api/status');
+        if (typeof statusOnlyRes.data.viewer?.isAdmin === 'boolean') {
+          viewerIsAdmin = statusOnlyRes.data.viewer.isAdmin;
+        }
         // Merge fresh status with cached statistics
         statusRes = {
           data: {
             status: statusOnlyRes.data.status,
-            targets: statisticsCache.targets.map(cachedTarget => {
-              const freshTarget = statusOnlyRes.data.targets.find(t => t._id === cachedTarget._id);
-              if (freshTarget) {
+            targets: statusOnlyRes.data.targets.map(freshTarget => {
+              const cachedTarget = statisticsCache.targets.find(t => t._id === freshTarget._id);
+              if (cachedTarget) {
                 // Merge fresh status with cached statistics
                 return {
                   ...cachedTarget,
+                  ...freshTarget,
+                  // The status endpoint intentionally omits expensive
+                  // aggregates; keep those fields from the summary cache.
+                  uptime: cachedTarget.uptime,
+                  dailyStats: cachedTarget.dailyStats,
                   currentStatus: freshTarget.currentStatus,
                   isUp: freshTarget.isUp,
+                  isDown: freshTarget.isDown,
+                  notification: freshTarget.notification,
                 };
               }
-              return cachedTarget;
+              return cachedTarget || { ...freshTarget };
             }),
           },
         };
@@ -148,16 +290,24 @@ async function loadData() {
         statusRes = await axios.get('/api/public/all');
         statisticsCache = statusRes.data;
         statisticsCacheTime = now;
+        try { sessionStorage.setItem('localping:summary-cache:v1', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
       }
     }
 
+    const incidentsRes = await incidentsPromise;
     const { status, targets } = statusRes.data;
+    const { incidents = [] } = incidentsRes.data || {};
 
-    // Check for status changes and send notifications
+    if (typeof statusRes.data.viewer?.isAdmin === 'boolean') {
+      viewerIsAdmin = statusRes.data.viewer.isAdmin;
+    }
+
+    // Check for status changes and send notifications. The server only marks
+    // a monitor eligible after the configured sustained-outage delay.
     if (window.notificationManager && window.notificationManager.isEnabled()) {
       targets.forEach((target) => {
-        const status = target.isUp ? 'up' : 'down';
-        window.notificationManager.updateTargetStatus(target._id, target.name, status);
+        const status = target.currentStatus || (target.isUp ? 'up' : 'down');
+        window.notificationManager.updateTargetStatus(target._id, target.name, status, target.notification || {});
       });
     }
 
@@ -195,9 +345,14 @@ async function loadData() {
     // Update both pages
     displayApps(targets);
     updateServicesList(targets);
+    if (pageFromLocation() === 'status') openDeepLinkedMonitor();
   } catch (error) {
     console.error('Error loading data:', error);
   }
+  })().finally(() => {
+    dataLoadInFlight = null;
+  });
+  return dataLoadInFlight;
 }
 
 function updateHeaderStatus(status) {
@@ -518,28 +673,85 @@ function displayIncidentHistory(incidents) {
 }
 
 // Page switching
-function switchPage(page) {
+function switchPage(page, options = {}) {
+  const pageAliases = { home: '/', status: '/uptime', blog: '/blog' };
+  const normalizedPage = page === 'uptime' ? 'status' : page;
+  const pageEl = document.getElementById(`page-${normalizedPage}`);
+  const tabEl = document.getElementById(`tab-${normalizedPage}`);
+  if (!pageEl || !tabEl) return;
+
   // Hide all pages
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
 
   // Show selected page
-  document.getElementById(`page-${page}`).classList.add('active');
-  document.getElementById(`tab-${page}`).classList.add('active');
+  pageEl.classList.add('active');
+  tabEl.classList.add('active');
+
+  if (window.history && window.history.pushState && options.pushState !== false && pageAliases[normalizedPage] && location.pathname !== pageAliases[normalizedPage]) {
+    const hash = normalizedPage === 'status' ? (location.hash || '') : '';
+    window.history.pushState({ page: normalizedPage }, '', pageAliases[normalizedPage] + hash);
+  }
+
+  const pageTitles = { home: 'Apps', status: 'Uptime', blog: 'Blog' };
+  document.title = `${pageTitles[normalizedPage] || 'Status'} · LocalPing`;
 
   // Load blog posts if switching to blog page
-  if (page === 'blog') {
+  if (normalizedPage === 'blog') {
     loadBlogPosts();
   }
+
+  if (normalizedPage === 'status') {
+    openDeepLinkedMonitor();
+  }
+}
+
+function pageFromLocation() {
+  const pathname = (location.pathname || '/').replace(/\/+$/, '') || '/';
+  if (pathname === '/uptime') return 'status';
+  if (pathname === '/blog') return 'blog';
+  return 'home';
+}
+
+window.addEventListener('popstate', () => switchPage(pageFromLocation(), { pushState: false }));
+window.addEventListener('hashchange', () => {
+  const page = pageFromLocation();
+  switchPage(page, { pushState: false });
+  if (page === 'status') openDeepLinkedMonitor();
+});
+
+function openDeepLinkedMonitor() {
+  const monitorId = new URLSearchParams((location.hash || '').replace(/^#/, '')).get('monitor');
+  if (!monitorId) {
+    lastDeepLinkedMonitorId = null;
+    return;
+  }
+  const serviceEl = document.getElementById(`service-${monitorId}`);
+  if (!serviceEl) return;
+  const needsOpen = expandedServiceId !== monitorId;
+  if (needsOpen) toggleServiceExpand(monitorId, { preserveHash: true });
+  if (!needsOpen && lastDeepLinkedMonitorId === monitorId) return;
+  lastDeepLinkedMonitorId = monitorId;
+  requestAnimationFrame(() => {
+    serviceEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
 }
 
 // ==================== APPS PAGE ====================
 
 function displayApps(targets) {
-  const pageHome = document.getElementById('page-home');
+  const pageHome = document.getElementById('apps-content') || document.getElementById('page-home');
+
+  const appTargets = targets.filter(t => t.enabled !== false && t.publicVisible !== false);
+  const structureKey = appTargets.map(t => `${t._id}:${t.name}:${t.appUrl || ''}:${t.appIcon || ''}:${t.position || 0}:${t.group || ''}:${t.publicShowAppLink !== false}:${JSON.stringify(t.quickCommands || [])}`).join('|');
+  if (lastAppsStructureKey === structureKey) {
+    updateAppCardStatuses(appTargets);
+    return;
+  }
+  lastAppsStructureKey = structureKey;
 
   // Check if there are ANY targets at all
-  if (targets.length === 0) {
+  if (appTargets.length === 0) {
     pageHome.innerHTML = `
       <div class="mb-6">
         <h2 class="text-2xl font-bold text-white mb-2">Welcome to LocalPing</h2>
@@ -577,7 +789,7 @@ function displayApps(targets) {
 
   // Separate targets into apps and services
   // Only show apps if publicShowAppLink is true (default true)
-  const apps = targets.filter(t => (t.appUrl || t.appIcon) && (t.publicShowAppLink !== false));
+  const apps = appTargets.filter(t => (t.appUrl || t.appIcon) && (t.publicShowAppLink !== false));
   const appCount = apps.length;
 
   if (appCount === 0) {
@@ -587,7 +799,7 @@ function displayApps(targets) {
         <p id="app-count" class="text-slate-400 text-sm">(0 apps)</p>
       </div>
       <div class="text-center text-slate-400 py-12 col-span-full">
-        <p>No apps configured with icons. You have ${targets.length} monitor${targets.length !== 1 ? 's' : ''} on the <strong>Status & Uptime</strong> tab.</p>
+        <p>No apps configured with icons. You have ${appTargets.length} monitor${appTargets.length !== 1 ? 's' : ''} on the <strong>Uptime</strong> tab.</p>
       </div>
     `;
     return;
@@ -644,7 +856,7 @@ function displayApps(targets) {
   Object.entries(groupedApps).forEach(([group, appsInGroup]) => {
     html += `
       <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4">${group}</h3>
+        <h3 class="text-lg font-semibold text-white mb-4">${escapeHtml(group)}</h3>
         <div class="flex flex-col gap-3 sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           ${appsInGroup.map(app => buildAppCard(app)).join('')}
         </div>
@@ -659,10 +871,52 @@ function displayApps(targets) {
   setupSearchAndCommands(sortedApps);
 }
 
+function updateAppCardStatuses(targets) {
+  const cardsById = new Map(Array.from(document.querySelectorAll('.app-card[data-app-id]'))
+    .map(card => [String(card.dataset.appId), card]));
+  targets.forEach((target) => {
+    const card = cardsById.get(String(target._id));
+    if (!card) return;
+    const down = target.currentStatus === 'down';
+    card.dataset.isDown = String(down);
+    const statusEl = card.querySelector('.app-status');
+    if (!statusEl) return;
+    const nextText = down ? 'Down' : target.currentStatus === 'up' ? 'Up' : 'Checking';
+    if (down && statusEl.tagName !== 'BUTTON') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'app-status down';
+      button.dataset.monitorLink = target._id;
+      button.setAttribute('aria-label', `View ${target.name} uptime`);
+      button.textContent = nextText;
+      statusEl.replaceWith(button);
+      setupAppCardListeners();
+      return;
+    }
+    if (!down && statusEl.tagName === 'BUTTON') {
+      const span = document.createElement('span');
+      span.className = 'app-status up';
+      span.textContent = nextText;
+      statusEl.replaceWith(span);
+      return;
+    }
+    const statusClass = down ? 'down' : target.currentStatus === 'up' ? 'up' : 'unknown';
+    statusEl.className = `app-status ${statusClass}`;
+    statusEl.textContent = nextText;
+    if (down) {
+      statusEl.setAttribute('role', 'button');
+      statusEl.setAttribute('tabindex', '0');
+    } else {
+      statusEl.removeAttribute('role');
+      statusEl.removeAttribute('tabindex');
+    }
+  });
+}
+
 function buildAppCard(app) {
-  const isDown = !app.isUp;
-  const statusClass = isDown ? 'down' : 'up';
-  const statusText = isDown ? 'Down' : 'Up';
+  const isDown = app.currentStatus === 'down';
+  const statusClass = isDown ? 'down' : app.currentStatus === 'up' ? 'up' : 'unknown';
+  const statusText = isDown ? 'Down' : app.currentStatus === 'up' ? 'Up' : 'Checking';
 
   // Determine icon - prioritize appIcon (manually configured), then cached favicon, then API favicon, then fallback icon
   let iconHTML = '';
@@ -670,26 +924,26 @@ function buildAppCard(app) {
   if (app.appIcon) {
     // Use manually configured app icon - proxy it
     const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(app.appIcon)}`;
-    iconHTML = `<img src="${proxyUrl}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+    iconHTML = buildIconImage(proxyUrl, app.name, 'app-favicon', 'handleIconError');
   } else {
     const cachedFavicon = faviconCache[app.appUrl];
     
     if (cachedFavicon) {
       // If favicon is a data URL (base64), use it directly, otherwise proxy it
       if (cachedFavicon.startsWith('data:')) {
-        iconHTML = `<img src="${cachedFavicon}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+        iconHTML = buildIconImage(cachedFavicon, app.name, 'app-favicon', 'handleIconError');
       } else {
         const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(cachedFavicon)}`;
-        iconHTML = `<img src="${proxyUrl}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+        iconHTML = buildIconImage(proxyUrl, app.name, 'app-favicon', 'handleIconError');
       }
     } else if (app.favicon) {
       faviconCache[app.appUrl] = app.favicon;
       // If favicon is a data URL (base64), use it directly, otherwise proxy it
       if (app.favicon.startsWith('data:')) {
-        iconHTML = `<img src="${app.favicon}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+        iconHTML = buildIconImage(app.favicon, app.name, 'app-favicon', 'handleIconError');
       } else {
         const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(app.favicon)}`;
-        iconHTML = `<img src="${proxyUrl}" alt="${app.name}" class="app-favicon" onerror="handleIconError(this, '${app.name}')" />`;
+        iconHTML = buildIconImage(proxyUrl, app.name, 'app-favicon', 'handleIconError');
       }
     } else {
       // Fallback to Font Awesome icon
@@ -699,18 +953,18 @@ function buildAppCard(app) {
   }
 
   return `
-    <div class="app-card" data-app-url="${app.appUrl || ''}" data-app-id="${app._id}" data-app-name="${app.name.toLowerCase()}" data-quick-commands="${(app.quickCommands || []).map(c => c.toLowerCase()).join('|')}" data-is-down="${isDown}">
+      <div class="app-card" data-app-url="${escapeHtml(app.appUrl || '')}" data-app-id="${escapeHtml(app._id)}" data-app-name="${escapeHtml((app.name || '').toLowerCase())}" data-quick-commands="${escapeHtml((app.quickCommands || []).map(c => String(c).toLowerCase()).join('|'))}" data-is-down="${isDown}">
       <div class="app-icon">
         ${iconHTML}
       </div>
-      <div class="app-name">${app.name}</div>
-      <div class="app-status ${statusClass}">${statusText}</div>
+      <div class="app-name">${escapeHtml(app.name)}</div>
+      ${isDown ? '<button type="button" class="app-status down" data-monitor-link="' + escapeHtml(app._id) + '" aria-label="View ' + escapeHtml(app.name) + ' uptime">' + statusText + '</button>' : '<span class="app-status ' + statusClass + '">' + statusText + '</span>'}
     </div>
   `;
 }
 
 // Handle icon loading errors
-function handleIconError(img, appName) {
+function handleIconError(img, appName = img?.dataset?.iconName || '') {
   // Replace failed image with fallback icon
   const fallbackIcon = getIconForApp(appName);
   img.outerHTML = `<i class="fas ${fallbackIcon}"></i>`;
@@ -723,26 +977,26 @@ function getServiceIconHTML(target) {
   if (target.appIcon) {
     // Use manually configured app icon - proxy it
     const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(target.appIcon)}`;
-    iconHTML = `<img src="${proxyUrl}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+    iconHTML = buildIconImage(proxyUrl, target.name, 'service-favicon', 'handleServiceIconError');
   } else if (target.appUrl) {
     const cachedFavicon = faviconCache[target.appUrl];
     
     if (cachedFavicon) {
       // If favicon is a data URL (base64), use it directly, otherwise proxy it
       if (cachedFavicon.startsWith('data:')) {
-        iconHTML = `<img src="${cachedFavicon}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+        iconHTML = buildIconImage(cachedFavicon, target.name, 'service-favicon', 'handleServiceIconError');
       } else {
         const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(cachedFavicon)}`;
-        iconHTML = `<img src="${proxyUrl}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+        iconHTML = buildIconImage(proxyUrl, target.name, 'service-favicon', 'handleServiceIconError');
       }
     } else if (target.favicon) {
       faviconCache[target.appUrl] = target.favicon;
       // If favicon is a data URL (base64), use it directly, otherwise proxy it
       if (target.favicon.startsWith('data:')) {
-        iconHTML = `<img src="${target.favicon}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+        iconHTML = buildIconImage(target.favicon, target.name, 'service-favicon', 'handleServiceIconError');
       } else {
         const proxyUrl = `/api/proxy-icon?url=${encodeURIComponent(target.favicon)}`;
-        iconHTML = `<img src="${proxyUrl}" alt="${target.name}" class="service-favicon" onerror="handleServiceIconError(this, '${target.name}')" />`;
+        iconHTML = buildIconImage(proxyUrl, target.name, 'service-favicon', 'handleServiceIconError');
       }
     } else {
       // Fallback to Font Awesome icon
@@ -759,15 +1013,34 @@ function getServiceIconHTML(target) {
 }
 
 // Handle service icon loading errors
-function handleServiceIconError(img, serviceName) {
+function handleServiceIconError(img, serviceName = img?.dataset?.iconName || '') {
   // Replace failed image with fallback icon
   const fallbackIcon = getIconForApp(serviceName);
   img.outerHTML = `<i class="fas ${fallbackIcon}"></i>`;
 }
 
 function setupAppCardListeners() {
+  document.querySelectorAll('.app-status.down[data-monitor-link]').forEach(status => {
+    if (status.dataset.listenersBound === 'true') return;
+    status.dataset.listenersBound = 'true';
+    status.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMonitorFromApps(status.dataset.monitorLink);
+    });
+    status.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopPropagation();
+        openMonitorFromApps(status.dataset.monitorLink);
+      }
+    });
+  });
+
   // Add event listeners for left-click and middle-click
   document.querySelectorAll('.app-card[data-app-url]').forEach(card => {
+    if (card.dataset.listenersBound === 'true') return;
+    card.dataset.listenersBound = 'true';
     card.style.cursor = 'pointer';
 
     card.addEventListener('mousedown', (e) => {
@@ -788,12 +1061,22 @@ function setupAppCardListeners() {
 
     card.addEventListener('click', (e) => {
       // Handle left click
-      if (e.button === 0) {
+      if (e.button === 0 && !e.target.closest('.app-status.down')) {
         const url = card.getAttribute('data-app-url');
-        window.open(url, '_blank');
+        if (url) window.open(url, '_blank');
       }
     });
   });
+}
+
+function openMonitorFromApps(serviceId) {
+  if (!serviceId) return;
+  const hash = `#monitor=${encodeURIComponent(serviceId)}`;
+  if (window.history?.pushState) {
+    window.history.pushState({ page: 'status', monitor: serviceId }, '', `/uptime${hash}`);
+  }
+  switchPage('status', { pushState: false });
+  setTimeout(openDeepLinkedMonitor, 0);
 }
 
 function setupSearchAndCommands(allApps) {
@@ -1092,8 +1375,14 @@ function updateServicesList(targets) {
 
   if (!list) return;
 
-  // Filter targets to only show those with publicShowStatus enabled (default true)
-  const visibleTargets = targets.filter(t => t.publicShowStatus !== false);
+  // Admins get the complete configured monitor inventory. Public visitors see
+  // only enabled monitors explicitly exposed on the status page.
+  const deepLinkedMonitorId = new URLSearchParams((location.hash || '').replace(/^#/, '')).get('monitor');
+  const visibleTargets = targets.filter(t => viewerIsAdmin || (
+    t.enabled !== false &&
+    t.publicVisible !== false &&
+    (t.publicShowStatus !== false || String(t._id) === String(deepLinkedMonitorId || ''))
+  ));
 
   // Show all targets in status page
   if (visibleTargets.length === 0) {
@@ -1156,9 +1445,10 @@ function updateServicesList(targets) {
       }
     } else {
       // Update existing service - preserve expanded state at all costs
-      const isUp = target.isUp;
-      const statusBadgeClass = isUp ? 'up' : 'down';
-      const statusText = isUp ? 'Up' : 'Down';
+      const isUp = target.currentStatus === 'up';
+      const isDown = target.currentStatus === 'down';
+      const statusBadgeClass = isDown ? 'down' : isUp ? 'up' : 'unknown';
+      const statusText = !target.enabled ? 'Paused' : isUp ? 'Up' : isDown ? 'Down' : 'Checking';
 
       const row = serviceEl.querySelector('.service-row');
       if (!row) return; // Safety check
@@ -1169,15 +1459,16 @@ function updateServicesList(targets) {
       const iconEl = row.querySelector('.service-icon');
 
       // Update icon if it exists
-      if (iconEl) {
+      if (iconEl && iconEl.dataset.iconKey !== serviceIconKey(target)) {
         const newIconHTML = getServiceIconHTML(target);
         iconEl.innerHTML = newIconHTML;
+        iconEl.dataset.iconKey = serviceIconKey(target);
       }
 
       // Update status badge only
       if (badgeEl) {
         badgeEl.className = `service-status-badge status-badge ${statusBadgeClass}`;
-        badgeEl.innerHTML = `<span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block"></span>${statusText}`;
+        badgeEl.innerHTML = `<span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : isDown ? 'bg-red-400' : 'bg-slate-500'} inline-block"></span>${statusText}`;
       }
 
       // CRITICAL: Always preserve expanded state - never close if it's expanded
@@ -1206,11 +1497,15 @@ function updateServicesList(targets) {
   });
 
   // Remove services that no longer exist (but preserve expanded state if it's the expanded one)
-  existingServiceIds.forEach(serviceId => {
-    // Don't remove if it's the currently expanded service
-    if (serviceId === expandedServiceId) {
-      return; // Keep it even if it's not in the targets list
+  if (expandedServiceId && !visibleTargets.some(target => String(target._id) === String(expandedServiceId))) {
+    if (charts[expandedServiceId]) {
+      charts[expandedServiceId].destroy();
+      delete charts[expandedServiceId];
     }
+    delete chartPeriods[expandedServiceId];
+    expandedServiceId = null;
+  }
+  existingServiceIds.forEach(serviceId => {
     const serviceEl = document.getElementById(`service-${serviceId}`);
     if (serviceEl) {
       serviceEl.remove();
@@ -1227,9 +1522,10 @@ function updateServicesList(targets) {
 }
 
 function createServiceElement(target) {
-  const isUp = target.isUp;
-  const statusBadgeClass = isUp ? 'up' : 'down';
-  const statusText = isUp ? 'Up' : 'Down';
+  const isUp = target.currentStatus === 'up';
+  const isDown = target.currentStatus === 'down';
+  const statusBadgeClass = isDown ? 'down' : isUp ? 'up' : 'unknown';
+  const statusText = !target.enabled ? 'Paused' : isUp ? 'Up' : isDown ? 'Down' : 'Checking';
   const isExpanded = expandedServiceId === target._id;
   const showDetails = target.publicShowDetails === true;
 
@@ -1237,29 +1533,29 @@ function createServiceElement(target) {
   const iconHTML = getServiceIconHTML(target);
 
   return `
-    <div class="service-item bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 mb-3 overflow-hidden" id="service-${target._id}">
-      <div class="service-row ${isExpanded ? 'expanded' : ''}" onclick="toggleServiceExpand('${target._id}')">
-        <div class="service-icon">
+    <div class="service-item bg-slate-900/50 backdrop-blur rounded-lg border border-slate-700/30 mb-3 overflow-hidden" id="service-${escapeHtml(target._id)}">
+      <div class="service-row ${isExpanded ? 'expanded' : ''}" onclick="toggleServiceExpand(${escapeInlineArgument(target._id)})">
+        <div class="service-icon" data-icon-key="${escapeHtml(serviceIconKey(target))}">
           ${iconHTML}
         </div>
         <div class="service-name">
-          <div class="font-semibold text-white text-sm sm:text-base">${target.name}</div>
-          ${showDetails ? `<div class="hidden sm:block text-xs text-slate-400 mt-1">${target.host}${target.port ? ':' + target.port : ''} (${target.protocol})</div>` : ''}
+          <div class="font-semibold text-white text-sm sm:text-base">${escapeHtml(target.name)}</div>
+          ${showDetails ? `<div class="hidden sm:block text-xs text-slate-400 mt-1">${escapeHtml(target.host)}${target.port ? ':' + escapeHtml(target.port) : ''} (${escapeHtml(target.protocol)})</div>` : ''}
         </div>
-        <div class="service-ping ping-${target._id} text-yellow-400 font-semibold">-</div>
-        <div class="service-uptime uptime-${target._id} text-cyan-400 font-semibold">-</div>
+        <div class="service-ping ping-${escapeHtml(target._id)} text-yellow-400 font-semibold">-</div>
+        <div class="service-uptime uptime-${escapeHtml(target._id)} text-cyan-400 font-semibold">-</div>
         <div class="service-bars">
           ${generateUptimeBars(target._id)}
         </div>
         <div class="service-status-badge status-badge ${statusBadgeClass}">
-          <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : 'bg-red-400'} inline-block"></span>
+          <span class="w-2 h-2 rounded-full ${isUp ? 'bg-green-400' : isDown ? 'bg-red-400' : 'bg-slate-500'} inline-block"></span>
           ${statusText}
         </div>
         <div class="service-expand-icon expand-icon text-slate-400${isExpanded ? ' rotated' : ''}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></div>
       </div>
 
-      <div class="service-details-wrapper" id="details-wrapper-${target._id}">
-        <div id="service-content-${target._id}" class="service-details-content">
+      <div class="service-details-wrapper" id="details-wrapper-${escapeHtml(target._id)}">
+        <div id="service-content-${escapeHtml(target._id)}" class="service-details-content">
           <div class="text-slate-400 text-sm text-center py-4">Loading details...</div>
         </div>
       </div>
@@ -1281,18 +1577,14 @@ async function loadAndDisplayUptimeBars(targetId) {
     const target = allTargets.find(t => t._id === targetId);
     let stats = [];
     
-    if (target && target.dailyStats) {
+    if (target && Array.isArray(target.dailyStats)) {
       stats = target.dailyStats;
     } else {
-      // Fallback: fetch if not in cache (shouldn't happen if using consolidated endpoint)
-      const now = Date.now();
-      if (!statisticsCache || !statisticsCacheTime || (now - statisticsCacheTime) > STATISTICS_CACHE_DURATION) {
-        const res = await axios.get(`/api/targets/${targetId}/statistics?days=30`);
-        stats = res.data.statistics || [];
-      } else {
-        // Still in cache, but target not found - return early
-        return;
-      }
+      // A monitor created after the summary cache was populated will be
+      // present in /api/status but not yet have dailyStats. Fetch its bars
+      // explicitly instead of leaving the loading skeleton in place forever.
+      const res = await axios.get(`/api/targets/${encodeURIComponent(targetId)}/statistics?days=30`);
+      stats = res.data.statistics || [];
     }
 
     // Get the uptime bar container
@@ -1333,7 +1625,19 @@ function generateUptimeBars(targetId) {
   return `<div class="uptime-bar">${html}</div>`;
 }
 
-function toggleServiceExpand(serviceId) {
+function toggleServiceExpand(serviceId, options = {}) {
+  // A deep link owns the hash while it is being resolved. A normal user click
+  // should release that ownership so the next polling refresh cannot reopen a
+  // row the user deliberately collapsed or replace it with another row.
+  if (!options.preserveHash) {
+    const hashMonitorId = new URLSearchParams((location.hash || '').replace(/^#/, '')).get('monitor');
+    if (hashMonitorId) {
+      const url = `${location.pathname}${location.search}`;
+      if (window.history?.replaceState) window.history.replaceState({}, '', url);
+      lastDeepLinkedMonitorId = null;
+    }
+  }
+
   // If clicking the same service, close it
   if (expandedServiceId === serviceId) {
     expandedServiceId = null;
@@ -1396,6 +1700,14 @@ async function loadServiceDetails(serviceId) {
   const contentEl = document.getElementById(`service-content-${serviceId}`);
 
   try {
+    // Replacing the details markup also replaces the canvas. Destroy the
+    // previous Chart.js instance first so it cannot keep rendering to a
+    // detached canvas when a user collapses and reopens a service.
+    if (charts[serviceId]) {
+      charts[serviceId].destroy();
+      delete charts[serviceId];
+    }
+
     // Use cached uptime data if available, otherwise fetch
     let uptime24h = 0;
     let uptime30d = 0;
@@ -1419,7 +1731,7 @@ async function loadServiceDetails(serviceId) {
         <div class="grid ${target.publicShowDetails ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'} gap-3">
           <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
             <p class="text-slate-400 text-xs mb-1">Current Status</p>
-            <p class="text-lg font-bold ${target.isUp ? 'text-green-400' : 'text-red-400'} mt-1">${target.isUp ? '✓ UP' : '✗ DOWN'}</p>
+            <p class="text-lg font-bold ${target.currentStatus === 'up' ? 'text-green-400' : target.currentStatus === 'down' ? 'text-red-400' : 'text-slate-400'} mt-1">${!target.enabled ? 'PAUSED' : target.currentStatus === 'up' ? '✓ UP' : target.currentStatus === 'down' ? '✗ DOWN' : 'CHECKING'}</p>
           </div>
           <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
             <p class="text-slate-400 text-xs mb-1">Uptime (24h)</p>
@@ -1432,7 +1744,7 @@ async function loadServiceDetails(serviceId) {
           ${target.publicShowDetails ? `
           <div class="bg-gradient-to-br from-slate-700/40 to-slate-800/40 rounded-lg p-3 border border-slate-600/50 backdrop-blur-sm shadow-lg">
             <p class="text-slate-400 text-xs mb-1">Protocol</p>
-            <p class="text-lg font-bold text-cyan-400 mt-1">${target.protocol}</p>
+            <p class="text-lg font-bold text-cyan-400 mt-1">${escapeHtml(target.protocol)}</p>
           </div>
           ` : ''}
         </div>
@@ -1440,11 +1752,11 @@ async function loadServiceDetails(serviceId) {
 
         <!-- Time Period Selector -->
         <div class="flex gap-2 flex-wrap">
-          <button onclick="switchChartPeriod('${serviceId}', '1h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="1h">1H</button>
-          <button onclick="switchChartPeriod('${serviceId}', '24h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg shadow-cyan-500/30 transition-all duration-200 border border-cyan-500/50" data-period="24h">24H</button>
-          <button onclick="switchChartPeriod('${serviceId}', '7d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="7d">7D</button>
-          <button onclick="switchChartPeriod('${serviceId}', '30d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="30d">30D</button>
-          <button onclick="switchChartPeriod('${serviceId}', 'all')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="all">ALL</button>
+          <button onclick="switchChartPeriod(${escapeInlineArgument(serviceId)}, '1h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="1h">1H</button>
+          <button onclick="switchChartPeriod(${escapeInlineArgument(serviceId)}, '24h')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg shadow-cyan-500/30 transition-all duration-200 border border-cyan-500/50" data-period="24h">24H</button>
+          <button onclick="switchChartPeriod(${escapeInlineArgument(serviceId)}, '7d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="7d">7D</button>
+          <button onclick="switchChartPeriod(${escapeInlineArgument(serviceId)}, '30d')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="30d">30D</button>
+          <button onclick="switchChartPeriod(${escapeInlineArgument(serviceId)}, 'all')" class="period-btn px-4 py-2 rounded-lg text-xs font-medium bg-slate-700/50 hover:bg-slate-600/70 text-slate-300 transition-all duration-200 border border-slate-600/50" data-period="all">ALL</button>
         </div>
 
         <!-- Chart Container -->
@@ -1463,7 +1775,7 @@ async function loadServiceDetails(serviceId) {
             </div>
           </div>
           <div style="position: relative; height: 350px;">
-            <canvas id="chart-${serviceId}"></canvas>
+            <canvas id="chart-${escapeHtml(serviceId)}"></canvas>
           </div>
         </div>
       </div>
@@ -1500,10 +1812,9 @@ async function loadServiceDetailsUpdate(serviceId) {
       return;
     }
 
-    // Load all data in one API call (statistics + uptime) - use current period or 24h
-    const currentPeriod = chartPeriods[serviceId] || '24h';
-    const statsResponse = await axios.get(`/api/targets/${serviceId}/statistics?period=${currentPeriod}`);
-    const uptimeData = statsResponse.data.uptime || {};
+    // Uptime summaries are already part of the consolidated payload. Avoid a
+    // second database request on every status refresh.
+    const uptimeData = target.uptime || {};
 
     const uptime24h = parseFloat(uptimeData['24h']?.uptime || 0).toFixed(2);
     const uptime30d = parseFloat(uptimeData['30d']?.uptime || 0).toFixed(2);
@@ -1513,17 +1824,17 @@ async function loadServiceDetailsUpdate(serviceId) {
     const uptime30dEl = contentEl.querySelector(`.uptime-30d-${serviceId}`);
     
     // Find status element - it's in the first stat card
-    const statusCard = contentEl.querySelector('.grid.grid-cols-2');
-    const statusEl = statusCard ? statusCard.querySelector('.text-lg.font-bold') : null;
+    const statusEl = contentEl.querySelector('.text-lg.font-bold');
     
     if (uptime24hEl) uptime24hEl.textContent = uptime24h + '%';
     if (uptime30dEl) uptime30dEl.textContent = uptime30d + '%';
     
     // Update status if changed
     if (statusEl) {
-      const isUp = target.isUp;
-      statusEl.className = `text-lg font-bold ${isUp ? 'text-green-400' : 'text-red-400'} mt-1`;
-      statusEl.textContent = isUp ? '✓ UP' : '✗ DOWN';
+      const isUp = target.currentStatus === 'up';
+      const isDown = target.currentStatus === 'down';
+      statusEl.className = `text-lg font-bold ${isUp ? 'text-green-400' : isDown ? 'text-red-400' : 'text-slate-400'} mt-1`;
+      statusEl.textContent = !target.enabled ? 'PAUSED' : isUp ? '✓ UP' : isDown ? '✗ DOWN' : 'CHECKING';
     }
 
     // Update chart data dynamically if chart exists
@@ -1559,8 +1870,7 @@ async function updateChartData(serviceId, period) {
     if (!chart) return;
 
     // Fetch real statistics from the API with period parameter
-    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?period=${period}`);
-    const statistics = statsRes.data.statistics || [];
+    const statistics = await getGraphData(serviceId, period);
 
     // Parse and sort statistics chronologically (oldest first = left to right)
     const sortedStats = [...statistics]
@@ -1636,8 +1946,7 @@ async function loadServiceChart(serviceId, period) {
     }
 
     // Fetch real statistics from the API with period parameter
-    const statsRes = await axios.get(`/api/targets/${serviceId}/statistics?period=${period}`);
-    const statistics = statsRes.data.statistics || [];
+    const statistics = await getGraphData(serviceId, period);
 
     // Parse and sort statistics chronologically (oldest first = left to right)
     const sortedStats = [...statistics]

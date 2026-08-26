@@ -520,6 +520,7 @@ router.post('/api/targets', async (req, res) => {
     if (target.enabled) {
       monitorService.startTargetMonitor({ ...target, _id: target.id });
     }
+    require('../services/cacheService').invalidateCollection('public-all');
 
     res.json({ success: true, targetId: target.id, target: { ...target, _id: target.id } });
   } catch (error) {
@@ -538,6 +539,7 @@ router.put('/api/targets/positions', async (req, res) => {
 
     const cacheService = require('../services/cacheService');
     cacheService.invalidateCollection('targets');
+    cacheService.invalidateCollection('public-all');
 
     for (const { targetId, position } of positions) {
       await prisma.target.update({
@@ -557,6 +559,8 @@ router.put('/api/targets/:id', async (req, res) => {
   try {
     const prisma = getPrisma();
     const targetId = req.params.id;
+    const existingTarget = await prisma.target.findUnique({ where: { id: targetId } });
+    if (!existingTarget) return res.status(404).json({ success: false, error: 'Target not found' });
     const { enabled, ...updateData } = req.body;
 
     delete updateData.id;
@@ -564,24 +568,50 @@ router.put('/api/targets/:id', async (req, res) => {
 
     if (updateData.protocol) updateData.protocol = updateData.protocol.toUpperCase();
 
-    await prisma.target.update({ where: { id: targetId }, data: updateData });
+    // Keep the admin and API target contracts aligned and avoid passing
+    // arbitrary request properties to Prisma.
+    const allowedFields = [
+      'name', 'host', 'port', 'protocol', 'path', 'interval', 'publicVisible',
+      'publicShowDetails', 'publicShowStatus', 'publicShowAppLink', 'appUrl',
+      'appIcon', 'retries', 'retryInterval', 'timeout', 'httpMethod',
+      'statusCodes', 'maxRedirects', 'ignoreSsl', 'upsideDown', 'important',
+      'auth', 'position', 'group', 'quickCommands',
+    ];
+    Object.keys(updateData).forEach((key) => {
+      if (!allowedFields.includes(key)) delete updateData[key];
+    });
 
-    if (enabled !== undefined) {
-      if (enabled) {
-        const target = await prisma.target.findUnique({ where: { id: targetId } });
-        monitorService.startTargetMonitor({ ...target, _id: target.id });
-      } else {
-        monitorService.stopTargetMonitor(targetId);
-      }
-      await prisma.target.update({ where: { id: targetId }, data: { enabled } });
+    if (enabled !== undefined) updateData.enabled = enabled === true;
+    const updatedTarget = await prisma.target.update({ where: { id: targetId }, data: updateData });
+
+    // Restart only when ping behavior changed. Metadata/visibility edits must
+    // keep an active outage timer intact, otherwise saving a monitor at minute
+    // four would silently postpone its sustained-outage notification.
+    const monitorConfigFields = [
+      'host', 'port', 'protocol', 'path', 'interval', 'retries', 'retryInterval',
+      'timeout', 'httpMethod', 'statusCodes', 'maxRedirects', 'ignoreSsl',
+      'upsideDown', 'auth',
+    ];
+    const valuesEqual = (left, right) => {
+      if (left === right || (left == null && right == null)) return true;
+      return JSON.stringify(left) === JSON.stringify(right);
+    };
+    const requiresRestart = monitorConfigFields.some(field => (
+      Object.prototype.hasOwnProperty.call(updateData, field)
+      && !valuesEqual(updateData[field], existingTarget[field])
+    ));
+    const isActive = monitorService.getActiveMonitors().includes(targetId);
+
+    if (requiresRestart || (!updatedTarget.enabled && isActive)) {
+      monitorService.stopTargetMonitor(targetId);
+      if (updatedTarget.enabled) monitorService.startTargetMonitor({ ...updatedTarget, _id: updatedTarget.id });
+    } else if (updatedTarget.enabled && !isActive) {
+      monitorService.startTargetMonitor({ ...updatedTarget, _id: updatedTarget.id });
     } else {
-      const target = await prisma.target.findUnique({ where: { id: targetId } });
-      if (target?.enabled) {
-        monitorService.stopTargetMonitor(targetId);
-        monitorService.startTargetMonitor({ ...target, _id: target.id });
-      }
+      monitorService.updateTargetReference({ ...updatedTarget, _id: updatedTarget.id });
     }
 
+    require('../services/cacheService').invalidateCollection('public-all');
     res.json({ success: true, message: 'Target updated' });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Target not found' });
@@ -604,6 +634,7 @@ router.delete('/api/targets/:id', async (req, res) => {
     
     // Now delete the target
     await prisma.target.delete({ where: { id: targetId } });
+    require('../services/cacheService').invalidateCollection('public-all');
 
     res.json({ success: true, message: 'Target deleted' });
   } catch (error) {
@@ -718,27 +749,33 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
 
     const result = await prisma.$queryRaw`
       WITH time_buckets AS (
-        SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
+        -- Keep the database join in UTC while returning an absolute instant
+        -- for browser-local rendering.
+        SELECT
+          to_timestamp(bucket_epoch) AT TIME ZONE 'UTC' AS bucket_start,
+          to_timestamp(bucket_epoch) AS bucket_time
         FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
         ORDER BY bucket_epoch
         LIMIT ${maxPoints}
       )
       SELECT
-        time_buckets.bucket_time::text as date,
+        -- Keep the value as a timestamptz; browsers render the UTC instant in
+        -- each client's own local timezone.
+        time_buckets.bucket_time as date,
         COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
         COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
         COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
       FROM time_buckets
       LEFT JOIN "pingResults" pr ON
         pr."targetId" = ${targetId}
-        AND pr.timestamp >= time_buckets.bucket_time
-        AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
-      GROUP BY time_buckets.bucket_time
+        AND pr.timestamp >= time_buckets.bucket_start
+        AND pr.timestamp < (time_buckets.bucket_start + (${intervalSeconds} || ' seconds')::interval)
+      GROUP BY time_buckets.bucket_start, time_buckets.bucket_time
       ORDER BY time_buckets.bucket_time ASC
     `;
 
     const stats = result.map(r => ({
-      date: r.date,
+      date: new Date(r.date).toISOString(),
       totalPings: Number(r.totalPings) || 0,
       successfulPings: Number(r.successfulPings) || 0,
       failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),
@@ -938,6 +975,7 @@ router.post('/api/clear-ping-data', async (req, res) => {
     const prisma = getPrisma();
     const pingResults = await prisma.pingResult.deleteMany({});
     const statistics = await prisma.statistic.deleteMany({});
+    require('../services/cacheService').invalidateCollection('public-all');
 
     res.json({
       success: true,
@@ -966,6 +1004,7 @@ router.post('/api/targets/:id/clear-ping-data', async (req, res) => {
 
     // Clear statistics for this target
     const statistics = await prisma.statistic.deleteMany({ where: { targetId: targetId } });
+    require('../services/cacheService').invalidateCollection('public-all');
 
     res.json({
       success: true,
@@ -1071,11 +1110,16 @@ router.get('/api/notification-settings', async (req, res) => {
     if (!settings) {
       settings = {
         id: 'settings', _id: 'settings', enabled: false,
+        monitorDownDelayMinutes: 5,
         discord: { enabled: false, webhookUrl: null, username: 'LocalPing', avatarUrl: null },
         events: { monitorDown: true, monitorUp: true, incidentCreated: true, incidentUpdated: true },
       };
     } else {
-      settings = { ...settings, _id: settings.id };
+      settings = {
+        ...settings,
+        _id: settings.id,
+        monitorDownDelayMinutes: Math.min(1440, Math.max(1, Number.parseInt(settings.monitorDownDelayMinutes, 10) || 5)),
+      };
     }
 
     res.json({ success: true, settings });
@@ -1088,20 +1132,34 @@ router.put('/api/notification-settings', async (req, res) => {
   try {
     const prisma = getPrisma();
     const { enabled, discord, events } = req.body;
+    const currentSettings = req.body.monitorDownDelayMinutes === undefined
+      ? await prisma.notificationSettings.findUnique({ where: { id: 'settings' } })
+      : null;
+    const parsedDelay = Number.parseInt(
+      req.body.monitorDownDelayMinutes === undefined
+        ? (currentSettings?.monitorDownDelayMinutes || 5)
+        : req.body.monitorDownDelayMinutes,
+      10,
+    );
+    if (!Number.isFinite(parsedDelay) || parsedDelay < 1 || parsedDelay > 1440) {
+      return res.status(400).json({ success: false, error: 'Monitor notification delay must be between 1 and 1,440 minutes' });
+    }
 
     const updateData = {};
     if (enabled !== undefined) updateData.enabled = enabled === true;
     if (discord !== undefined) updateData.discord = discord;
     if (events !== undefined) updateData.events = events;
+    updateData.monitorDownDelayMinutes = parsedDelay;
 
     await prisma.notificationSettings.upsert({
       where: { id: 'settings' },
       update: updateData,
-      create: { id: 'settings', enabled: false, discord: null, events: null, ...updateData },
+      create: { id: 'settings', enabled: false, discord: null, events: null, monitorDownDelayMinutes: 5, ...updateData },
     });
 
     const notificationService = require('../services/notificationService');
     notificationService.invalidateCache();
+    monitorService.setNotificationDelayMinutes(parsedDelay);
 
     res.json({ success: true, message: 'Notification settings updated' });
   } catch (error) {
@@ -1146,6 +1204,7 @@ router.post('/api/backup/import', async (req, res) => {
     }
 
     const results = await backupService.importData(importData, { overwrite: overwrite === true });
+    require('../services/cacheService').clear();
     res.json({ success: true, results });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

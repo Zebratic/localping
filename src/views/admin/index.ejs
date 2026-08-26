@@ -358,6 +358,51 @@
       padding-right: 0.5rem;
     }
 
+    /* Atlassian-inspired flat dark surfaces shared by the admin workspace. */
+    :root {
+      --lp-bg: #0b1220;
+      --lp-surface: #111b2d;
+      --lp-surface-raised: #17233a;
+      --lp-border: #273754;
+      --lp-text: #f1f5f9;
+      --lp-muted: #91a2bb;
+      --lp-accent: #579dff;
+      --lp-success: #4bce97;
+      --lp-danger: #f87171;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--lp-bg) !important;
+      color: var(--lp-text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+    header, nav { background: #101a2c !important; border-color: var(--lp-border) !important; backdrop-filter: none !important; }
+    .monitor-card, .form-section, .bg-slate-900\/50, .bg-slate-800\/50 {
+      background: var(--lp-surface) !important;
+      border-color: var(--lp-border) !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+    }
+    [class*="bg-gradient-to"], [class*="backdrop-blur"] { background-image: none !important; backdrop-filter: none !important; }
+    .monitor-card:hover, .monitor-card.selected { background: var(--lp-surface-raised) !important; border-color: #38527c !important; transform: none; }
+    .btn-primary { background: var(--lp-accent) !important; color: #07111f !important; box-shadow: none !important; }
+    .btn-primary:hover { background: #85b8ff !important; transform: translateY(-1px); box-shadow: none !important; }
+    .btn-secondary { background: #1b2a43 !important; border-color: #38527c !important; }
+    .form-input { background: #0d1728 !important; border-color: var(--lp-border) !important; box-shadow: none !important; }
+    .form-input:focus { border-color: var(--lp-accent) !important; background: #101d33 !important; }
+    .tab-button.active { color: var(--lp-accent) !important; border-color: var(--lp-accent) !important; }
+    .status-badge.up { background: rgba(75, 206, 151, 0.12) !important; color: var(--lp-success) !important; }
+    .status-badge.down { background: rgba(248, 113, 113, 0.14) !important; color: var(--lp-danger) !important; }
+    .period-btn.bg-gradient-to-r {
+      background-color: var(--lp-accent) !important;
+      background-image: none !important;
+      color: #07111f !important;
+      border-color: var(--lp-accent) !important;
+      box-shadow: none !important;
+    }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--lp-accent); outline-offset: 2px; }
+
     .settings-panel {
       position: fixed;
       top: 0;
@@ -1418,6 +1463,15 @@
                 <span class="form-label mb-0 font-semibold">Enable Notifications</span>
               </label>
               <p class="form-help">Enable external notifications (Discord webhooks, etc.)</p>
+            </div>
+
+            <div class="border-t border-slate-700/30 pt-4">
+              <label for="monitorDownDelayMinutes" class="form-label">Monitor outage notification delay</label>
+              <div class="flex items-center gap-3">
+                <input type="number" id="monitorDownDelayMinutes" class="form-input max-w-xs" min="1" max="1440" step="1" value="5" required>
+                <span class="text-sm text-slate-400">minutes</span>
+              </div>
+              <p class="form-help">A monitor must stay down for this many whole minutes before down or recovery notifications are sent. Incident notifications are unaffected.</p>
             </div>
 
             <!-- Discord Settings -->

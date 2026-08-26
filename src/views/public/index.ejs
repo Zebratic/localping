@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>LocalPing - Homelab Dashboard</title>
+  <title><%= typeof title !== 'undefined' ? title : 'LocalPing' %> · LocalPing</title>
+  <meta name="description" content="<%= typeof subtitle !== 'undefined' ? subtitle : 'System status and application dashboard' %>">
 
   <script src="/vendor/tailwindcss.js"></script>
   <script src="/vendor/chart.js"></script>
@@ -139,6 +140,10 @@
 
     .app-status.down {
       color: #ef4444;
+    }
+
+    .app-status.unknown {
+      color: #94a3b8;
     }
 
     /* Uptime Bar Styles */
@@ -693,6 +698,82 @@
         margin-bottom: 2rem;
       }
     }
+
+    /* Flat status-page surfaces: restrained contrast, one blue accent, no
+       decorative gradients. Existing utility classes remain available for
+       layout, while these shared rules keep the public shell consistent. */
+    :root {
+      --lp-bg: #0b1220;
+      --lp-surface: #111b2d;
+      --lp-surface-raised: #17233a;
+      --lp-border: #273754;
+      --lp-text: #f1f5f9;
+      --lp-muted: #91a2bb;
+      --lp-accent: #579dff;
+      --lp-success: #4bce97;
+      --lp-danger: #f87171;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--lp-bg) !important;
+      color: var(--lp-text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+    header {
+      background: #101a2c !important;
+      border-color: var(--lp-border) !important;
+      backdrop-filter: none !important;
+    }
+    .app-card, .service-item, .overall-status-box, .incident-card,
+    #incident-history, #blog-posts > div {
+      background: var(--lp-surface) !important;
+      border-color: var(--lp-border) !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+    }
+    [class*="bg-gradient-to"], [class*="backdrop-blur"] { background-image: none !important; backdrop-filter: none !important; }
+    .app-card:hover, .service-row:hover, .service-row.expanded {
+      background: var(--lp-surface-raised) !important;
+      border-color: #38527c !important;
+      transform: none;
+    }
+    .app-icon {
+      background: #1b2a43;
+      border: 1px solid #2b4163;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .app-favicon, .service-favicon {
+      object-fit: cover !important;
+      border-radius: 10px !important;
+      filter: none !important;
+    }
+    .app-status.down {
+      background: var(--lp-danger) !important;
+      color: #1d1014 !important;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.15rem 0.5rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .app-status.up { color: var(--lp-success) !important; }
+    .nav-tab.active { color: var(--lp-accent) !important; border-color: var(--lp-accent) !important; }
+    .status-badge.up { background: rgba(75, 206, 151, 0.12) !important; color: var(--lp-success) !important; }
+    .status-badge.down { background: rgba(248, 113, 113, 0.14) !important; color: var(--lp-danger) !important; }
+    .status-badge.unknown { background: rgba(145, 162, 187, 0.14); color: var(--lp-muted); }
+    .status-indicator { animation: none !important; }
+    .service-details-wrapper { transition-duration: 0.22s; }
+    .period-btn.bg-gradient-to-r {
+      background-color: var(--lp-accent) !important;
+      background-image: none !important;
+      color: #07111f !important;
+      border-color: var(--lp-accent) !important;
+      box-shadow: none !important;
+    }
+    button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--lp-accent); outline-offset: 2px; }
   </style>
   <% if (typeof customCSS !== 'undefined' && customCSS) { %>
   <style>
@@ -700,7 +781,7 @@
   </style>
   <% } %>
 </head>
-<body>
+<body data-initial-page="<%= initialPage || 'home' %>" data-viewer-admin="<%= isAdminViewer === true ? 'true' : 'false' %>">
   <div class="min-h-screen flex flex-col">
   <!-- Header - Mobile Optimized -->
   <header class="border-b border-slate-700/30 sticky top-0 z-40 bg-gradient-to-b from-slate-900/95 to-slate-900/90 backdrop-blur-sm">
@@ -720,13 +801,13 @@
 
       <!-- Navigation Tabs -->
       <div class="nav-tabs">
-        <button onclick="switchPage('home')" class="nav-tab active" id="tab-home">
+        <button onclick="switchPage('home')" class="nav-tab <%= (initialPage || 'home') === 'home' ? 'active' : '' %>" id="tab-home">
           <i class="fas fa-th-large mr-1.5"></i>Apps
         </button>
-        <button onclick="switchPage('status')" class="nav-tab" id="tab-status">
+        <button onclick="switchPage('status')" class="nav-tab <%= initialPage === 'status' ? 'active' : '' %>" id="tab-status">
           <i class="fas fa-chart-line mr-1.5"></i>Uptime
         </button>
-        <button onclick="switchPage('blog')" class="nav-tab" id="tab-blog">
+        <button onclick="switchPage('blog')" class="nav-tab <%= initialPage === 'blog' ? 'active' : '' %>" id="tab-blog">
           <i class="fas fa-blog mr-1.5"></i>Blog
         </button>
       </div>
@@ -737,12 +818,12 @@
   <main class="flex-1 pb-20">
     <div class="max-w-6xl mx-auto px-4 py-4 w-full">
         <!-- Home Page (Apps) -->
-        <div id="page-home" class="page active">
+        <div id="page-home" class="page <%= (initialPage || 'home') === 'home' ? 'active' : '' %>">
           <!-- Ongoing Incidents Section - Mobile First -->
           <div id="home-incidents" class="mobile-section"></div>
 
           <!-- Apps Section -->
-          <div class="mobile-section">
+          <div id="apps-content" class="mobile-section">
             <div class="mb-4">
               <h2 class="text-lg font-bold text-white mb-1">Apps</h2>
               <p id="app-count" class="text-slate-400 text-xs">Loading...</p>
@@ -756,7 +837,7 @@
         </div>
 
         <!-- Status Page -->
-        <div id="page-status" class="page">
+        <div id="page-status" class="page <%= initialPage === 'status' ? 'active' : '' %>">
           <!-- Overall Status Box -->
           <div class="overall-status-box mb-6">
             <div id="status-indicator" class="status-indicator operational"></div>
@@ -794,7 +875,7 @@
         </div>
 
         <!-- Blog Page -->
-        <div id="page-blog" class="page">
+        <div id="page-blog" class="page <%= initialPage === 'blog' ? 'active' : '' %>">
           <div class="mb-6">
             <h2 class="text-xl sm:text-2xl font-bold text-white mb-2">Homelab Updates & Changelog</h2>
             <p class="text-slate-400 text-sm">Latest updates and changes to the homelab infrastructure</p>
@@ -837,6 +918,11 @@
 
   <script src="/js/notifications.js"></script>
   <script src="/js/public.js"></script>
+  <script>
+    // The shell is shared by all public routes; navigation remains client-side
+    // after the initial URL-selected view is painted.
+    if (typeof switchPage === 'function') switchPage('<%= initialPage || 'home' %>');
+  </script>
   <script>
     // Update notification toggle button state
     function updateNotificationToggle() {

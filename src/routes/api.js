@@ -54,9 +54,10 @@ router.post('/targets', validateTargetInput, async (req, res) => {
     const faviconService = require('../services/faviconService');
 
     const {
-      name, host, port, protocol, interval, enabled, path, appUrl, appIcon,
+      name, host, port, protocol, interval, enabled, publicVisible,
+      publicShowDetails, publicShowStatus, publicShowAppLink, path, appUrl, appIcon,
       retries, retryInterval, timeout, httpMethod, statusCodes, maxRedirects,
-      ignoreSsl, upsideDown, auth, position, group, quickCommands,
+      ignoreSsl, upsideDown, important, auth, position, group, quickCommands,
     } = req.body;
 
     if (!name || !host || !protocol) {
@@ -100,7 +101,9 @@ router.post('/targets', validateTargetInput, async (req, res) => {
     const target = await prisma.target.create({
       data: {
         name, host, port: port || null, protocol: protocol.toUpperCase(), path: path || null,
-        interval: interval || 60, enabled: enabled !== false, appUrl: finalAppUrl || null,
+        interval: interval || 60, enabled: enabled !== false, publicVisible: publicVisible !== false,
+        publicShowDetails: publicShowDetails === true, publicShowStatus: publicShowStatus !== false,
+        publicShowAppLink: publicShowAppLink !== false, appUrl: finalAppUrl || null,
         appIcon: fetchedAppIcon || null,         retries: retries !== undefined ? retries : 0,
         retryInterval: retryInterval !== undefined ? retryInterval : 5,
         timeout: timeout !== undefined ? timeout : 30, httpMethod: httpMethod || 'GET',
@@ -113,6 +116,7 @@ router.post('/targets', validateTargetInput, async (req, res) => {
     if (target.enabled) {
       monitorService.startTargetMonitor({ ...target, _id: target.id });
     }
+    require('../services/cacheService').invalidateCollection('public-all');
 
     res.json({ success: true, targetId: target.id, target: { ...target, _id: target.id } });
   } catch (error) {
@@ -125,11 +129,14 @@ router.put('/targets/:id', validateTargetInput, async (req, res) => {
   try {
     const prisma = getPrisma();
     const targetId = req.params.id;
+    const existingTarget = await prisma.target.findUnique({ where: { id: targetId } });
+    if (!existingTarget) return res.status(404).json({ success: false, error: 'Target not found' });
 
     const {
-      name, host, port, protocol, interval, enabled, path, appUrl, appIcon,
+      name, host, port, protocol, interval, enabled, publicVisible,
+      publicShowDetails, publicShowStatus, publicShowAppLink, path, appUrl, appIcon,
       retries, retryInterval, timeout, httpMethod, statusCodes, maxRedirects,
-      ignoreSsl, upsideDown, auth, position, group, quickCommands,
+      ignoreSsl, upsideDown, important, auth, position, group, quickCommands,
     } = req.body;
 
     const updateData = {};
@@ -153,19 +160,43 @@ router.put('/targets/:id', validateTargetInput, async (req, res) => {
     if (position !== undefined) updateData.position = position;
     if (group !== undefined) updateData.group = group;
     if (quickCommands !== undefined) updateData.quickCommands = quickCommands;
+    if (publicVisible !== undefined) updateData.publicVisible = publicVisible === true;
+    if (publicShowDetails !== undefined) updateData.publicShowDetails = publicShowDetails === true;
+    if (publicShowStatus !== undefined) updateData.publicShowStatus = publicShowStatus !== false;
+    if (publicShowAppLink !== undefined) updateData.publicShowAppLink = publicShowAppLink !== false;
+    if (important !== undefined) updateData.important = important === true;
 
-    await prisma.target.update({ where: { id: targetId }, data: updateData });
+    if (enabled !== undefined) updateData.enabled = enabled === true;
+    const updatedTarget = await prisma.target.update({ where: { id: targetId }, data: updateData });
 
-    if (enabled !== undefined) {
-      if (enabled) {
-        const target = await prisma.target.findUnique({ where: { id: targetId } });
-        monitorService.startTargetMonitor({ ...target, _id: target.id });
-      } else {
-        monitorService.stopTargetMonitor(targetId);
-      }
-      await prisma.target.update({ where: { id: targetId }, data: { enabled } });
+    // Restart only when ping behavior changed. Metadata/visibility edits must
+    // keep an active outage timer intact, otherwise saving a monitor at minute
+    // four would silently postpone its sustained-outage notification.
+    const monitorConfigFields = [
+      'host', 'port', 'protocol', 'path', 'interval', 'retries', 'retryInterval',
+      'timeout', 'httpMethod', 'statusCodes', 'maxRedirects', 'ignoreSsl',
+      'upsideDown', 'auth',
+    ];
+    const valuesEqual = (left, right) => {
+      if (left === right || (left == null && right == null)) return true;
+      return JSON.stringify(left) === JSON.stringify(right);
+    };
+    const requiresRestart = monitorConfigFields.some(field => (
+      Object.prototype.hasOwnProperty.call(updateData, field)
+      && !valuesEqual(updateData[field], existingTarget[field])
+    ));
+    const isActive = monitorService.getActiveMonitors().includes(targetId);
+
+    if (requiresRestart || (!updatedTarget.enabled && isActive)) {
+      monitorService.stopTargetMonitor(targetId);
+      if (updatedTarget.enabled) monitorService.startTargetMonitor({ ...updatedTarget, _id: updatedTarget.id });
+    } else if (updatedTarget.enabled && !isActive) {
+      monitorService.startTargetMonitor({ ...updatedTarget, _id: updatedTarget.id });
+    } else {
+      monitorService.updateTargetReference({ ...updatedTarget, _id: updatedTarget.id });
     }
 
+    require('../services/cacheService').invalidateCollection('public-all');
     res.json({ success: true, message: 'Target updated' });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ success: false, error: 'Target not found' });
@@ -189,6 +220,7 @@ router.delete('/targets/:id', async (req, res) => {
     
     // Now delete the target
     await prisma.target.delete({ where: { id: targetId } });
+    require('../services/cacheService').invalidateCollection('public-all');
 
     res.json({ success: true, message: 'Target deleted' });
   } catch (error) {
@@ -324,27 +356,33 @@ router.get('/targets/:id/statistics', async (req, res) => {
 
     const result = await prisma.$queryRaw`
       WITH time_buckets AS (
-        SELECT (to_timestamp(bucket_epoch) AT TIME ZONE 'UTC')::timestamp as bucket_time
+        -- Keep the database join in UTC while returning an absolute instant
+        -- for browser-local rendering.
+        SELECT
+          to_timestamp(bucket_epoch) AT TIME ZONE 'UTC' AS bucket_start,
+          to_timestamp(bucket_epoch) AS bucket_time
         FROM generate_series(${startEpoch}::bigint, ${endEpoch}::bigint, ${intervalSeconds}::bigint) as bucket_epoch
         ORDER BY bucket_epoch
         LIMIT ${maxPoints}
       )
       SELECT
-        time_buckets.bucket_time::text as date,
+        -- Keep the value as a timestamptz; browsers render the UTC instant in
+        -- each client's own local timezone.
+        time_buckets.bucket_time as date,
         COALESCE(COUNT(pr."_id"), 0)::integer as "totalPings",
         COALESCE(SUM(CASE WHEN pr.success = true THEN 1 ELSE 0 END), 0)::integer as "successfulPings",
         COALESCE(AVG(CASE WHEN pr."responseTime" IS NOT NULL THEN pr."responseTime"::real ELSE NULL END), 0) as "avgResponseTime"
       FROM time_buckets
       LEFT JOIN "pingResults" pr ON
         pr."targetId" = ${targetId}
-        AND pr.timestamp >= time_buckets.bucket_time
-        AND pr.timestamp < (time_buckets.bucket_time + (${intervalSeconds} || ' seconds')::interval)
-      GROUP BY time_buckets.bucket_time
+        AND pr.timestamp >= time_buckets.bucket_start
+        AND pr.timestamp < (time_buckets.bucket_start + (${intervalSeconds} || ' seconds')::interval)
+      GROUP BY time_buckets.bucket_start, time_buckets.bucket_time
       ORDER BY time_buckets.bucket_time ASC
     `;
 
     const stats = result.map(r => ({
-      date: r.date,
+      date: new Date(r.date).toISOString(),
       totalPings: Number(r.totalPings) || 0,
       successfulPings: Number(r.successfulPings) || 0,
       failedPings: (Number(r.totalPings) || 0) - (Number(r.successfulPings) || 0),

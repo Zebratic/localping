@@ -19,12 +19,31 @@ const getPrisma = () => {
 };
 
 /**
+ * Keep existing installations compatible with additive schema changes. The
+ * application is commonly upgraded in place, so relying only on a fresh
+ * `prisma db push` would leave the notification settings endpoint unusable on
+ * older databases.
+ */
+const ensureRuntimeSchema = async (client) => {
+  try {
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "notificationSettings" ADD COLUMN IF NOT EXISTS "monitorDownDelayMinutes" INTEGER NOT NULL DEFAULT 5',
+    );
+  } catch (error) {
+    // A first-run database may not have been pushed yet. Prisma's normal
+    // schema deployment remains responsible for creating missing tables.
+    console.warn(chalk.yellow('⚠ Could not apply notification delay migration:'), error.message);
+  }
+};
+
+/**
  * Connect to the database
  */
 const connectDB = async () => {
   try {
     const client = getPrisma();
     await client.$connect();
+    await ensureRuntimeSchema(client);
     console.log(chalk.green('✓ PostgreSQL database connected via Prisma'));
     return client;
   } catch (error) {
@@ -62,4 +81,5 @@ module.exports = {
   connectDB,
   disconnectDB,
   executeRawQuery,
+  ensureRuntimeSchema,
 };

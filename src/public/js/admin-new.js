@@ -1619,7 +1619,7 @@ async function loadPosts() {
     posts.forEach(post => {
       const card = document.createElement('div');
       card.className = 'bg-slate-900/50 backdrop-blur rounded-lg p-4 border border-slate-700/30';
-      const date = new Date(post.createdAt).toLocaleDateString('en-US', { 
+      const date = new Date(post.createdAt).toLocaleDateString(undefined, {
         year: 'numeric', 
         month: 'long', 
         day: 'numeric' 
@@ -2405,6 +2405,11 @@ async function loadNotificationSettings() {
         enabledEl.checked = settings.enabled === true;
       }
 
+      const delayEl = document.getElementById('monitorDownDelayMinutes');
+      if (delayEl) {
+        delayEl.value = settings.monitorDownDelayMinutes || 5;
+      }
+
       const discordEnabledEl = document.getElementById('discordEnabled');
       if (discordEnabledEl) {
         discordEnabledEl.checked = settings.discord?.enabled === true;
@@ -2454,6 +2459,12 @@ async function loadNotificationSettings() {
 async function saveNotificationSettings() {
   try {
     const enabled = document.getElementById('notificationEnabled').checked;
+    const delayEl = document.getElementById('monitorDownDelayMinutes');
+    const monitorDownDelayMinutes = parseInt(delayEl?.value, 10) || 5;
+    if (monitorDownDelayMinutes < 1 || monitorDownDelayMinutes > 1440) {
+      showNotification('Monitor notification delay must be between 1 and 1,440 minutes', 'error');
+      return;
+    }
     const discordEnabled = document.getElementById('discordEnabled').checked;
     const discordWebhookUrl = document.getElementById('discordWebhookUrl').value.trim();
     const discordUsername = document.getElementById('discordUsername').value.trim() || 'LocalPing';
@@ -2472,6 +2483,7 @@ async function saveNotificationSettings() {
 
     const data = {
       enabled: enabled,
+      monitorDownDelayMinutes,
       discord: {
         enabled: discordEnabled,
         webhookUrl: discordWebhookUrl || null,
@@ -3297,4 +3309,3 @@ document.addEventListener('DOMContentLoaded', () => {
     cloneBtn.style.display = 'none';
   }
 });
-

@@ -401,6 +401,68 @@
       border-color: var(--lp-accent) !important;
       box-shadow: none !important;
     }
+    .admin-header {
+      background: #101a2c !important;
+      background-image: none !important;
+      backdrop-filter: none !important;
+    }
+    .admin-header-main {
+      padding-top: 0.625rem;
+      padding-bottom: 0.5rem;
+    }
+    .admin-header-row {
+      min-height: 2rem;
+    }
+    .admin-brand-mark {
+      width: 1.125rem;
+      height: 1.125rem;
+    }
+    .admin-header-nav {
+      border-top: 1px solid rgba(39, 55, 84, 0.7);
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    .admin-header-nav::-webkit-scrollbar {
+      display: none;
+    }
+    .admin-tab-list {
+      min-width: max-content;
+    }
+    .admin-header .tab-button {
+      padding: 0.45rem 0.65rem;
+      min-height: 2.75rem;
+      border-bottom-width: 2px;
+      border-radius: 0.375rem 0.375rem 0 0;
+      font-size: 0.75rem;
+      line-height: 1.2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .admin-tab-label { display: inline; }
+    .admin-header .tab-button.active {
+      background: rgba(87, 157, 255, 0.1);
+    }
+    @media (max-width: 639px) {
+      .admin-header .tab-button {
+        min-width: 2.75rem;
+        text-align: center;
+      }
+      .admin-tab-label { display: none; }
+      .admin-header .tab-button i {
+        margin-right: 0;
+      }
+    }
+    @media (min-width: 640px) {
+      .admin-header-main {
+        padding-top: 0.75rem;
+        padding-bottom: 0.625rem;
+      }
+      .admin-header .tab-button {
+        padding: 0.5rem 0.8rem;
+        font-size: 0.8125rem;
+      }
+    }
     button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--lp-accent); outline-offset: 2px; }
 
     .settings-panel {
@@ -852,46 +914,46 @@
   </style>
 </head>
 <body class="bg-slate-950 text-white">
-  <!-- Header & Navigation -->
-  <header class="border-b border-slate-700/30 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
-    <div class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-      <div class="flex justify-between items-center">
-        <div class="flex items-center gap-3">
-          <svg class="w-6 h-6 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
+  <!-- Compact admin header and navigation -->
+  <header class="admin-header border-b border-slate-700/30 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+    <div class="admin-header-main w-full px-3 sm:px-6 lg:px-8">
+      <div class="admin-header-row flex justify-between items-center gap-3">
+        <div class="admin-brand flex items-center gap-2 min-w-0">
+          <svg class="admin-brand-mark w-5 h-5 text-cyan-400 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
           </svg>
-          <a href="/" class="text-xl sm:text-2xl font-bold text-white hover:text-cyan-400 transition-colors cursor-pointer no-underline" id="adminHeaderTitle" style="text-decoration: none; display: inline-block; pointer-events: auto; user-select: none;">LocalPing Admin</a>
+          <a href="/" class="text-base sm:text-lg font-bold text-white hover:text-cyan-400 transition-colors cursor-pointer no-underline truncate" id="adminHeaderTitle" style="text-decoration: none; display: inline-block; pointer-events: auto; user-select: none;">LocalPing Admin</a>
         </div>
-        <button onclick="logout()" class="logout-btn text-xs sm:text-sm">
+        <button onclick="logout()" class="logout-btn text-xs sm:text-sm shrink-0" aria-label="Log out" title="Log out">
           <i class="fas fa-sign-out-alt"></i><span class="hidden sm:inline sm:ml-2">Logout</span>
         </button>
       </div>
     </div>
-    <div class="w-full px-4 sm:px-6 lg:px-8 overflow-x-auto border-t border-slate-700/20">
-      <div class="flex gap-4 sm:gap-8">
-        <a href="/admin" class="tab-button text-sm sm:text-base <%= (typeof currentTab !== 'undefined' && currentTab === 'monitors') || (typeof currentTab === 'undefined') ? 'active' : '' %>" onclick="handleTabClick(event, 'monitors')">
-          <i class="fas fa-chart-line mr-1 sm:mr-2"></i><span class="hidden xs:inline">Monitors</span>
+    <nav class="admin-header-nav w-full px-3 sm:px-6 lg:px-8 overflow-x-auto" aria-label="Admin sections">
+      <div class="admin-tab-list flex gap-1 sm:gap-2">
+        <a href="/admin" title="Monitors" aria-label="Monitors" class="tab-button text-sm sm:text-base <%= (typeof currentTab !== 'undefined' && currentTab === 'monitors') || (typeof currentTab === 'undefined') ? 'active' : '' %>" onclick="handleTabClick(event, 'monitors')">
+          <i class="fas fa-chart-line mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Monitors</span>
         </a>
-        <a href="/admin/incidents" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'incidents' ? 'active' : '' %>" onclick="handleTabClick(event, 'incidents')">
-          <i class="fas fa-exclamation-triangle mr-1 sm:mr-2"></i><span class="hidden xs:inline">Incidents</span>
+        <a href="/admin/incidents" title="Incidents" aria-label="Incidents" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'incidents' ? 'active' : '' %>" onclick="handleTabClick(event, 'incidents')">
+          <i class="fas fa-exclamation-triangle mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Incidents</span>
         </a>
-        <a href="/admin/events" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'event-rules' ? 'active' : '' %>" onclick="handleTabClick(event, 'event-rules')">
-          <i class="fas fa-bolt mr-1 sm:mr-2"></i><span class="hidden xs:inline">Event Rules</span>
+        <a href="/admin/events" title="Event rules" aria-label="Event rules" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'event-rules' ? 'active' : '' %>" onclick="handleTabClick(event, 'event-rules')">
+          <i class="fas fa-bolt mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Event Rules</span>
         </a>
-        <a href="/admin/blogs" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'posts' ? 'active' : '' %>" onclick="handleTabClick(event, 'posts')">
-          <i class="fas fa-blog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Posts</span>
+        <a href="/admin/blogs" title="Posts" aria-label="Posts" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'posts' ? 'active' : '' %>" onclick="handleTabClick(event, 'posts')">
+          <i class="fas fa-blog mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Posts</span>
         </a>
-        <a href="/admin/visibility" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'visibility' ? 'active' : '' %>" onclick="handleTabClick(event, 'visibility')">
-          <i class="fas fa-eye mr-1 sm:mr-2"></i><span class="hidden xs:inline">Visibility</span>
+        <a href="/admin/visibility" title="Visibility" aria-label="Visibility" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'visibility' ? 'active' : '' %>" onclick="handleTabClick(event, 'visibility')">
+          <i class="fas fa-eye mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Visibility</span>
         </a>
-        <a href="/admin/settings" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'settings' ? 'active' : '' %>" onclick="handleTabClick(event, 'settings')">
-          <i class="fas fa-cog mr-1 sm:mr-2"></i><span class="hidden xs:inline">Settings</span>
+        <a href="/admin/settings" title="Settings" aria-label="Settings" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'settings' ? 'active' : '' %>" onclick="handleTabClick(event, 'settings')">
+          <i class="fas fa-cog mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Settings</span>
         </a>
-        <a href="/admin/backup" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'backup' ? 'active' : '' %>" onclick="handleTabClick(event, 'backup')">
-          <i class="fas fa-download mr-1 sm:mr-2"></i><span class="hidden xs:inline">Backup</span>
+        <a href="/admin/backup" title="Backup" aria-label="Backup" class="tab-button text-sm sm:text-base <%= typeof currentTab !== 'undefined' && currentTab === 'backup' ? 'active' : '' %>" onclick="handleTabClick(event, 'backup')">
+          <i class="fas fa-download mr-1 sm:mr-2" aria-hidden="true"></i><span class="admin-tab-label">Backup</span>
         </a>
       </div>
-    </div>
+    </nav>
   </header>
 
   <main class="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-8">

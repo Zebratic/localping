@@ -740,10 +740,18 @@
       transform: none;
     }
     .app-icon {
-      background: #1b2a43;
-      border: 1px solid #2b4163;
+      background: transparent !important;
+      background-color: transparent !important;
+      border: 0 !important;
+      box-shadow: none !important;
       border-radius: 12px;
       overflow: hidden;
+    }
+    .app-icon img,
+    .app-icon i {
+      background: transparent !important;
+      border: 0 !important;
+      box-shadow: none !important;
     }
     .app-favicon, .service-favicon {
       object-fit: cover !important;
@@ -760,6 +768,75 @@
       cursor: pointer;
     }
     .app-status.up { color: var(--lp-success) !important; }
+    .public-header {
+      background: #101a2c !important;
+      background-image: none !important;
+      backdrop-filter: none !important;
+    }
+    .public-header-inner {
+      padding-top: 0.625rem;
+      padding-bottom: 0.5rem;
+    }
+    .public-header-row {
+      min-height: 2rem;
+      margin-bottom: 0.375rem;
+    }
+    .public-brand-mark {
+      width: 1.125rem;
+      height: 1.125rem;
+    }
+    .public-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      line-height: 1.1;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .public-status #status-time {
+      font-size: 0.6875rem;
+    }
+    .public-header .nav-tabs {
+      gap: 0.125rem;
+      border-bottom: 0;
+      margin-bottom: 0;
+      padding-bottom: 0.125rem;
+    }
+    .public-header .nav-tab {
+      padding: 0.4rem 0.65rem;
+      min-height: 2.75rem;
+      border-bottom-width: 2px;
+      border-radius: 0.375rem 0.375rem 0 0;
+      font-size: 0.75rem;
+      line-height: 1.2;
+      display: inline-flex;
+      align-items: center;
+    }
+    .public-header .nav-tab.active {
+      background: rgba(87, 157, 255, 0.1);
+    }
+    @media (max-width: 639px) {
+      .public-header-inner {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+      }
+      .public-status #status-time {
+        display: none;
+      }
+    }
+    @media (min-width: 640px) {
+      .public-header-inner {
+        padding-top: 0.75rem;
+        padding-bottom: 0.625rem;
+      }
+      .public-header-row {
+        margin-bottom: 0.5rem;
+      }
+      .public-header .nav-tab {
+        padding: 0.45rem 0.8rem;
+        font-size: 0.8125rem;
+      }
+    }
     .nav-tab.active { color: var(--lp-accent) !important; border-color: var(--lp-accent) !important; }
     .status-badge.up { background: rgba(75, 206, 151, 0.12) !important; color: var(--lp-success) !important; }
     .status-badge.down { background: rgba(248, 113, 113, 0.14) !important; color: var(--lp-danger) !important; }
@@ -783,24 +860,24 @@
 </head>
 <body data-initial-page="<%= initialPage || 'home' %>" data-viewer-admin="<%= isAdminViewer === true ? 'true' : 'false' %>">
   <div class="min-h-screen flex flex-col">
-  <!-- Header - Mobile Optimized -->
-  <header class="border-b border-slate-700/30 sticky top-0 z-40 bg-gradient-to-b from-slate-900/95 to-slate-900/90 backdrop-blur-sm">
-    <div class="max-w-6xl mx-auto px-4 py-4">
-      <div class="flex items-center justify-between mb-4">
-        <div class="flex items-center gap-2">
-          <svg class="w-5 h-5 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
+  <!-- Compact status navigation -->
+  <header class="public-header border-b border-slate-700/30 sticky top-0 z-40 bg-gradient-to-b from-slate-900/95 to-slate-900/90 backdrop-blur-sm">
+    <div class="public-header-inner max-w-6xl mx-auto px-4">
+      <div class="public-header-row flex items-center justify-between gap-3">
+        <div class="public-brand flex items-center gap-2 min-w-0">
+          <svg class="public-brand-mark w-5 h-5 text-cyan-400 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
           </svg>
-          <h1 class="text-xl font-bold text-white"><%= typeof title !== 'undefined' ? title : 'Homelab' %></h1>
+          <h1 class="text-base sm:text-lg font-bold text-white truncate"><%= typeof title !== 'undefined' ? title : 'Homelab' %></h1>
         </div>
-        <div id="status-box" class="text-right">
-          <p id="status-text" class="text-sm font-semibold text-green-400">✓ Operational</p>
-          <p id="status-time" class="text-slate-400 text-xs">-</p>
+        <div id="status-box" class="public-status shrink-0">
+          <p id="status-text" class="text-xs font-semibold text-green-400">✓ Operational</p>
+          <p id="status-time" class="text-slate-400 text-[11px]">-</p>
         </div>
       </div>
 
       <!-- Navigation Tabs -->
-      <div class="nav-tabs">
+      <nav class="nav-tabs" aria-label="Status pages">
         <button onclick="switchPage('home')" class="nav-tab <%= (initialPage || 'home') === 'home' ? 'active' : '' %>" id="tab-home">
           <i class="fas fa-th-large mr-1.5"></i>Apps
         </button>
@@ -810,7 +887,7 @@
         <button onclick="switchPage('blog')" class="nav-tab <%= initialPage === 'blog' ? 'active' : '' %>" id="tab-blog">
           <i class="fas fa-blog mr-1.5"></i>Blog
         </button>
-      </div>
+      </nav>
     </div>
   </header>
 

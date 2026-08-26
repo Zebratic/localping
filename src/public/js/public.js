@@ -1903,12 +1903,14 @@ async function updateChartData(serviceId, period) {
         labels.push(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
       }
 
-      // Add response time data (rounded to nearest integer)
+      // Leave the response-time series blank during downtime. Chart.js treats
+      // null as a gap when spanGaps is false, so no green segment is rendered
+      // through the red downtime region.
       const avgResponseTime = stat.avgResponseTime || 0;
-      responseTimeData.push(Math.round(avgResponseTime));
+      const isDown = Number(stat.successfulPings || 0) === 0;
+      responseTimeData.push(isDown ? null : Math.round(avgResponseTime));
 
       // Add downtime indicator (will be scaled to max Y value later)
-      const isDown = stat.successfulPings === 0;
       downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
     });
 
@@ -1979,12 +1981,14 @@ async function loadServiceChart(serviceId, period) {
         labels.push(date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
       }
 
-      // Add response time data (rounded to nearest integer)
+      // Leave the response-time series blank during downtime. Chart.js treats
+      // null as a gap when spanGaps is false, so no green segment is rendered
+      // through the red downtime region.
       const avgResponseTime = stat.avgResponseTime || 0;
-      responseTimeData.push(Math.round(avgResponseTime));
+      const isDown = Number(stat.successfulPings || 0) === 0;
+      responseTimeData.push(isDown ? null : Math.round(avgResponseTime));
 
       // Add downtime indicator (will be scaled to max Y value later)
-      const isDown = stat.successfulPings === 0;
       downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
     });
 
@@ -2067,6 +2071,10 @@ async function loadServiceChart(serviceId, period) {
             titleFont: { size: 13, weight: 'bold' },
             bodyFont: { size: 12 },
             boxPadding: 8,
+            filter: function(context) {
+              // Do not show an empty green tooltip item for downtime buckets.
+              return context.raw !== null && context.raw !== undefined;
+            },
             callbacks: {
               title: function(context) {
                 return context[0].label;
@@ -2074,25 +2082,12 @@ async function loadServiceChart(serviceId, period) {
               label: function(context) {
                 if (context.datasetIndex === 0) {
                   const value = context.raw;
-                  if (!value || value === 0) {
-                    return '🔴 Offline';
-                  }
-                  const pingTag = value < 50 ? '🟢 Excellent' : value < 100 ? '🟡 Good' : value < 200 ? '🟠 Fair' : '🔴 Poor';
-                  return `${pingTag} ${Math.round(value)} ms`;
+                  return value == null ? '' : `${Math.round(value)} ms`;
                 } else {
                   return context.raw ? '🔴 Service Down' : '';
                 }
               },
-              afterBody: function(context) {
-                if (context[0].datasetIndex === 0 && context[0].raw > 0) {
-                  const value = context[0].raw;
-                  if (value < 50) return '⚡ Excellent response time';
-                  if (value < 100) return '✓ Good response time';
-                  if (value < 200) return '⚠ Acceptable response time';
-                  return '⚠ Slow response time';
-                }
-                return '';
-              }
+              afterBody: function() { return ''; }
             }
           }
         },

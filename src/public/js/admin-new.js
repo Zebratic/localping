@@ -717,12 +717,14 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
   const downData = [];
 
   sortedStats.forEach(stat => {
-    // Add response time data (rounded to nearest integer)
+    // Do not plot response time for an entirely failed bucket. A null value
+    // creates a real gap in Chart.js when spanGaps is disabled, leaving the
+    // red downtime series as the only signal for that interval.
     const avgResponseTime = stat.avgResponseTime || 0;
-    responseTimeData.push(Math.round(avgResponseTime));
+    const isDown = Number(stat.successfulPings || 0) === 0;
+    responseTimeData.push(isDown ? null : Math.round(avgResponseTime));
 
     // Add downtime indicator (will be scaled to max Y value later)
-    const isDown = stat.successfulPings === 0;
     downData.push(isDown ? 1 : null); // Use 1 as placeholder, will scale to max
   });
 
@@ -741,7 +743,7 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
       responseTimeData[lastIndex] = Math.round(testResult.responseTime);
       scaledDownData[lastIndex] = null;
     } else {
-      responseTimeData[lastIndex] = 0;
+      responseTimeData[lastIndex] = null;
       scaledDownData[lastIndex] = downtimeMaxValue;
     }
   }
@@ -806,32 +808,23 @@ function drawStatusChart(stats, testResult = null, timeoutMs = 30000) {
           titleFont: { size: 13, weight: 'bold' },
           bodyFont: { size: 12 },
           boxPadding: 8,
+          filter: function(context) {
+            // Do not show an empty green tooltip item for downtime buckets.
+            return context.raw !== null && context.raw !== undefined;
+          },
           callbacks: {
             title: function(context) {
               return context[0].label;
             },
-            label: function(context) {
-              if (context.datasetIndex === 0) {
-                const value = context.raw;
-                if (!value || value === 0) {
-                  return '🔴 Offline';
+              label: function(context) {
+                if (context.datasetIndex === 0) {
+                  const value = context.raw;
+                  return value == null ? '' : `${Math.round(value)} ms`;
+                } else {
+                  return context.raw ? '🔴 Service Down' : '';
                 }
-                const pingTag = value < 50 ? '🟢 Excellent' : value < 100 ? '🟡 Good' : value < 200 ? '🟠 Fair' : '🔴 Poor';
-                return `${pingTag} ${Math.round(value)} ms`;
-              } else {
-                return context.raw ? '🔴 Service Down' : '';
-              }
-            },
-            afterBody: function(context) {
-              if (context[0].datasetIndex === 0 && context[0].raw > 0) {
-                const value = context[0].raw;
-                if (value < 50) return '⚡ Excellent response time';
-                if (value < 100) return '✓ Good response time';
-                if (value < 200) return '⚠ Acceptable response time';
-                return '⚠ Slow response time';
-              }
-              return '';
-            }
+              },
+              afterBody: function() { return ''; }
           }
         }
       },

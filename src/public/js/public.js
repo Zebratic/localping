@@ -13,9 +13,10 @@ let blogLoadInFlight = null;
 let blogLoadedAt = 0;
 let lastAppsStructureKey = null;
 let lastDeepLinkedMonitorId = null;
-const STATISTICS_CACHE_DURATION = 5 * 60 * 1000;
+const PUBLIC_DATA_CACHE_DURATION = 60 * 60 * 1000;
+const STATISTICS_CACHE_DURATION = PUBLIC_DATA_CACHE_DURATION;
 const GRAPH_CACHE_STORAGE_KEY = 'localping:graph-cache:v1';
-const GRAPH_CACHE_DURATION = 30 * 60 * 1000;
+const GRAPH_CACHE_DURATION = PUBLIC_DATA_CACHE_DURATION;
 const BLOG_CACHE_DURATION = 60 * 1000;
 let graphDataCache = {};
 let graphRefreshes = new Map();
@@ -220,7 +221,7 @@ try {
 }
 
 try {
-  const cachedSummary = JSON.parse(sessionStorage.getItem('localping:summary-cache:v1') || 'null');
+  const cachedSummary = JSON.parse(sessionStorage.getItem('localping:summary-cache:v2') || 'null');
   if (cachedSummary?.data?.targets && cachedSummary.cachedAt && cachedSummary.viewerIsAdmin === viewerIsAdmin) {
     statisticsCache = cachedSummary.data;
     statisticsCacheTime = cachedSummary.cachedAt;
@@ -417,7 +418,7 @@ async function loadData() {
       if (typeof statusRes.data.viewer?.isAdmin === 'boolean') {
         viewerIsAdmin = statusRes.data.viewer.isAdmin;
       }
-      try { sessionStorage.setItem('localping:summary-cache:v1', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
+      try { sessionStorage.setItem('localping:summary-cache:v2', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
     } else {
       // Use cached statistics but get fresh status
       if (statisticsCache) {
@@ -440,7 +441,7 @@ async function loadData() {
           statusRes = await axios.get('/api/public/all');
           statisticsCache = statusRes.data;
           statisticsCacheTime = now;
-          try { sessionStorage.setItem('localping:summary-cache:v1', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
+          try { sessionStorage.setItem('localping:summary-cache:v2', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
         } else {
           // Merge fresh status with cached statistics
           statusRes = {
@@ -456,7 +457,6 @@ async function loadData() {
                     // The status endpoint intentionally omits expensive
                     // aggregates; keep those fields from the summary cache.
                     uptime: cachedTarget.uptime,
-                    dailyStats: cachedTarget.dailyStats,
                     miniStats: cachedTarget.miniStats,
                     currentStatus: freshTarget.currentStatus,
                     isUp: freshTarget.isUp,
@@ -474,7 +474,7 @@ async function loadData() {
         statusRes = await axios.get('/api/public/all');
         statisticsCache = statusRes.data;
         statisticsCacheTime = now;
-        try { sessionStorage.setItem('localping:summary-cache:v1', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
+        try { sessionStorage.setItem('localping:summary-cache:v2', JSON.stringify({ data: statisticsCache, cachedAt: now, viewerIsAdmin })); } catch (error) { /* optional */ }
       }
     }
 
@@ -1750,19 +1750,10 @@ async function loadAndDisplayUptime(targetId) {
 
 async function loadAndDisplayUptimeBars(targetId) {
   try {
-    // Use cached daily stats from consolidated endpoint if available
-    const target = allTargets.find(t => t._id === targetId);
-    let stats = [];
-    
-    if (target && Array.isArray(target.dailyStats)) {
-      stats = target.dailyStats;
-    } else {
-      // A monitor created after the summary cache was populated will be
-      // present in /api/status but not yet have dailyStats. Fetch its bars
-      // explicitly instead of leaving the loading skeleton in place forever.
-      const res = await axios.get(`/api/targets/${encodeURIComponent(targetId)}/statistics?days=30`);
-      stats = res.data.statistics || [];
-    }
+    // Daily bars are detail data. Fetch them only when the monitor's detail
+    // view asks for them instead of including them in the landing-page
+    // summary for every monitor.
+    const stats = await getGraphData(targetId, '30d');
 
     // Get the uptime bar container
     const serviceEl = document.getElementById(`service-${targetId}`);

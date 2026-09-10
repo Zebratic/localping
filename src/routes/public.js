@@ -5,9 +5,23 @@ const { getPrisma } = require('../config/prisma');
 const monitorService = require('../services/monitorService');
 const faviconService = require('../services/faviconService');
 
-// The dashboard summary contains 30 days of bars, so keep the expensive
-// aggregation briefly and refresh only the live status fields on cache hits.
-const PUBLIC_SUMMARY_TTL = 15 * 1000;
+// The public summary and on-demand graph responses are immutable enough to
+// keep for an hour. Live status is still refreshed by `hydrateSummary` on
+// every request, so a warm summary never hides a current outage.
+const PUBLIC_DATA_CACHE_TTL = 60 * 60 * 1000;
+const PUBLIC_DATA_CACHE_MAX_AGE = Math.floor(PUBLIC_DATA_CACHE_TTL / 1000);
+
+function publicCacheKey(cacheService, type, req, extra = {}) {
+  return cacheService.generateKey('public-all', {
+    type,
+    ...extra,
+    privileged: isPrivilegedViewer(req),
+  });
+}
+
+function setPublicCacheHeaders(res) {
+  res.set('Cache-Control', `private, max-age=${PUBLIC_DATA_CACHE_MAX_AGE}, stale-while-revalidate=60`);
+}
 
 function isAdminViewer(req) {
   return req.session?.adminAuthenticated === true;
@@ -158,10 +172,17 @@ router.get('/api/targets', async (req, res) => {
 router.get('/api/targets/:id/statistics', async (req, res) => {
   try {
     const prisma = getPrisma();
+    const cacheService = require('../services/cacheService');
     const targetId = req.params.id;
     // Support both 'period' and 'days' query parameters
     const period = req.query.period || (req.query.days ? `${req.query.days}d` : '24h');
     const days = parseInt(req.query.days) || null;
+    const cacheKey = publicCacheKey(cacheService, 'statistics', req, { targetId, period, days });
+    const cachedStatistics = cacheService.get(cacheKey);
+    if (cachedStatistics) {
+      setPublicCacheHeaders(res);
+      return res.json(cachedStatistics);
+    }
 
     const target = await prisma.target.findFirst({
       where: { id: targetId, ...targetVisibilityWhere(req) },
@@ -321,7 +342,7 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
     const totalPings30d = uptime30d._sum.totalPings || 0;
     const successfulPings30d = uptime30d._sum.successfulPings || 0;
 
-    res.json({
+    const response = {
       success: true,
       statistics: stats,
       uptime: {
@@ -342,7 +363,10 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
         _id: target.id,
         name: target.name,
       },
-    });
+    };
+    cacheService.set(cacheKey, response, PUBLIC_DATA_CACHE_TTL);
+    setPublicCacheHeaders(res);
+    res.json(response);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -352,8 +376,15 @@ router.get('/api/targets/:id/statistics', async (req, res) => {
 router.get('/api/targets/:id/uptime', async (req, res) => {
   try {
     const prisma = getPrisma();
+    const cacheService = require('../services/cacheService');
     const targetId = req.params.id;
     const days = parseInt(req.query.days) || 30;
+    const cacheKey = publicCacheKey(cacheService, 'uptime', req, { targetId, days });
+    const cachedUptime = cacheService.get(cacheKey);
+    if (cachedUptime) {
+      setPublicCacheHeaders(res);
+      return res.json(cachedUptime);
+    }
 
     const target = await prisma.target.findFirst({
       where: { id: targetId, ...targetVisibilityWhere(req) },
@@ -376,7 +407,7 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
     const successfulPings = stats._sum.successfulPings || 0;
     const uptime = totalPings > 0 ? ((successfulPings / totalPings) * 100).toFixed(2) : 0;
 
-    res.json({
+    const response = {
       success: true,
       targetName: target.name,
       uptime: parseFloat(uptime),
@@ -384,7 +415,10 @@ router.get('/api/targets/:id/uptime', async (req, res) => {
       totalPings,
       successfulPings,
       failedPings: totalPings - successfulPings,
-    });
+    };
+    cacheService.set(cacheKey, response, PUBLIC_DATA_CACHE_TTL);
+    setPublicCacheHeaders(res);
+    res.json(response);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -395,10 +429,10 @@ router.get('/api/public/all', async (req, res) => {
   try {
     const prisma = getPrisma();
     const cacheService = require('../services/cacheService');
-    const cacheKey = cacheService.generateKey('public-all', { privileged: isPrivilegedViewer(req) });
+    const cacheKey = publicCacheKey(cacheService, 'summary', req);
     const cachedSummary = cacheService.get(cacheKey);
     if (cachedSummary) {
-      res.set('Cache-Control', 'private, max-age=5, stale-while-revalidate=30');
+      setPublicCacheHeaders(res);
       return res.json(hydrateSummary(cachedSummary, req));
     }
     
@@ -429,16 +463,16 @@ router.get('/api/public/all', async (req, res) => {
     uptime24hStart.setDate(uptime24hStart.getDate() - 1);
     const uptime30dStart = new Date();
     uptime30dStart.setDate(uptime30dStart.getDate() - 30);
-    // Mini graphs use the latest 48 half-hour buckets. Align the window to a
-    // bucket boundary so every monitor receives the same client-renderable
-    // 24-hour timeline from one batched query.
-    const miniBucketSeconds = 30 * 60;
+    // Mini graphs use one point per hour for the latest 24 hours. Align the
+    // window to a bucket boundary so every monitor receives the same compact
+    // timeline from one batched query.
+    const miniBucketSeconds = 60 * 60;
     // Date.now() is milliseconds while PostgreSQL's to_timestamp and the
     // generated bucket values use Unix seconds. Convert before aligning to a
     // bucket boundary; passing milliseconds here creates dates thousands of
     // years in the future and causes `Invalid time value` during serialization.
     const miniEndEpoch = Math.floor(Date.now() / 1000 / miniBucketSeconds) * miniBucketSeconds;
-    const miniStartEpoch = miniEndEpoch - (47 * miniBucketSeconds);
+    const miniStartEpoch = miniEndEpoch - (23 * miniBucketSeconds);
 
     // Get uptime statistics for all targets in parallel using aggregation
     const targetIds = targets.map(t => t.id);
@@ -454,12 +488,13 @@ router.get('/api/public/all', async (req, res) => {
         },
         targets: [],
       };
-      cacheService.set(cacheKey, emptySummary, PUBLIC_SUMMARY_TTL);
+      cacheService.set(cacheKey, emptySummary, PUBLIC_DATA_CACHE_TTL);
+      setPublicCacheHeaders(res);
       return res.json(hydrateSummary(emptySummary, req));
     }
 
     // Use raw SQL for efficient aggregation across all targets
-    const [uptime24hData, uptime30dData, dailyStatsData, miniStatsData] = await Promise.all([
+    const [uptime24hData, uptime30dData, miniStatsData] = await Promise.all([
       // 24h uptime aggregation for all targets
       prisma.$queryRaw`
         SELECT 
@@ -482,22 +517,8 @@ router.get('/api/public/all', async (req, res) => {
         AND date >= ${uptime30dStart}
         GROUP BY "targetId"
       `,
-      // Daily stats for last 30 days (for uptime bars)
-      prisma.statistic.findMany({
-        where: {
-          targetId: { in: targetIds },
-          date: { gte: uptime30dStart },
-        },
-        select: {
-          targetId: true,
-          date: true,
-          totalPings: true,
-          successfulPings: true,
-        },
-        orderBy: { date: 'asc' },
-      }),
       // Raw ping buckets power the compact 24-hour graph shown for every
-      // service. Cross joining the small 48-bucket timeline with the target
+      // service. Cross joining the small 24-bucket timeline with the target
       // IDs keeps this to one indexed query instead of one request per row.
       prisma.$queryRaw`
         WITH time_buckets AS (
@@ -521,7 +542,7 @@ router.get('/api/public/all', async (req, res) => {
         LEFT JOIN "pingResults" pr ON
           pr."targetId" = target_ids."targetId"
           AND pr.timestamp >= time_buckets.bucket_start
-          AND pr.timestamp < (time_buckets.bucket_start + interval '30 minutes')
+          AND pr.timestamp < (time_buckets.bucket_start + interval '1 hour')
         GROUP BY target_ids."targetId", time_buckets.bucket_start, time_buckets.bucket_time
         ORDER BY target_ids."targetId", time_buckets.bucket_time ASC
       `,
@@ -554,22 +575,6 @@ router.get('/api/public/all', async (req, res) => {
       });
     });
 
-    // Group daily stats by targetId
-    const dailyStatsMap = new Map();
-    dailyStatsData.forEach(stat => {
-      if (!dailyStatsMap.has(stat.targetId)) {
-        dailyStatsMap.set(stat.targetId, []);
-      }
-      const dailyUptime = stat.totalPings > 0 ? ((stat.successfulPings / stat.totalPings) * 100) : 0;
-      dailyStatsMap.get(stat.targetId).push({
-        date: stat.date.toISOString(),
-        totalPings: stat.totalPings || 0,
-        successfulPings: stat.successfulPings || 0,
-        failedPings: (stat.totalPings || 0) - (stat.successfulPings || 0),
-        uptime: parseFloat(dailyUptime.toFixed(2)),
-      });
-    });
-
     // Group the fixed 24-hour buckets by target so the browser can draw all
     // rows from the consolidated response without additional network calls.
     const miniStatsMap = new Map();
@@ -591,7 +596,6 @@ router.get('/api/public/all', async (req, res) => {
       const status = monitorService.getTargetStatus(target.id);
       const uptime24h = uptime24hMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
       const uptime30d = uptime30dMap.get(target.id) || { uptime: 0, totalPings: 0, successfulPings: 0, failedPings: 0 };
-      const dailyStats = dailyStatsMap.get(target.id) || [];
       const miniStats = miniStatsMap.get(target.id) || [];
       const adminViewer = isPrivilegedViewer(req);
       const showDetails = adminViewer || target.publicShowDetails === true;
@@ -612,7 +616,6 @@ router.get('/api/public/all', async (req, res) => {
           '24h': uptime24h,
           '30d': uptime30d,
         },
-        dailyStats: dailyStats,
         miniStats,
       };
 
@@ -663,8 +666,8 @@ router.get('/api/public/all', async (req, res) => {
       },
       targets: targetsWithStats,
     };
-    cacheService.set(cacheKey, summary, PUBLIC_SUMMARY_TTL);
-    res.set('Cache-Control', 'private, max-age=5, stale-while-revalidate=30');
+    cacheService.set(cacheKey, summary, PUBLIC_DATA_CACHE_TTL);
+    setPublicCacheHeaders(res);
     res.json(hydrateSummary(summary, req));
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

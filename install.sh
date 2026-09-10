@@ -5,9 +5,9 @@ set -e
 echo "🚀 LocalPing Installation Script"
 echo "=================================="
 
-# Check if running with sudo
+# Check for the privileges required to install packages and manage systemd.
 if [[ $EUID -ne 0 ]]; then
-   echo "❌ This script must be run with sudo"
+   echo "❌ This script must be run as root"
    exit 1
 fi
 
@@ -35,7 +35,7 @@ if [ -d "$INSTALL_DIR" ]; then
         echo "  • Systemd service configuration"
         echo ""
         echo "What will be preserved:"
-        echo "  • Database (data/localping.db)"
+        echo "  • PostgreSQL database"
         echo "  • Configuration (.env file)"
         echo "  • Admin credentials"
         echo ""
@@ -97,20 +97,11 @@ if [ "$IS_UPDATE" = false ]; then
 else
     echo "🔄 Updating LocalPing repository..."
     cd "$INSTALL_DIR"
-    git fetch origin
-    git checkout "$BRANCH"
-    # Discard local changes to tracked files (package-lock.json, etc.)
-    # These will be regenerated during npm install anyway
-    # This preserves untracked files like .env and data/
-    if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet HEAD 2>/dev/null; then
-        echo "⚠️  Local changes detected, discarding (will be regenerated)..."
-        git reset --hard HEAD 2>/dev/null || true
-    fi
-    # Pull latest changes
-    git pull origin "$BRANCH" || {
-        echo "⚠️  Pull failed, trying reset to origin..."
-        git reset --hard origin/"$BRANCH"
-    }
+    # Fetch the requested branch and make the working tree exactly match it.
+    # `checkout -B` only changes tracked files, so the installation's .env,
+    # data, and logs remain untouched.
+    git fetch --prune origin "$BRANCH"
+    git checkout -B "$BRANCH" "origin/$BRANCH"
 fi
 
 cd "$INSTALL_DIR"
@@ -124,11 +115,6 @@ fi
 
 echo "📥 Installing npm dependencies..."
 npm install --silent 2>/dev/null || npm install
-
-echo "🔄 Syncing database schema with Prisma..."
-cd "$INSTALL_DIR"
-npx prisma generate --silent 2>/dev/null || npx prisma generate
-npx prisma db push --accept-data-loss --skip-generate 2>/dev/null || npx prisma db push --accept-data-loss --skip-generate
 
 echo "📁 Creating data directory..."
 mkdir -p "$INSTALL_DIR/data"
@@ -150,34 +136,76 @@ fi
 # Wait for PostgreSQL to be ready
 sleep 2
 
-# Generate secure database password
-DB_PASSWORD=$(openssl rand -base64 24 | tr -d "=+/" | cut -c1-24)
-DB_NAME="localping"
-DB_USER="localping"
+# Reuse database settings from an existing installation. This prevents an
+# update from generating a new password that does not match the existing
+# PostgreSQL role.
+EXISTING_DATABASE_URL=""
+if [ -f ".env" ]; then
+    # .env is the installation's own configuration file and is needed here so
+    # Prisma and the service use the same credentials as the database setup.
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env
+    set +a
+    EXISTING_DATABASE_URL="${DATABASE_URL:-}"
+fi
+
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
+DB_NAME="${DB_NAME:-localping}"
+DB_USER="${DB_USER:-localping}"
+GENERATED_DB_PASSWORD=false
+if [ -z "${DB_PASSWORD:-}" ]; then
+    DB_PASSWORD=$(openssl rand -base64 24 | tr -d "=+/" | cut -c1-24)
+    GENERATED_DB_PASSWORD=true
+fi
+
+case "$DB_NAME" in
+    ""|*[!A-Za-z0-9_]* ) echo "❌ DB_NAME may only contain letters, numbers, and underscores"; exit 1 ;;
+esac
+case "$DB_USER" in
+    ""|*[!A-Za-z0-9_]* ) echo "❌ DB_USER may only contain letters, numbers, and underscores"; exit 1 ;;
+esac
+
+run_as_postgres() {
+    if ! command -v runuser >/dev/null 2>&1; then
+        echo "❌ runuser is required to configure PostgreSQL as the postgres user"
+        exit 1
+    fi
+    runuser -u postgres -- "$@"
+}
 
 # Create database and user if they don't exist
 echo "🔧 Configuring PostgreSQL database..."
-sudo -u postgres psql -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
-sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
+if ! run_as_postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q '^1$'; then
+    run_as_postgres psql -v ON_ERROR_STOP=1 -v db_password="$DB_PASSWORD" -c "CREATE USER \"$DB_USER\" WITH PASSWORD :'db_password';"
+elif [ "$GENERATED_DB_PASSWORD" = true ] && [ -z "$EXISTING_DATABASE_URL" ]; then
+    # A partially completed installation may have a role but no saved
+    # connection URL. Make the generated credentials usable before saving them.
+    run_as_postgres psql -v ON_ERROR_STOP=1 -v db_password="$DB_PASSWORD" -c "ALTER ROLE \"$DB_USER\" WITH PASSWORD :'db_password';"
+fi
+
+if ! run_as_postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q '^1$'; then
+    run_as_postgres psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$DB_USER\";"
+fi
+run_as_postgres psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO \"$DB_USER\";"
 
 # Configure PostgreSQL for local-only access (security)
-PG_VERSION=$(sudo -u postgres psql -t -c "SHOW server_version_num;" | xargs)
-PG_MAJOR_VERSION=$(echo "$PG_VERSION" | cut -c1-2)
+PG_MAJOR_VERSION=$(run_as_postgres psql -tAc "SHOW server_version;" | xargs | cut -d. -f1)
 PG_HBA_FILE="/etc/postgresql/$PG_MAJOR_VERSION/main/pg_hba.conf"
 
 if [ -f "$PG_HBA_FILE" ]; then
     # Ensure local connections use md5 (password) authentication
     if ! grep -q "^local.*$DB_NAME.*$DB_USER.*md5" "$PG_HBA_FILE"; then
         # Add local connection rule if it doesn't exist
-        echo "local   $DB_NAME    $DB_USER    md5" | sudo tee -a "$PG_HBA_FILE" > /dev/null
+        printf 'local   %s    %s    md5\n' "$DB_NAME" "$DB_USER" >> "$PG_HBA_FILE"
     fi
     # Ensure host connections are restricted to localhost only
     if ! grep -q "^host.*$DB_NAME.*$DB_USER.*127.0.0.1/32.*md5" "$PG_HBA_FILE"; then
-        echo "host    $DB_NAME    $DB_USER    127.0.0.1/32    md5" | sudo tee -a "$PG_HBA_FILE" > /dev/null
+        printf 'host    %s    %s    127.0.0.1/32    md5\n' "$DB_NAME" "$DB_USER" >> "$PG_HBA_FILE"
     fi
     # Reload PostgreSQL configuration
-    systemctl reload postgresql 2>/dev/null || sudo -u postgres pg_ctl reload -D /var/lib/postgresql/$PG_MAJOR_VERSION/main 2>/dev/null || true
+    systemctl reload postgresql 2>/dev/null || run_as_postgres pg_ctl reload -D "/var/lib/postgresql/$PG_MAJOR_VERSION/main" 2>/dev/null || true
 fi
 
 echo "✅ PostgreSQL database configured"
@@ -200,6 +228,7 @@ DB_PORT=5432
 DB_NAME=$DB_NAME
 DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
 
 # Notification Settings
 NOTIFICATION_ENABLED=true
@@ -220,27 +249,43 @@ EOF
 else
     if [ "$IS_UPDATE" = true ]; then
         echo "✓ Preserving existing .env file"
-        # Add DB config if missing (for existing installations)
+        # Add database settings required by Prisma to older installations
+        # without replacing any existing application configuration.
         if ! grep -q "^DB_HOST=" .env; then
-            echo "" >> .env
-            echo "# Database Configuration" >> .env
-            echo "DB_HOST=localhost" >> .env
-            echo "DB_PORT=5432" >> .env
-            echo "DB_NAME=$DB_NAME" >> .env
-            echo "DB_USER=$DB_USER" >> .env
-            echo "DB_PASSWORD=$DB_PASSWORD" >> .env
+            {
+                echo ""
+                echo "# Database Configuration"
+                echo "DB_HOST=$DB_HOST"
+                echo "DB_PORT=$DB_PORT"
+                echo "DB_NAME=$DB_NAME"
+                echo "DB_USER=$DB_USER"
+                echo "DB_PASSWORD=$DB_PASSWORD"
+            } >> .env
             echo "✅ Added database configuration to .env"
+        else
+            grep -q "^DB_PORT=" .env || echo "DB_PORT=$DB_PORT" >> .env
+            grep -q "^DB_NAME=" .env || echo "DB_NAME=$DB_NAME" >> .env
+            grep -q "^DB_USER=" .env || echo "DB_USER=$DB_USER" >> .env
+            grep -q "^DB_PASSWORD=" .env || echo "DB_PASSWORD=$DB_PASSWORD" >> .env
+        fi
+        if [ -z "$EXISTING_DATABASE_URL" ] && ! grep -q "^DATABASE_URL=" .env; then
+            echo "DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME" >> .env
+            echo "✅ Added DATABASE_URL for Prisma to .env"
         fi
     else
         echo "⚠️  .env already exists, skipping creation"
     fi
 fi
 
+echo "🔄 Syncing database schema with Prisma..."
+npx prisma generate
+npx prisma db push --skip-generate
+
 echo "🔐 Setting ICMP capabilities for Node.js..."
 NODE_PATH=$(which node)
 setcap cap_net_raw=ep "$NODE_PATH" 2>/dev/null || true
 
-# Get the user who ran sudo
+# Run the service as the invoking user when available; root is the fallback.
 SERVICE_USER="${SUDO_USER:-root}"
 SERVICE_NAME="localping"
 
@@ -262,6 +307,7 @@ User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="NODE_ENV=production"
+EnvironmentFile=-$INSTALL_DIR/.env
 
 # Start Node.js app directly
 ExecStart=$NODE_BIN $INSTALL_DIR/src/app.js
@@ -306,6 +352,12 @@ systemctl restart "$SERVICE_NAME"
 # Wait for service to start
 sleep 3
 
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo "❌ LocalPing failed to start after the update"
+    systemctl status "$SERVICE_NAME" --no-pager 2>&1 | head -n 40 || true
+    exit 1
+fi
+
 echo "✅ Systemd service configured"
 echo ""
 
@@ -323,7 +375,7 @@ if [ "$IS_UPDATE" = true ]; then
     echo "  ✓ Systemd service configuration"
     echo ""
     echo "What was preserved:"
-    echo "  ✓ Database (data/localping.db)"
+    echo "  ✓ PostgreSQL database"
     echo "  ✓ Configuration (.env file)"
     echo "  ✓ Admin credentials and monitors"
 else
